@@ -1,0 +1,19 @@
+# Build output from build.sh and PlatformIO
+build/
+out/
+.pio/
+
+# Host preview and simulator binaries and their output
+tools/host/render_faces
+tools/host/simulate
+tools/host/*.o
+tools/host/*.ppm
+tools/host/out/
+
+# Python, editors and OS files
+__pycache__/
+*.pyc
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

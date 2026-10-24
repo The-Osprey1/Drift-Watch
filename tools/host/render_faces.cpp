@@ -1,6 +1,8 @@
 // Renders every face from the real firmware drawing code at native 240 x 240
 // for a set of test times and states, and checks that no text crosses the
-// safe circle. Output: one PPM per case plus a report on stdout.
+// safe circle (using the ink of the drawn glyphs) and that the four
+// clock/sync combinations show the right words. Output: one PPM per case plus
+// a report on stdout.
 #include <TFT_eSPI.h>
 #include <map>
 #include "faces.h"
@@ -24,7 +26,8 @@ void writePpm(const char *path, const TFT_eSPI &s) {
 int edgeProblems(const TFT_eSPI &s, const char *label) {
   int bad = 0;
   for (const auto &t : s.textLog) {
-    int xs[] = {t.x, t.x + t.w}, ys[] = {t.y + 2, t.y + t.h - 2};  // glyph cells have blank top/bottom rows
+    if (!t.iw) continue;
+    int xs[] = {t.ix, t.ix + t.iw - 1}, ys[] = {t.iy, t.iy + t.ih - 1};
     for (int x : xs)
       for (int y : ys) {
         float d = hypotf(x - layout::CX, y - layout::CY);
@@ -51,7 +54,7 @@ int main(int argc, char **argv) {
   TFT_eSprite frame(&screen);
   frame.createSprite(240, 240);
 
-  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float sweep; };
+  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float sweep; uint8_t stage = 0; bool noWifi = false; };
   std::vector<Case> cases = {
       {"2048", makeTime(20, 48, 37), true, false, 86, SyncView::Synced, -1},
       {"1111", makeTime(11, 11, 11), true, false, 52, SyncView::Synced, -1},
@@ -62,24 +65,42 @@ int main(int argc, char **argv) {
       {"12h_1258", makeTime(12, 58, 50, 0, 31, 11), true, true, 31, SyncView::Synced, -1},
       {"wed_sep", makeTime(18, 30, 0, 3, 28, 8), true, false, -1, SyncView::Synced, -1},
       {"notime", makeTime(0, 0, 0), false, false, 70, SyncView::Never, -1},
-      {"syncing", makeTime(0, 0, 0), false, false, 70, SyncView::Syncing, -1},
+      {"syncing", makeTime(0, 0, 0), false, false, 70, SyncView::Syncing, -1, 1},
+      // The four clock/sync combinations (with "notime" and "syncing" above).
+      {"valid_syncing", makeTime(20, 48, 37), true, false, 86, SyncView::Syncing, -1, 2},
+      {"valid_failed", makeTime(20, 48, 37), true, false, 86, SyncView::Failed, -1},
+      {"notime_failed", makeTime(0, 0, 0), false, false, 70, SyncView::Failed, -1},
+      {"notime_nowifi", makeTime(0, 0, 0), false, false, 70, SyncView::Failed, -1, 0, true},
       {"sweep", makeTime(20, 48, 2), true, false, 86, SyncView::Synced, 0.35f},
   };
 
   int problems = 0;
   for (int f = 0; f < FACE_COUNT; f++) {
     for (const Case &c : cases) {
-      FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.sweep};
+      FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.stage, c.noWifi, c.sweep};
       frame.textLog.clear();
       drawFaceStatic(frame, (Face)f, ctx);
       drawFaceLive(frame, (Face)f, ctx);
       char label[64], path[256];
       snprintf(label, sizeof label, "%s_%s", faceName((Face)f), c.name);
       problems += edgeProblems(frame, label);
+      // Words for the clock/sync state. A valid clock never shows a warning, whatever the sync is doing.
+      bool noTime = false, syncing = false, hint = false;
+      for (const auto &t : frame.textLog) {
+        noTime |= t.text == "NO TIME";
+        syncing |= t.text == "SYNCING";
+        hint |= t.text.rfind("Swipe up", 0) == 0;
+      }
+      bool ok = c.valid ? !noTime && !syncing && !hint
+                        : c.sync == SyncView::Syncing ? syncing && !noTime : noTime && hint && !syncing;
+      if (!ok) {
+        printf("  STATE %s: no-time %d, syncing %d, hint %d\n", label, noTime, syncing, hint);
+        problems++;
+      }
       snprintf(path, sizeof path, "%s/%s.ppm", outDir, label);
       writePpm(path, frame);
     }
   }
-  printf("%d text edge problems\n", problems);
+  printf("%d text edge or state problems\n", problems);
   return problems ? 1 : 0;
 }

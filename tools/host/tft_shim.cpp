@@ -174,7 +174,31 @@ void TFT_eSPI::drawArc(int32_t x, int32_t y, int32_t r, int32_t ir, uint32_t sta
 }
 
 // ---- Text --------------------------------------------------------------------
+void TFT_eSPI::setFreeFont(const GFXfont *f) {
+  font_ = 1;
+  gfxFont_ = f;
+  glyphAb_ = glyphBb_ = 0;
+  // Same scan as the library, including its skipping of the last glyph.
+  uint16_t n = f->last - f->first;
+  for (uint16_t c = 0; c < n; c++) {
+    const GFXglyph &g = f->glyph[c];
+    int ab = -g.yOffset, bb = g.height - ab;
+    glyphAb_ = std::max(glyphAb_, ab);
+    glyphBb_ = std::max(glyphBb_, bb);
+  }
+}
+
 int16_t TFT_eSPI::textWidth(const char *s) const {
+  if (gfxFont_) {
+    int w = 0;
+    for (; *s; s++) {
+      unsigned char c = *s;
+      if (c < gfxFont_->first || c > gfxFont_->last) continue;
+      const GFXglyph &g = gfxFont_->glyph[c - gfxFont_->first];
+      w += s[1] ? g.xAdvance : g.xOffset + g.width;  // the library's rule for the last character
+    }
+    return w;
+  }
   const unsigned char *tbl = font_ == 4 ? widtbl_f32 : widtbl_f16;
   int w = 0;
   for (; *s; s++) {
@@ -184,9 +208,58 @@ int16_t TFT_eSPI::textWidth(const char *s) const {
   return w;
 }
 
-int16_t TFT_eSPI::fontHeight() const { return font_ == 4 ? chr_hgt_f32 : chr_hgt_f16; }
+int16_t TFT_eSPI::fontHeight() const {
+  if (gfxFont_) return gfxFont_->yAdvance;
+  return font_ == 4 ? chr_hgt_f32 : chr_hgt_f16;
+}
 
 int16_t TFT_eSPI::drawString(const char *s, int32_t x, int32_t y) {
+  inkX0_ = inkY0_ = 1 << 20;
+  inkX1_ = inkY1_ = -(1 << 20);
+  if (gfxFont_) {
+    // Datum handling as in TFT_eSPI::drawString for free fonts: the y position
+    // is moved to the baseline, and the box height is the tallest glyph rise.
+    int cw = textWidth(s), ch = glyphAb_;
+    y += ch;
+    int baseline = ch;
+    if (datum_ == BL_DATUM || datum_ == BC_DATUM || datum_ == BR_DATUM) ch += glyphBb_;
+    switch (datum_) {
+      case TC_DATUM: x -= cw / 2; break;
+      case TR_DATUM: x -= cw; break;
+      case ML_DATUM: y -= ch / 2; break;
+      case MC_DATUM: x -= cw / 2; y -= ch / 2; break;
+      case MR_DATUM: x -= cw; y -= ch / 2; break;
+      case BL_DATUM: y -= ch; break;
+      case BC_DATUM: x -= cw / 2; y -= ch; break;
+      case BR_DATUM: x -= cw; y -= ch; break;
+      case L_BASELINE: y -= baseline; break;
+      case C_BASELINE: x -= cw / 2; y -= baseline; break;
+      case R_BASELINE: x -= cw; y -= baseline; break;
+    }
+    int px = x;
+    for (const char *p = s; *p; p++) {
+      unsigned char c = *p;
+      if (c < gfxFont_->first || c > gfxFont_->last) continue;
+      const GFXglyph &g = gfxFont_->glyph[c - gfxFont_->first];
+      const uint8_t *bm = gfxFont_->bitmap + g.bitmapOffset;
+      uint8_t bits = 0, bit = 0;
+      for (int yy = 0; yy < g.height; yy++)
+        for (int xx = 0; xx < g.width; xx++) {
+          if (!(bit++ & 7)) bits = *bm++;
+          if (bits & 0x80) {
+            int gx = px + g.xOffset + xx, gy = y + g.yOffset + yy;
+            ink(gx, gy);
+            drawPixel(gx, gy, fg_);
+          }
+          bits <<= 1;
+        }
+      px += g.xAdvance;
+    }
+    TextBox b{s, (int)x, (int)y - glyphAb_, cw, glyphAb_ + glyphBb_, 0, 0, 0, 0, gfxFont_, 0};
+    if (inkX1_ >= inkX0_) b.ix = inkX0_, b.iy = inkY0_, b.iw = inkX1_ - inkX0_ + 1, b.ih = inkY1_ - inkY0_ + 1;
+    textLog.push_back(b);
+    return cw;
+  }
   int cw = textWidth(s), ch = fontHeight();
   switch (datum_) {
     case TC_DATUM: x -= cw / 2; break;
@@ -198,7 +271,8 @@ int16_t TFT_eSPI::drawString(const char *s, int32_t x, int32_t y) {
     case BC_DATUM: x -= cw / 2; y -= ch; break;
     case BR_DATUM: x -= cw; y -= ch; break;
   }
-  textLog.push_back({s, (int)x, (int)y, cw, ch});
+  size_t logAt = textLog.size();
+  textLog.push_back({s, (int)x, (int)y, cw, ch, 0, 0, 0, 0, nullptr, font_});
   int px = x;
   for (; *s; s++) {
     unsigned char c = *s;
@@ -212,7 +286,7 @@ int16_t TFT_eSPI::drawString(const char *s, int32_t x, int32_t y) {
         unsigned char line = *p++;
         if (line & 0x80) {
           int n = (line & 0x7F) + 1;
-          while (n--) { drawPixel(px + pc % width, y + pc / width, fg_); pc++; }
+          while (n--) { ink(px + pc % width, y + pc / width); drawPixel(px + pc % width, y + pc / width, fg_); pc++; }
         } else {
           pc += line + 1;
         }
@@ -226,16 +300,24 @@ int16_t TFT_eSPI::drawString(const char *s, int32_t x, int32_t y) {
         for (int k = 0; k < bytes; k++) {
           unsigned char line = p[bytes * i + k];
           for (int bit = 0; bit < 8; bit++)
-            if (line & (0x80 >> bit)) drawPixel(px + k * 8 + bit, y + i, fg_);
+            if (line & (0x80 >> bit)) { ink(px + k * 8 + bit, y + i); drawPixel(px + k * 8 + bit, y + i, fg_); }
         }
       px += width;
     }
   }
+  TextBox &b = textLog[logAt];
+  if (inkX1_ >= inkX0_) b.ix = inkX0_, b.iy = inkY0_, b.iw = inkX1_ - inkX0_ + 1, b.ih = inkY1_ - inkY0_ + 1;
   return cw;
 }
 
 // ---- Sprites -------------------------------------------------------------------
+int spriteBudget16 = -1;
+
 void *TFT_eSprite::createSprite(int16_t w, int16_t h) {
+  if (depth_ == 16 && spriteBudget16 >= 0) {
+    if (spriteBudget16 == 0) return nullptr;
+    spriteBudget16--;
+  }
   w_ = w;
   h_ = h;
   buf.assign(w * h, 0);

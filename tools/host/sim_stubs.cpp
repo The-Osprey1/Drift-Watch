@@ -1,6 +1,7 @@
 // Computer stand-ins for the hardware layer, touch chip, settings storage and
 // Wi-Fi, driven by the variables in sim.h.
 #include <stdarg.h>
+#include <Preferences.h>
 #include "hal.h"
 #include "net.h"
 #include "settings.h"
@@ -15,9 +16,10 @@ int batteryMv = 3950;
 time_t epochAtZero = 1792788510;  // 2026-10-23 20:48:30 UTC
 std::vector<std::pair<uint32_t, uint8_t>> backlightLog;
 int settingsSaves = 0;
+std::map<std::string, FlashValue> flash;
 net::Fail syncOutcome = net::Fail::None;
 bool wifiSaved = true;
-int syncsStarted = 0;
+int syncsStarted = 0, syncsCancelled = 0;
 char zone[64] = "Europe/London";
 }  // namespace sim
 
@@ -59,13 +61,12 @@ bool read(TouchSample &out) {
 }
 }  // namespace touch
 
-Settings settings;
-void loadSettings() {}
-void saveSettings() { sim::settingsSaves++; }
-
 // Wi-Fi: each sync step takes a fixed time, then the scripted outcome happens.
+// Same rules as net.cpp: the running stage, the last result and the clock are separate.
 namespace {
 net::Sync syncNow = net::Sync::Idle;
+net::Result result = net::Result::None;
+uint16_t finished = 0;
 net::Fail fail = net::Fail::None;
 net::Portal portal = net::Portal::Off;
 uint32_t stepStart = 0, portalStart = 0;
@@ -87,10 +88,11 @@ void begin() {}
 void poll() {
   uint32_t e = sim::clockMs - stepStart;
   auto next = [&](Sync s) { syncNow = s; stepStart = sim::clockMs; };
+  auto end = [&](Fail f) { fail = f; result = f == Fail::None ? Result::Ok : Result::Failed; finished++; next(Sync::Idle); };
   switch (syncNow) {
     case Sync::Connecting:
       if (e >= STEP_MS[1]) {
-        if (sim::syncOutcome == Fail::JoinFailed) { fail = Fail::JoinFailed; next(Sync::Failed); }
+        if (sim::syncOutcome == Fail::JoinFailed) end(Fail::JoinFailed);
         else next(Sync::Zone);
       }
       break;
@@ -99,8 +101,8 @@ void poll() {
       break;
     case Sync::Clock:
       if (e >= STEP_MS[3]) {
-        if (sim::syncOutcome == Fail::ClockFailed) { fail = Fail::ClockFailed; next(Sync::Failed); }
-        else { sim::clockSet = true; lastSyncTime = hal::now(); next(Sync::Done); }
+        if (sim::syncOutcome == Fail::ClockFailed) end(Fail::ClockFailed);
+        else { sim::clockSet = true; lastSyncTime = hal::now(); end(Fail::None); }
       }
       break;
     default: break;
@@ -109,17 +111,21 @@ void poll() {
     portal = Portal::TimedOut;
 }
 void startSync() {
-  if (syncNow == Sync::Connecting || syncNow == Sync::Zone || syncNow == Sync::Clock) return;
+  if (portal == Portal::Waiting || portal == Portal::PhoneJoined) return;
+  if (syncNow != Sync::Idle) return;
   sim::syncsStarted++;
-  if (!sim::wifiSaved) { fail = Fail::NoNetworkSaved; syncNow = Sync::Failed; return; }
-  fail = Fail::None;
+  if (!sim::wifiSaved) { fail = Fail::NoNetworkSaved; result = Result::Failed; finished++; return; }
   syncNow = Sync::Connecting;
   stepStart = sim::clockMs;
 }
+void cancelSync() { if (syncNow != Sync::Idle) { syncNow = Sync::Idle; sim::syncsCancelled++; } }
 Sync syncState() { return syncNow; }
+bool syncRunning() { return syncNow != Sync::Idle; }
+Result lastResult() { return result; }
+uint16_t attempts() { return finished; }
 Fail failReason() { return fail; }
 int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
-void startPortal() { portal = Portal::Waiting; portalStart = sim::clockMs; syncNow = syncNow == Sync::Failed ? Sync::Idle : syncNow; }
+void startPortal() { portal = Portal::Waiting; portalStart = sim::clockMs; syncNow = Sync::Idle; }
 void cancelPortal() { if (portal == Portal::Waiting || portal == Portal::PhoneJoined) portal = Portal::Closed; }
 Portal portalState() { return portal; }
 uint32_t portalSecondsLeft() {

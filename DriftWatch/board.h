@@ -17,7 +17,7 @@
 #define TOUCH_FLIP_X  0
 #define TOUCH_FLIP_Y  0
 
-#define FW_VERSION "0.7.0"
+#define FW_VERSION "0.8.0"
 
 // Set to 1 to log frame and memory timings over USB serial and show them on the status panel.
 #ifndef DRIFT_DIAG

@@ -16,6 +16,8 @@ struct FaceContext {
   bool use12h;
   int batteryPct;     // -1 = unavailable
   SyncView sync;
+  uint8_t syncStage;  // 1..3 while syncing (joining, time zone, clock), else 0
+  bool noWifi;        // no network saved: the fix is Wi-Fi setup, not a sync
   float sweep;        // radar sweep progress 0..1, or < 0 when idle
 };
 

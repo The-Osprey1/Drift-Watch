@@ -71,7 +71,7 @@ struct View {
   const char *zone, *ssid;
   bool zoneManual;          // the time zone was typed in setup
   bool clockByHand;         // the clock was set on the watch and not synced since
-  bool raiseToWake;
+  bool raiseToWake, twistToWake;
   bool imuPresent;          // the motion sensor answered
   tm edit;                  // the time being set on the set time screen
   // v0.10.0

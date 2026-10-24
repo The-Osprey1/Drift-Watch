@@ -81,6 +81,7 @@ int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0;
 tm editTime{};  // what the set time screen shows; applied only by Save
 
 RaiseDetector wristRaise;
+TwistDetector wristTwist;
 DropDetector wristDrop;
 uint32_t lastImuRead = 0;
 bool wokeByRaise = false;
@@ -191,9 +192,9 @@ void readBattery() {
 // Below 20% and not charging, the radar beam only moves with the seconds.
 bool lowPower() { return batteryPct >= 0 && batteryPct < motion::LOW_BATTERY_PCT && !batteryLife.charging(); }
 
-// Night mode turns raise-to-wake off inside its window (touch and BOOT still wake the screen).
+// Night mode turns the wrist gestures off inside its window (touch and BOOT still wake the screen).
 bool gesturesOn() {
-  if (!settings.raiseToWake || !imu::present()) return false;
+  if (!(settings.raiseToWake || settings.twistToWake) || !imu::present()) return false;
   if (!settings.night || !net::timeIsValid()) return true;
   time_t t = hal::now();
   tm n;
@@ -317,6 +318,7 @@ screens::View view(Mode m, int page) {
   v.joinCode = net::joinCode();
   v.clockByHand = net::clockSetByHand();
   v.raiseToWake = settings.raiseToWake;
+  v.twistToWake = settings.twistToWake;
   v.imuPresent = imu::present();
   v.edit = editTime;
   v.screenTurn = settings.screenTurn;
@@ -383,7 +385,7 @@ uint32_t screenKey() {
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
   k = k * 31 + (uint32_t)net::joinWhy() * 2 + net::clockSetByHand();
-  k = k * 31 + settings.raiseToWake;
+  k = k * 31 + settings.raiseToWake * 2 + settings.twistToWake;
   // The clock shown on the Set time control: only its page is redrawn when the minute turns.
   // Set time is the third item, with two items a page (one with large text).
   bool clockShown = mode != Mode::Panel || settingsPage == (settings.largeText ? 2 : 1);
@@ -647,6 +649,7 @@ void sleepScreen() {
     mode = Mode::Face;
   }
   wristRaise.reset();  // a wrist that is still up must come down and rise again
+  wristTwist.reset();
   wokeByRaise = false;
   // Remember roughly what time it is, as a starting point for Set time if the power is lost.
   if (net::timeIsValid() && hal::now() - settings.lastKnownTime >= (time_t)KNOWN_TIME_SAVE_S) {
@@ -918,10 +921,15 @@ void activate(screens::Button b) {
     case Button::SetTime:
       openSetTime();
       return;
-    case Button::RaiseWake:
-      settings.raiseToWake = !settings.raiseToWake;
+    case Button::RaiseWake: {
+      // Wake gesture: both, then raise only, twist only, off, and round again.
+      int g = settings.raiseToWake && settings.twistToWake ? 0 : settings.raiseToWake ? 1 : settings.twistToWake ? 2 : 3;
+      g = (g + 1) % 4;
+      settings.raiseToWake = g == 0 || g == 1;
+      settings.twistToWake = g == 0 || g == 2;
       markSettingsChanged();
       break;
+    }
     case Button::Minus:
     case Button::Plus:
       screens::stepTime(editTime, (screens::TimeField)setTimePage, b == Button::Plus ? +1 : -1);
@@ -1014,8 +1022,12 @@ void stepRaise() {
   lastImuRead = hal::ms();
   Accel a;
   if (!imu::read(a)) return;
-  if (wristRaise.update(hal::ms(), a)) {
-    hal::log("ui: raise to wake (turned at %d deg/s)", (int)wristRaise.lastPeakRate());
+  // Both detectors see every sample, so each keeps its own picture of the wrist.
+  bool raised = wristRaise.update(hal::ms(), a) && settings.raiseToWake;
+  bool twisted = wristTwist.update(hal::ms(), a, wristRaise.facing()) && settings.twistToWake;
+  if (raised || twisted) {
+    if (raised) hal::log("ui: raise to wake (turned at %d deg/s)", (int)wristRaise.lastPeakRate());
+    else hal::log("ui: wrist twist wake (turned at %d deg/s)", (int)wristTwist.lastPeakRate());
     wakeScreen();
     wokeByRaise = true;
   }
@@ -1492,7 +1504,7 @@ void loop() {
       return;
     }
     // Light sleep wakes early on touch or BOOT, so it can wait longer; a plain wait has to poll.
-    bool raising = settings.raiseToWake && imu::present();
+    bool raising = (settings.raiseToWake || settings.twistToWake) && imu::present();
     uint32_t wait = !DRIFT_LIGHT_SLEEP ? 50 : raising ? DOZE_RAISE_MS : DOZE_MS;
     hal::WakeCause why = hal::doze(wait, DRIFT_LIGHT_SLEEP);
     if (why != hal::WakeCause::Timer) {

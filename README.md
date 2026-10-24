@@ -2,7 +2,7 @@
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
-**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 290 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
+**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
 
 ## The board (checked against the Waveshare wiki)
 
@@ -11,7 +11,7 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 | Chip | ESP32-S3R2: two cores, 2 MB PSRAM, 16 MB flash |
 | Screen | 1.28" round IPS LCD, 240 x 240, GC9A01A driver, 4-wire SPI up to 80 MHz. Lit by a backlight, so black pixels do **not** save power |
 | Touch | CST816S on I2C (address 0x15), with interrupt and reset pins |
-| Motion sensor | QMI8658 on the same I2C bus, used for raise to wake and wrist-down sleep (read by polling). Interrupt lines: INT1 on GPIO 4 (shared with the MOSFET 1 gate, so left undriven) and INT2 on GPIO 3 |
+| Motion sensor | QMI8658 on the same I2C bus, used for raise to wake, wrist twist and wrist-down sleep (read by polling). Interrupt lines: INT1 on GPIO 4 (shared with the MOSFET 1 gate, so left undriven) and INT2 on GPIO 3 |
 | Bluetooth | Bluetooth Low Energy, used only while Phone sync is open |
 | USB-C | Goes through a CH343P USB-to-serial chip to UART0 (GPIO 43/44), not to the ESP32-S3's own USB pins. Serial runs at 115200 baud |
 | Battery | Read through a 200k/100k divider on GPIO 1. The charger chip has no "charging" signal wired to the ESP32, so the watch cannot tell directly if it is charging (it guesses from a rising level) |
@@ -39,7 +39,8 @@ Swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png` a
 | Settings, details, setup | Swipe down, or BOOT | Back one level (setup or details to settings, settings to face) |
 | Settings, details, setup | Tap a control | Acts on release. Sliding off a control cancels it |
 | Screen off | Any touch or BOOT | Wakes it. That touch does nothing else |
-| Screen off | Raise your wrist to look at the watch | Wakes it (Raise to wake, on by default; off during Night mode) |
+| Screen off | Raise your wrist to look at the watch | Wakes it (on by default; off during Night mode) |
+| Screen off | Twist your wrist out and straight back, with the watch resting screen up (on a desk, the arm of a chair) | Wakes it (on by default; off during Night mode) |
 | Screen on | Turn the screen away after looking at it | Turns it off at once (wrist-down sleep) |
 | Anywhere | Hold BOOT for 4 s | Opens the touch check, even if touch is lined up wrong |
 
@@ -48,13 +49,13 @@ Settings has six pages of two controls each (twelve pages of one with large text
 1. **Brightness** (four steps) and **Time format** (24-hour or 12-hour).
 2. **Set time** (shows the clock, or "Time not set") and **Phone sync** (sets the time, time zone and Wi-Fi from a phone or computer over Bluetooth). When the clock is not set, settings open on this page.
 3. **Sync now**, which also shows the sync state, and **Wi-Fi setup** (shows the saved network).
-4. **Raise to wake** (On or Off) and **Night mode** (Off, 22:00-07:00, 23:00-07:00 or 00:00-08:00; turns raise to wake and wrist-down sleep off at night).
+4. **Wake gesture** (Raise, twist; Raise; Twist; or Off) and **Night mode** (Off, 22:00-07:00, 23:00-07:00 or 00:00-08:00; turns the wake gestures and wrist-down sleep off at night).
 5. **Motion** (Full or Reduced; Reduced turns slides, the startup sequence, the wake fade, the radar beam and spinners into instant changes) and **Screen turn** (Normal, Right, Half turn or Left; runs the touch check afterwards).
 6. **Touch check** (two taps line touch up with the screen) and **Status and Text size**, which opens the details screen: battery and time left, clock, last sync and how long ago, clock drift, time zone, network, motion sensor and its interrupt lines, screen turn, version, and the **Text size** setting (Normal or Large, about 140%, for settings and setup screens only).
 
 **Set time** works with no Wi-Fi at all: hour, minutes, day, month and year each have a page with - and +, then a page shows the result with **Save**. Swipe down or BOOT leaves without saving. If the clock was never set it starts from the last time the watch saved (it saves at most once an hour), or else from the date the firmware was built. A later successful sync replaces it. The board has no clock chip, so the time is lost when the battery runs flat or the watch restarts from power-off. Between syncs the watch learns how fast its clock drifts and corrects for it.
 
-The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (every 0.5 s with Raise to wake off). Light sleep is skipped while Wi-Fi or Bluetooth is on. The time resyncs every 6 hours while the screen is off (30 minutes after a failure), only if a network is saved.
+The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (every 0.5 s with Wake gesture off). Light sleep is skipped while Wi-Fi or Bluetooth is on. The time resyncs every 6 hours while the screen is off (30 minutes after a failure), only if a network is saved.
 
 ## Flashing
 

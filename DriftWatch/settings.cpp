@@ -35,6 +35,7 @@ void loadSettings() {
   settings.reducedMotion = p.getBool("lessmo", false);
   settings.largeText = p.isKey("bigtext") && p.getBool("bigtext", false);
   settings.raiseToWake = !p.isKey("raise") || p.getBool("raise", true);
+  settings.twistToWake = !p.isKey("twist") || p.getBool("twist", true);
   settings.screenFacing = p.isKey("facing") ? p.getChar("facing", 0) : 0;
   settings.screenTurn = p.isKey("turn") ? p.getUChar("turn", DISPLAY_ROTATION) : DISPLAY_ROTATION;
   settings.touchMap = p.getUChar("tmap", 0);
@@ -57,6 +58,7 @@ void saveSettings() {
   p.putBool("lessmo", settings.reducedMotion);
   p.putBool("bigtext", settings.largeText);
   p.putBool("raise", settings.raiseToWake);
+  p.putBool("twist", settings.twistToWake);
   p.putChar("facing", settings.screenFacing);
   p.putUChar("turn", settings.screenTurn);
   p.putUChar("tmap", settings.touchMap);

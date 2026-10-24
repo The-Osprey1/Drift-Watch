@@ -655,6 +655,68 @@ const Accel HANGING = {0, -1, 0};           // arm down at the side: screen vert
 const Accel LOOKING = {0, -0.45f, 0.89f};   // turned up towards the eyes, about 27 degrees from level
 const Accel FLAT = {0, 0, 1};               // on a table, screen up
 
+// Gravity for a wrist resting screen up, rolled `deg` degrees about the forearm.
+Accel rolled(float deg) {
+  float r = deg * 3.14159265f / 180;
+  return {sinf(r), 0, cosf(r)};
+}
+// A quick twist out to `deg` and back, each way over `stepMs` x 2.
+void twist(float deg, uint32_t stepMs = 80) {
+  wrist({{stepMs, rolled(deg / 2)}, {stepMs, rolled(deg)}, {stepMs, rolled(deg / 2)}, {300, FLAT}});
+}
+
+// Rolls smoothly from `from` to `to` degrees over `ms`, in 40 ms steps.
+void rollRamp(float from, float to, uint32_t ms) {
+  for (uint32_t t = 40; t <= ms; t += 40) wrist({{40, rolled(from + (to - from) * t / ms)}});
+}
+
+void twistScenarios() {
+  // Twists here go to 60 degrees, so the screen stays partly up and raise to wake (which needs
+  // the screen turned away first) is not what wakes it.
+  printf("Wrist twist to wake\n");
+  sim::accel = FLAT;
+  runFor(16000);
+  CHECK(screen() == "asleep", "asleep on the desk, got %s", screen().c_str());
+  wrist({{1000, FLAT}});
+  twist(60);
+  CHECK(screen() == "face", "a quick twist out and back wakes it, got %s", screen().c_str());
+  runFor(16000);
+
+  printf("Wrist twist: what does not wake it\n");
+  wrist({{1000, FLAT}});
+  rollRamp(0, 50, 800);  // to 50 degrees: the screen stays partly up, so this is not a raise either
+  rollRamp(50, 0, 800);
+  wrist({{300, FLAT}});
+  CHECK(screen() == "asleep", "a slow turn out and back (about 60 degrees a second) does not");
+  wrist({{1000, FLAT}, {80, rolled(35)}, {80, rolled(70)}, {2000, rolled(70)}});
+  CHECK(screen() == "asleep", "turning and staying turned does not");
+  rollRamp(70, 0, 2400);  // back slowly, or coming back up would count as a raise
+  wrist({{1000, FLAT}});
+  twist(20);
+  CHECK(screen() == "asleep", "a small wobble does not");
+  for (int i = 0; i < 6; i++) wrist({{80, rolled(50)}, {80, rolled(-10)}});  // arm swinging: never still first
+  wrist({{300, FLAT}});
+  CHECK(screen() == "asleep", "continuous swinging does not");
+  wrist({{1000, HANGING}, {80, {0.6f, -0.8f, 0}}, {80, {0.9f, -0.4f, 0}}, {80, {0.6f, -0.8f, 0}}, {300, HANGING}});
+  CHECK(screen() == "asleep", "a hanging arm swung up and back does not");
+  for (uint32_t t = 40; t <= 2400; t += 40) {  // slowly back to the desk, so it is not a raise
+    float f = t / 2400.0f, x = 0, y = -(1 - f), z = f, n = sqrtf(y * y + z * z);
+    wrist({{40, {x, y / n, z / n}}});
+  }
+  settings.twistToWake = false;
+  wrist({{1000, FLAT}});
+  twist(60);
+  CHECK(screen() == "asleep", "with twist off in the setting, a twist does nothing");
+  settings.twistToWake = true;
+  settings.raiseToWake = false;
+  wrist({{1000, FLAT}});
+  twist(60);
+  CHECK(screen() == "face", "with raise off, twist still works, got %s", screen().c_str());
+  settings.raiseToWake = true;
+  runFor(16000);
+  sim::accel = FLAT;
+}
+
 void raiseScenarios() {
   printf("Raise to wake\n");
   sim::accel = FLAT;
@@ -708,13 +770,21 @@ void raiseScenarios() {
   }
   CHECK(settings.screenFacing == 1, "and it learns back (got %d)", settings.screenFacing);
 
-  printf("Raise to wake setting\n");
+  printf("Wake gesture setting\n");
   openSettings();
-  CHECK(goTo(screens::Button::RaiseWake) && tapButton(screens::Button::RaiseWake) && !settings.raiseToWake, "the setting turns it off");
+  CHECK(settings.raiseToWake && settings.twistToWake, "raise and twist both start on");
+  CHECK(goTo(screens::Button::RaiseWake) && tapButton(screens::Button::RaiseWake) && settings.raiseToWake && !settings.twistToWake,
+        "one tap: raise only");
   tapButton(screens::Button::RaiseWake);
-  CHECK(settings.raiseToWake, "and on");
+  CHECK(!settings.raiseToWake && settings.twistToWake, "then twist only");
+  tapButton(screens::Button::RaiseWake);
+  CHECK(!settings.raiseToWake && !settings.twistToWake, "then off");
+  tapButton(screens::Button::RaiseWake);
+  CHECK(settings.raiseToWake && settings.twistToWake, "and back to both");
   pressBoot();
   settle();
+
+  twistScenarios();
 
   printf("Light sleep stays off while Wi-Fi runs\n");
   runFor(16000);
@@ -1797,6 +1867,9 @@ void logicChecks() {
     }
     for (int i = 0; i < 15; i++, t += 40) woke |= r.update(t, last);  // held where the turn ended
     CHECK(!woke, "a steady 60 degrees a second does not wake it");
+    woke |= r.update(t, {0.5f, last.y, last.z}), t += 40;  // a jolt while the wrist stays up
+    for (int i = 0; i < 10; i++, t += 40) woke |= r.update(t, last);
+    CHECK(!woke, "nor does a jolt afterwards, while the wrist stays up");
     r.reset();
     for (int i = 0; i < 25; i++, t += 40) woke |= r.update(t, {0, -1, 0});
     for (int i = 0; i <= 6; i++, t += 40) {
@@ -1811,6 +1884,32 @@ void logicChecks() {
     for (int i = 0; i < 25; i++, t += 40) r.update(t, {0, -1, 0});
     for (int i = 0; i < 20; i++, t += 40) shaken |= r.update(t, {0, -0.6f, 1.2f});  // 1.34 g: moving, not held
     CHECK(!shaken, "a screen that is up but being shaken does not wake it");
+  }
+
+  printf("Wrist twist detector\n");
+  {
+    TwistDetector t;
+    uint32_t ms = 0;
+    auto feed = [&](Accel a, uint32_t dur) {
+      bool fired = false;
+      for (uint32_t end = ms + dur; ms < end; ms += 80) fired |= t.update(ms, a, 1);
+      return fired;
+    };
+    auto roll = [](float deg) { float r = deg * 3.14159265f / 180; return Accel{sinf(r), 0, cosf(r)}; };
+    feed(roll(0), 1000);
+    bool fired = feed(roll(35), 80) | feed(roll(70), 80) | feed(roll(35), 80) | feed(roll(0), 160);
+    CHECK(fired && t.lastPeakRate() >= TwistDetector::TWIST_DPS, "a twist is seen (%.0f degrees a second)", t.lastPeakRate());
+    fired = feed(roll(35), 80) | feed(roll(70), 80) | feed(roll(35), 80) | feed(roll(0), 160);
+    CHECK(!fired, "a second twist straight away is not (it needs a still moment first)");
+    feed(roll(0), 1200);
+    fired = feed(roll(-35), 80) | feed(roll(-70), 80) | feed(roll(-35), 80) | feed(roll(0), 160);
+    CHECK(fired, "after a pause, a twist the other way is seen too");
+    TwistDetector down;
+    ms = 0;
+    bool d = false;
+    for (int i = 0; i < 12; i++, ms += 80) d |= down.update(ms, roll(0), -1);  // screen facing down
+    for (float a : {35.f, 70.f, 35.f, 0.f, 0.f}) { d |= down.update(ms, roll(a), -1); ms += 80; }
+    CHECK(!d, "not with the screen facing down");
   }
 
   printf("Night mode\n");

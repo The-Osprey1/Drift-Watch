@@ -1,6 +1,6 @@
 # Drift-Watch v0.10.0: screen turn, radar, offline time, phone sync and gestures
 
-This version answers the five-part overhaul brief: screen rotation, Bluetooth time sync and Wi-Fi hardening, a gesture engine, the radar sweep, and readability and polish. Everything here builds with no warnings and passes 290 scripted checks in the computer simulation, which runs the real interface, drawing, settings, phone-sync and gesture code. **None of v0.10.0 has been run on a watch yet.** Section 8 lists exactly what only a watch can prove, and section 9 what was left for later.
+This version answers the five-part overhaul brief: screen rotation, Bluetooth time sync and Wi-Fi hardening, a gesture engine, the radar sweep, and readability and polish. Everything here builds with no warnings and passes 307 scripted checks in the computer simulation, which runs the real interface, drawing, settings, phone-sync and gesture code. **None of v0.10.0 has been run on a watch yet.** Section 8 lists exactly what only a watch can prove, and section 9 what was left for later.
 
 ## 1. Plan and architecture
 
@@ -70,7 +70,9 @@ New settings: **Screen turn** (Normal, Right, Half turn, Left) and **Touch check
 
 **Wrist-down sleep** is new. Once the screen has been held up and looked at for 300 ms, turning it away (or letting the arm drop) for 360 ms turns it off without waiting for the 15 s timeout. Samples come every 80 ms, so it acts within 400 ms. A touch puts it off for 2 s, so reading the watch lying down or showing it to someone does not blank it.
 
-**Night mode** (Off, 22:00-07:00, 23:00-07:00, 00:00-08:00) turns raise to wake and wrist-down sleep off inside its window. Touch and BOOT still wake the screen.
+**Wrist twist to wake** (added after the first draft, on request): with the watch resting at least partly screen up and still for 0.3 s, turning the wrist 40 degrees or more at 150 degrees a second or faster and straight back within 0.4 s wakes the screen. It covers the times raise to wake cannot: the arm already up on a desk or a chair. Slow turns, turning and staying turned, small wobbles, continuous arm swings and a hanging arm swung up and back do not count, and after a twist it waits for another still moment. The **Wake gesture** setting (where Raise to wake was) cycles Raise, twist / Raise / Twist / Off. While adding it, a gap in raise to wake was closed: once the wrist has been held up, the raise is decided, so a jolt later while it stays up can no longer count as the flick.
+
+**Night mode** (Off, 22:00-07:00, 23:00-07:00, 00:00-08:00) turns the wake gestures and wrist-down sleep off inside its window. Touch and BOOT still wake the screen.
 
 **Motion-sensor interrupt:** the sensor's data-ready signal is now on INT2 (GPIO 3), and the watch counts edges on both lines. Details shows "Sensor lines: GPIO 4 n, GPIO 3 n" as a check of the wiring on the real board. Waking the chip from the interrupt is in section 9.
 
@@ -108,6 +110,7 @@ Previews: `designs/v0.10.0_new.png` (radar, touch check, settings and details) a
 | Phone sync | Bluetooth fails to start | Checked (screen says so) | |
 | Raise | Needs a flick; slow turns and shaking do not wake | Checked | **Try it on the wrist**; thresholds may need tuning |
 | Wrist down | Sleeps within 400 ms of turning away; not before a look; a touch puts it off | Checked | Try it on the wrist |
+| Wrist twist | Quick twist out and back wakes; slow turns, staying turned, wobbles, swings and a hanging arm do not; works with raise off; the setting cycles | Checked | **Try it on the wrist**; the 40 degree, 150 degrees a second and 0.4 s thresholds may need tuning |
 | Night mode | Raise does not wake inside the window; BOOT does | Checked | |
 | Interrupt lines | Edges counted on GPIO 4 and 3 | Not simulated | Details should show GPIO 3 counting up while the screen is on |
 | Battery | Time left measured, charging seen | Checked with a scripted 5% an hour | Takes about an hour of use to show |
@@ -115,7 +118,7 @@ Previews: `designs/v0.10.0_new.png` (radar, touch check, settings and details) a
 | Layout | Every screen in both text sizes | Checked (no problems) | Look |
 | Build | No warnings; USB serial on boot stays off | Checked (`CDCOnBoot=default`) | Serial log should appear at 115200 baud |
 
-Simulation result: **290 of 290 checks pass**, and `render_faces` finds no text or state problems.
+Simulation result: **307 of 307 checks pass**, and `render_faces` finds no text or state problems.
 
 ### Checklist for the first run on the watch
 

@@ -26,6 +26,7 @@ struct Settings {
   bool reducedMotion = false;   // slides and sweeps become instant cuts
   bool largeText = false;       // bigger text on the settings and setup screens; faces are unchanged
   bool raiseToWake = true;      // lifting the wrist turns the screen on
+  bool twistToWake = true;      // so does a quick wrist twist out and back
   int8_t screenFacing = 0;      // +1 or -1 once learned (see RaiseDetector), 0 = use the board default
   uint8_t screenTurn = 0;       // TFT_eSPI rotation 0..3; loadSettings starts it at DISPLAY_ROTATION
   uint8_t touchMap = 0;         // orient:: map from raw touch to the screen, found by the touch check

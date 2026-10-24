@@ -67,3 +67,38 @@ class DropDetector {
   bool armed_ = false;
   uint32_t upSince_ = 0, awaySince_ = 0, touchedAt_ = 0;
 };
+
+// Wrist twist to wake: a quick turn of the wrist out and straight back, like shaking off a
+// drop of water, from wherever the watch was resting. Works when raise to wake does not: the
+// wrist already up on a desk, or lying on the arm of a chair. It needs the forearm to be off
+// vertical (turning a hanging arm does not move gravity), the screen resting at least partly
+// face up (so a hanging arm swung up and down is not mistaken for one), and a still moment
+// first, so arm swings while walking do not count.
+class TwistDetector {
+ public:
+  // `facing` is RaiseDetector::facing(): which way the screen points along the chip's z.
+  bool update(uint32_t ms, const Accel &a, int8_t facing);  // true once for each twist
+  void reset();
+  float lastPeakRate() const { return lastPeak_; }
+
+  static constexpr float CALM_DPS = 30;        // resting: turning slower than this
+  static constexpr float CALM_G = 0.15f;       // and within this of 1 g
+  static constexpr float REST_Z = 0.35f;       // with the screen at least this far face up
+  static constexpr uint32_t CALM_MS = 300;     // for this long before the twist
+  static constexpr float LEAVE_DEG = 10;       // the twist has started
+  static constexpr float OUT_DEG = 40;         // turned at least this far
+  static constexpr uint32_t OUT_MS = 400;      // that quickly
+  static constexpr float TWIST_DPS = 150;      // and this fast at some point
+  static constexpr float BACK_DEG = 15;        // then back within this of where it started
+  static constexpr uint32_t BACK_MS = 400;     // this soon after reaching OUT_DEG (a lowered arm stays down longer)
+  static constexpr uint32_t COOLDOWN_MS = 1000;
+
+ private:
+  enum class Phase : uint8_t { Resting, Leaving, Out } phase_ = Phase::Resting;
+  bool haveRef_ = false, havePrev_ = false;
+  float rx_ = 0, ry_ = 0, rz_ = 1;  // resting direction of gravity, unit length
+  Accel prev_{};
+  uint32_t prevMs_ = 0, calmSince_ = 0, leftAt_ = 0, outAt_ = 0, firedAt_ = 0;
+  float peak_ = 0, lastPeak_ = 0;
+};
+

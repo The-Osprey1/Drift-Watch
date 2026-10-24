@@ -421,8 +421,12 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       it.value = "Set time";
       break;
     case Button::RaiseWake:
-      it.label = v.imuPresent ? "Raise to wake" : "No sensor";
-      it.value = v.raiseToWake && v.imuPresent ? "On" : "Off";
+      it.label = v.imuPresent ? "Wake gesture" : "No sensor";
+      it.value = !v.imuPresent                       ? "Off"
+                 : v.raiseToWake && v.twistToWake ? "Raise, twist"
+                 : v.raiseToWake                  ? "Raise"
+                 : v.twistToWake                  ? "Twist"
+                                                  : "Off";
       break;
     case Button::SyncNow:
       // The label carries the state; the value is what a tap does.

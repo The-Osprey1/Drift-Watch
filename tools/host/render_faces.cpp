@@ -54,7 +54,7 @@ int main(int argc, char **argv) {
   TFT_eSprite frame(&screen);
   frame.createSprite(240, 240);
 
-  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float sweep; uint8_t stage = 0; bool noWifi = false; };
+  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float beamDeg; uint8_t stage = 0; bool noWifi = false; };
   std::vector<Case> cases = {
       {"2048", makeTime(20, 48, 37), true, false, 86, SyncView::Synced, -1},
       {"1111", makeTime(11, 11, 11), true, false, 52, SyncView::Synced, -1},
@@ -71,13 +71,14 @@ int main(int argc, char **argv) {
       {"valid_failed", makeTime(20, 48, 37), true, false, 86, SyncView::Failed, -1},
       {"notime_failed", makeTime(0, 0, 0), false, false, 70, SyncView::Failed, -1},
       {"notime_nowifi", makeTime(0, 0, 0), false, false, 70, SyncView::Failed, -1, 0, true},
-      {"sweep", makeTime(20, 48, 2), true, false, 86, SyncView::Synced, 0.35f},
+      {"beam", makeTime(20, 48, 2), true, false, 86, SyncView::Synced, 126},
+      {"beam_low", makeTime(20, 48, 40), true, false, 15, SyncView::Synced, 240},
   };
 
   int problems = 0;
   for (int f = 0; f < FACE_COUNT; f++) {
     for (const Case &c : cases) {
-      FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.stage, c.noWifi, c.sweep};
+      FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.stage, c.noWifi, c.beamDeg};
       frame.textLog.clear();
       drawFaceStatic(frame, (Face)f, ctx);
       drawFaceLive(frame, (Face)f, ctx);
@@ -85,16 +86,18 @@ int main(int argc, char **argv) {
       snprintf(label, sizeof label, "%s_%s", faceName((Face)f), c.name);
       problems += edgeProblems(frame, label);
       // Words for the clock/sync state. A valid clock never shows a warning, whatever the sync is doing.
-      bool noTime = false, syncing = false, hint = false;
+      // v0.10.0: the dial never says NO TIME; it asks to SET TIME instead.
+      bool noTime = false, banned = false, syncing = false, hint = false;
       for (const auto &t : frame.textLog) {
-        noTime |= t.text == "NO TIME";
+        noTime |= t.text == "SET TIME";
+        banned |= t.text == "NO TIME";
         syncing |= t.text == "SYNCING";
         hint |= t.text.rfind("Swipe up", 0) == 0;
       }
-      bool ok = c.valid ? !noTime && !syncing && !hint
-                        : c.sync == SyncView::Syncing ? syncing && !noTime : noTime && hint && !syncing;
+      bool ok = !banned && (c.valid ? !noTime && !syncing && !hint
+                                   : c.sync == SyncView::Syncing ? syncing && !noTime : noTime && hint && !syncing);
       if (!ok) {
-        printf("  STATE %s: no-time %d, syncing %d, hint %d\n", label, noTime, syncing, hint);
+        printf("  STATE %s: set-time %d, no-time %d, syncing %d, hint %d\n", label, noTime, banned, syncing, hint);
         problems++;
       }
       snprintf(path, sizeof path, "%s/%s.ppm", outDir, label);

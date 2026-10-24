@@ -12,13 +12,17 @@
 #define PIN_BAT_ADC   1    // battery through a 200k/100k divider (x3)
 #define PIN_BOOT_BTN  0    // BOOT button, also usable as a normal button
 // Serial: UART0 on GPIO 43 (TX) and 44 (RX), carried to the USB-C port by a CH343P chip.
-// The QMI8658 motion sensor is on the I2C pins above. Its interrupt lines (GPIO 4 and 3
-// according to the NuttX board notes) are not confirmed, so the firmware polls it instead.
+// The QMI8658 motion sensor is on the I2C pins above. The Waveshare pin table and the NuttX
+// board notes both give its interrupt lines as INT1 = GPIO 4 and INT2 = GPIO 3 (GPIO 4 also
+// drives the gate of the MOSFET1 solder pads). The firmware still polls the sensor; it only
+// counts edges on these lines so a watch test can confirm the wiring (shown in Details).
+#define PIN_IMU_INT1  4
+#define PIN_IMU_INT2  3
 
-// Touch axes relative to the screen. Flip these if swipes run the wrong way on the real watch.
-#define TOUCH_SWAP_XY 0
-#define TOUCH_FLIP_X  0
-#define TOUCH_FLIP_Y  0
+// Screen turn on first start, as TFT_eSPI setRotation: 0 none, 1 a quarter turn clockwise,
+// 2 upside down, 3 a quarter turn anticlockwise. It can be changed in Settings (Screen turn),
+// and touch is lined up for the turn with a two-tap touch check (orient.h).
+#define DISPLAY_ROTATION 1
 
 // Which way the screen faces along the motion sensor's z axis before the watch has learned
 // it (+1 or -1). The watch learns the real direction whenever the screen is touched.
@@ -30,7 +34,7 @@
 #define DRIFT_LIGHT_SLEEP 1
 #endif
 
-#define FW_VERSION "0.9.0"
+#define FW_VERSION "0.10.0"
 
 // Set to 1 to log frame and memory timings over USB serial and show them on the status panel.
 #ifndef DRIFT_DIAG

@@ -21,7 +21,7 @@ class TFT_eSPI {
   TFT_eSPI(int w = 240, int h = 240);
   virtual ~TFT_eSPI() {}
   void init() {}
-  void setRotation(int) {}
+  void setRotation(int r) { rotation = r & 3; }
   void writecommand(uint8_t c) { lastCommand = c; }
   int width() const { return w_; }
   int height() const { return h_; }
@@ -54,6 +54,7 @@ class TFT_eSPI {
 
   std::vector<uint16_t> buf;
   uint8_t lastCommand = 0;
+  int rotation = 0;          // as set by setRotation; the simulated touch chip turns positions to match
   uint64_t pixelsPushed = 0;  // pixels sent by sprite pushes, to estimate panel transfer time
   uint32_t pushes = 0;
 

@@ -11,6 +11,13 @@
 #include "board.h"
 #include "faces.h"
 #include "hal.h"
+#include "orient.h"
+#include "phone.h"
+#include "ble.h"
+#include "battery.h"
+#include "raise.h"
+#include "timekeep.h"
+#include <math.h>
 #include "screens.h"
 #include "settings.h"
 #include "sim.h"
@@ -125,11 +132,11 @@ void settle(uint32_t ms);
 // Swipes to the page of the current screen that holds `b`: back to the first page, then forward.
 bool goTo(screens::Button b) {
   screens::Control c;
-  for (int i = 0; i < 12 && ui::page() > 0; i++) {
+  for (int i = 0; i < 16 && ui::page() > 0; i++) {
     swipeRight();
     settle(400);
   }
-  for (int i = 0; i < 12 && !find(b, c); i++) {
+  for (int i = 0; i < 16 && !find(b, c); i++) {
     int before = ui::page();
     swipeLeft();
     settle(400);
@@ -259,6 +266,14 @@ screens::View baseView() {
   v.edit.tm_hour = 20;
   v.edit.tm_min = 48;
   screens::stepTime(v.edit, screens::TimeField::Hour, 0);
+  v.screenTurn = 1;
+  v.touchChecked = true;
+  v.bleName = "Drift-1A2B";
+  v.bleSecondsLeft = 172;
+  v.phoneSsid = "";
+  v.batteryHours = -1;
+  v.syncSource = net::Source::Wifi;
+  v.syncAgo = "3 h ago";
   return v;
 }
 
@@ -430,6 +445,64 @@ void screenVariants() {
       bad += renderAll(s, w, std::string("details_join_") + names[(int)why]);
     }
 
+    // v0.10.0: phone sync in every phase, the touch check, and the new details lines.
+    struct P { const char *name; ble::State st; bool gotTime, wifi; const char *error; };
+    P phones[] = {
+        {"waiting", ble::State::Waiting, false, false, nullptr},
+        {"connected", ble::State::Connected, false, false, nullptr},
+        {"refused", ble::State::Connected, false, false, "network name is empty or too long"},
+        {"timeset", ble::State::Connected, true, false, nullptr},
+        {"timeset_wifi", ble::State::Connected, true, true, nullptr},
+        {"closed", ble::State::Off, false, true, nullptr},
+        {"failed", ble::State::Failed, false, false, nullptr},
+    };
+    for (const P &ph : phones) {
+      screens::View w = v;
+      w.screen = screens::Screen::PhoneSync;
+      w.ble = ph.st;
+      w.phoneGotTime = ph.gotTime;
+      w.phoneWifiSaved = ph.wifi;
+      w.phoneSsid = ph.wifi ? "A very long network name here" : "";
+      w.phoneError = ph.error;
+      bad += renderAll(s, w, std::string("phone_") + ph.name);
+    }
+    for (int step = 0; step < 2; step++)
+      for (screens::CheckResult r : {screens::CheckResult::Tapping, screens::CheckResult::Matched, screens::CheckResult::NoMatch}) {
+        if (step == 0 && r != screens::CheckResult::Tapping) continue;
+        screens::View w = v;
+        w.screen = screens::Screen::TouchCheck;
+        w.checkStep = step;
+        w.checkResult = r;
+        static const char *rn[] = {"tap", "matched", "nomatch"};
+        bad += renderAll(s, w, std::string("touchcheck_") + std::to_string(step + 1) + "_" + rn[(int)r]);
+      }
+    {
+      screens::View w = v;
+      w.screen = screens::Screen::Details;
+      w.batteryHours = 61.4f;
+      w.driftPpb = -48000;
+      w.syncSource = net::Source::Phone;
+      w.syncAgo = "12 days ago";
+      w.imuLine1 = 12;
+      w.imuLine2 = 40211;
+      w.touchChecked = false;
+      w.screenTurn = 2;
+      bad += renderAll(s, w, "details_v010");
+      std::string words = wordsOf(s, w);
+      CHECK(says(words, "About 2 days 13 h left") && says(words, "12 days ago"), "details show the time left and the age of the last sync");
+      w.charging = true;
+      bad += renderAll(s, w, "details_charging");
+    }
+    {
+      screens::View w = v;
+      w.night = 1;
+      w.touchChecked = false;
+      w.screenTurn = 2;
+      bad += renderAll(s, w, "settings_night");
+      w.use12h = true;
+      bad += renderAll(s, w, "settings_night_12h");
+    }
+
     // Pressed states.
     screens::View pv = v;
     pv.pressed = screens::Button::Brightness;
@@ -555,6 +628,16 @@ void contrastAudit() {
 
 // ---- Interaction scenarios ---------------------------------------------------------
 int lastBacklight() { return sim::backlightLog.empty() ? -1 : sim::backlightLog.back().second; }
+
+// Taps the touch check's two dots where they are drawn. With `snapSecond`, saves the second dot.
+void doTouchCheck(bool snapSecond = false) {
+  for (int i = 0; i < 2; i++) {
+    if (i && snapSecond) snap("touch_check_2");
+    tap(orient::TARGET_X[i], orient::TARGET_Y[i]);
+    runFor(50);
+  }
+  runFor(1600);  // the result shows, then the check closes
+}
 
 void openSettings() {
   swipeUp();
@@ -693,6 +776,7 @@ void timeSteps() {
   CHECK(t.tm_year + 1900 == screens::YEAR_MIN, "years wrap within %d-%d", screens::YEAR_MIN, screens::YEAR_MAX);
 }
 
+void v010Scenarios();
 void scenarios() {
   printf("Startup\n");
   sim::cold = true;
@@ -704,7 +788,14 @@ void scenarios() {
   runFor(300); snap("boot_b");
   runFor(300); snap("boot_c");
   runFor(500);
-  CHECK(screen() == "face", "startup ends on the face, got %s", screen().c_str());
+  CHECK(screen() == "touchcheck", "the first start with the screen turned checks touch, got %s", screen().c_str());
+  snap("touch_check_1");
+  CHECK(settings.screenTurn == DISPLAY_ROTATION && ui::display().rotation == DISPLAY_ROTATION,
+        "the screen starts turned a quarter turn clockwise (turn %d)", ui::display().rotation);
+  doTouchCheck(true);
+  CHECK(touchChecked() && settings.touchMap == orient::expectedTouchMap(DISPLAY_ROTATION),
+        "the touch check finds the expected map for that turn (map %d)", settings.touchMap);
+  CHECK(screen() == "face", "then on to the face, got %s", screen().c_str());
   snap("face_syncing");
   settle(1500);
   CHECK(net::lastResult() == net::Result::Ok && !net::syncRunning(), "sync finished");
@@ -744,7 +835,8 @@ void scenarios() {
   while (screen() != "face" && sim::clockMs - released < 2000) ui::loop();
   CHECK(settings.face == (face2 + 3) % FACE_COUNT, "three swipes move three faces (moved %d)",
         (settings.face - face2 + FACE_COUNT) % FACE_COUNT);
-  CHECK(sim::clockMs - released <= motion::FACE_MS + 20, "settles %u ms after the last release",
+  // The release hands over to a spring, which takes a little longer than FACE_MS to come to rest.
+  CHECK(sim::clockMs - released <= 320, "settles %u ms after the last release",
         sim::clockMs - released);
   printf("  three swipes took %u ms in total\n", sim::clockMs - t0);
 
@@ -810,15 +902,18 @@ void scenarios() {
   swipeLeft();
   settle();
   CHECK(ui::page() == 2, "and page 3 (page %d)", ui::page() + 1);
+  int lastPage = screens::SETTINGS_ITEMS / 2 - 1;
+  for (int i = 3; i <= lastPage; i++) {
+    swipeLeft();
+    settle();
+    CHECK(ui::page() == i, "and page %d (page %d)", i + 1, ui::page() + 1);
+  }
   swipeLeft();
   settle();
-  CHECK(ui::page() == 3, "and page 4 (page %d)", ui::page() + 1);
-  swipeLeft();
-  settle();
-  CHECK(ui::page() == 3 && screen() == "panel", "no page after the last; it does not wrap or leave settings");
+  CHECK(ui::page() == lastPage && screen() == "panel", "no page after the last; it does not wrap or leave settings");
   swipeRight();
   settle();
-  CHECK(ui::page() == 2, "swipe right goes back a page");
+  CHECK(ui::page() == lastPage - 1, "swipe right goes back a page");
   CHECK(settings.face == faceP, "no settings swipe changed the face (face %d, was %d)", settings.face, faceP);
   goTo(screens::Button::Brightness);
 
@@ -917,8 +1012,7 @@ void scenarios() {
   CHECK(find(screens::Button::Details, dc), "back on the settings page that holds Details (page %d)", ui::page() + 1);
   CHECK(settings.face == faceD, "no face change");
   snap("settings_large_details");
-  swipeRight();
-  settle();
+  goTo(screens::Button::WifiSetup);
   snap("settings_large_wifi");
   // Back to normal text through the same path.
   tapButton(screens::Button::WifiSetup);  // also checks the large Wi-Fi control works
@@ -1013,7 +1107,7 @@ void scenarios() {
   printf("Valid clock, failed sync: the time stays\n");
   sim::syncOutcome = net::Fail::JoinFailed;
   openSettings();
-  swipeLeft(); settle();
+  goTo(screens::Button::SyncNow);
   tapButton(screens::Button::SyncNow);
   settle(1600);
   CHECK(net::lastResult() == net::Result::Failed && net::timeIsValid(), "the clock is still valid after a failed sync");
@@ -1074,16 +1168,51 @@ void scenarios() {
   settle();
   CHECK(screen() == "face" && settings.face == faceB, "BOOT wakes without changing the face");
 
-  printf("Radar sweep runs on entry, then stops\n");
+  printf("Radar beam turns steadily\n");
   settings.face = FACE_HOLO;
   pressBoot();
   runFor(motion::FACE_MS + 300);
-  snap("radar_sweep");
-  runFor(motion::SWEEP_MS);
+  CHECK(currentFaceForTest() == FACE_RADAR, "on the radar face");
+  float a0 = ui::beamAngle();
+  runFor(900);
+  float moved = fmodf(ui::beamAngle() - a0 + 360, 360);
+  CHECK(fabsf(moved - 90) < 8, "the beam turns about 90 degrees in 0.9 s, one turn in 3.6 s (moved %.1f)", moved);
   uint64_t p0 = ui::display().pixelsPushed;
+  runFor(1000);
+  uint64_t frames = (ui::display().pixelsPushed - p0) / (240 * 240);
+  CHECK(frames >= 20 && frames <= 31, "the beam is drawn at 20 to 30 frames a second (%llu)", (unsigned long long)frames);
+  snap("radar_beam");
+  runFor(1700);
+  snap("radar_beam_b");
+
+  printf("Radar at low battery: the beam steps with the seconds\n");
+  sim::batteryMv = 3600;  // 15%
+  runFor(10500);
+  p0 = ui::display().pixelsPushed;
+  runFor(3000);
+  frames = (ui::display().pixelsPushed - p0) / (240 * 240);
+  CHECK(frames <= 4, "about one frame a second at low battery (%llu in 3 s)", (unsigned long long)frames);
+  time_t nowT = hal::now();
+  tm nowTm;
+  localtime_r(&nowT, &nowTm);
+  CHECK(fabsf(ui::beamAngle() - nowTm.tm_sec * 6) < 0.5f, "the beam sits on the seconds dot (%.1f vs %d)", ui::beamAngle(), nowTm.tm_sec * 6);
+  snap("radar_low_battery");
+  sim::batteryMv = 3950;
+  runFor(10500);
+
+  printf("Other faces stay still between seconds\n");
+  if (screen() != "face") {  // the screen slept while the battery recovered: wake it first
+    pressBoot();
+    settle();
+  }
+  CHECK(settings.face == FACE_RADAR, "still on the radar face (face %d, %s)", settings.face, screen().c_str());
+  pressBoot();  // radar is last: on to Digital
+  runFor(motion::FACE_MS + 300);
+  CHECK(settings.face == FACE_DIGITAL, "on Digital (face %d)", settings.face);
+  p0 = ui::display().pixelsPushed;
   runFor(500);
   uint64_t perHalfSecond = ui::display().pixelsPushed - p0;
-  CHECK(perHalfSecond <= 240 * 240, "idle face pushes at most one frame per second (%llu px in 0.5 s)",
+  CHECK(perHalfSecond <= 240 * 240, "an idle face pushes at most one frame per second (%llu px in 0.5 s)",
         (unsigned long long)perHalfSecond);
 
   printf("Reduced motion\n");
@@ -1132,6 +1261,16 @@ void scenarios() {
   tapButton(screens::Button::Motion);
   snap("lowmem_settings");
   pressBoot();
+  settle();
+  {
+    // With no cached dial each radar frame is drawn from scratch, so the beam steps with the seconds.
+    for (int i = 0; i < FACE_COUNT && settings.face != FACE_RADAR; i++) pressBoot();
+    runFor(500);
+    uint64_t p0 = ui::display().pixelsPushed;
+    runFor(3000);
+    uint64_t frames = (ui::display().pixelsPushed - p0) / (240 * 240);
+    CHECK(settings.face == FACE_RADAR && frames <= 4, "low memory: the radar beam steps once a second (%llu frames in 3 s)", (unsigned long long)frames);
+  }
   spriteBudget16 = -1;
   ui::begin();
   settle(2500);
@@ -1142,14 +1281,31 @@ void scenarios() {
   sim::clockSet = false;
   ui::begin();
   runFor(motion::BOOT_MS + 400);
-  CHECK(screen() == "setup", "opens Wi-Fi setup after the startup sequence, got %s", screen().c_str());
-  pressBoot();
-  CHECK(screen() == "panel", "BOOT cancels the hotspot and shows settings, got %s", screen().c_str());
-  CHECK(find(screens::Button::SetTime, c), "with no clock and no Wi-Fi, leaving setup lands on Set time");
-  pressBoot();
-  settle();
+  // Never trapped in the hotspot: the watch starts on the face, and setup is only opened by hand.
+  CHECK(screen() == "face", "starts on the face, not in Wi-Fi setup, got %s", screen().c_str());
+  CHECK(net::portalState() == net::Portal::Closed, "no hotspot is opened on its own");
   runFor(1000);
   snap("face_notime");
+  for (int f = 0; f < FACE_COUNT; f++) {
+    TFT_eSPI parent;
+    TFT_eSprite fs(&parent);
+    fs.createSprite(240, 240);
+    FaceContext fc{};
+    time_t now = hal::now();
+    localtime_r(&now, &fc.now);
+    fc.timeValid = false;
+    fc.sync = SyncView::Never;
+    fc.noWifi = true;
+    fc.beamDeg = -1;
+    drawFaceStatic(fs, (Face)f, fc);
+    drawFaceLive(fs, (Face)f, fc);
+    bool noTime = false, setTime = false;
+    for (const auto &t : fs.textLog) {
+      noTime |= t.text == "NO TIME";
+      setTime |= t.text == "SET TIME";
+    }
+    CHECK(!noTime && setTime, "face %d with no clock says SET TIME, never NO TIME", f);
+  }
   swipeUp();
   settle();
   CHECK(find(screens::Button::SetTime, c), "with no time and no Wi-Fi, swipe up lands on Set time");
@@ -1246,6 +1402,7 @@ void scenarios() {
   settle(2600);
 
   raiseScenarios();
+  v010Scenarios();
 }
 
 void migration() {
@@ -1282,6 +1439,427 @@ void migration() {
   loadSettings();
   CHECK(settings.brightnessLevel == 2 && !settings.largeText && !settings.use12h, "a blank watch gets the defaults");
 }
+
+// Interface flows added in v0.10.0: the touch check when the panel turns the other way, the
+// screen turn setting, the BOOT hold, phone sync, night mode and the Set time starting point.
+void v010Scenarios() {
+  screens::Control c;
+  auto wake = [] {
+    if (screen() == "asleep") {
+      pressBoot();
+      settle();
+    }
+  };
+
+  printf("Touch check: a panel that turns the other way is lined up by two taps\n");
+  sim::panelTurnsClockwise = false;
+  sim::touchMount = 0;
+  sim::cold = false;
+  settings.touchCheckedTurn = TOUCH_NOT_CHECKED;
+  saveSettings();
+  ui::begin();
+  settle();
+  CHECK(screen() == "touchcheck", "with touch not checked, the watch starts on the touch check, got %s", screen().c_str());
+  snap("touch_check_1");
+  doTouchCheck();
+  CHECK(touchChecked() && settings.touchMap == 1, "the check finds map 1 for a panel that turns anticlockwise (map %d)", settings.touchMap);
+  CHECK(screen() == "face", "then the face, got %s", screen().c_str());
+  openSettings();
+  CHECK(screen() == "panel", "a swipe up now opens settings, got %s", screen().c_str());
+  bool h12 = settings.use12h;
+  CHECK(tapButton(screens::Button::TimeFormat) && settings.use12h != h12, "and taps land on the right control");
+  tapButton(screens::Button::TimeFormat);
+
+  printf("Touch check: a tap that fits no map is asked again\n");
+  goTo(screens::Button::TouchCheck);
+  CHECK(tapButton(screens::Button::TouchCheck) && screen() == "touchcheck", "Touch check opens from settings, got %s", screen().c_str());
+  tap(30, 200);
+  runFor(50);
+  tap(32, 202);
+  runFor(50);
+  snap("touch_check_nomatch");
+  CHECK(settings.touchMap == 1, "a bad pair of taps changes nothing");
+  runFor(1600);
+  CHECK(screen() == "touchcheck", "and the check starts again, got %s", screen().c_str());
+  pressBoot();
+  CHECK(screen() == "panel" && find(screens::Button::TouchCheck, c), "BOOT leaves it, back on the Touch check control");
+
+  printf("Screen turn setting\n");
+  goTo(screens::Button::ScreenTurn);
+  uint8_t turn = settings.screenTurn;
+  CHECK(tapButton(screens::Button::ScreenTurn) && settings.screenTurn == (turn + 1) % 4, "Screen turn steps to the next turn");
+  CHECK(ui::display().rotation == settings.screenTurn, "and the panel is turned (rotation %d)", ui::display().rotation);
+  CHECK(screen() == "touchcheck" && !touchChecked(), "touch is checked again for the new turn, got %s", screen().c_str());
+  doTouchCheck();
+  CHECK(touchChecked() && screen() == "panel", "checked, back on settings (%s)", screen().c_str());
+  for (int i = 0; i < 3; i++) {
+    goTo(screens::Button::ScreenTurn);
+    tapButton(screens::Button::ScreenTurn);
+    doTouchCheck();
+  }
+  CHECK(settings.screenTurn == turn && touchChecked() && settings.touchMap == 1, "four steps come back to the first turn and map");
+  goTo(screens::Button::ScreenTurn);
+  tapButton(screens::Button::ScreenTurn);
+  pressBoot();
+  CHECK(screen() == "panel" && !touchChecked() && activeTouchMap() == orient::expectedTouchMap(settings.screenTurn),
+        "BOOT skips the check and the expected map is used (%d)", activeTouchMap());
+  goTo(screens::Button::ScreenTurn);
+  for (int i = 0; i < 3; i++) {  // the expected map is wrong for this panel, so tap through the raw positions
+    screens::Control st;
+    find(screens::Button::ScreenTurn, st);
+    tap(st.hit.x + st.hit.w / 2, st.hit.y + st.hit.h / 2);
+    if (screen() == "touchcheck") doTouchCheck();
+  }
+  CHECK(settings.screenTurn == turn && touchChecked() && settings.touchMap == 1, "back to the first turn, checked (turn %d, map %d)", settings.screenTurn, settings.touchMap);
+  pressBoot();
+  settle();
+
+  printf("Holding BOOT for 4 s opens the touch check from anywhere\n");
+  wake();
+  pressBoot(4200);
+  CHECK(screen() == "touchcheck", "a 4 s hold opens the touch check, got %s", screen().c_str());
+  doTouchCheck();
+  CHECK(screen() == "face" && touchChecked(), "and returns to the face, got %s", screen().c_str());
+  sim::panelTurnsClockwise = true;
+  settings.touchMap = orient::expectedTouchMap(settings.screenTurn);
+  saveSettings();
+
+  printf("Phone sync\n");
+  wake();
+  sim::clockSet = false;
+  sim::wifiSaved = false;
+  sim::bleLines.clear();
+  int opens = sim::bleOpens;
+  openSettings();
+  CHECK(goTo(screens::Button::PhoneSync) && tapButton(screens::Button::PhoneSync) && screen() == "phone",
+        "Phone sync opens, got %s", screen().c_str());
+  CHECK(sim::bleOpens == opens + 1 && ble::on(), "Bluetooth is on only now");
+  snap("phone_waiting");
+  int dozesBefore = sim::lowPowerDozes;
+  runFor(30000);
+  CHECK(screen() == "phone", "the screen stays on while the phone is found, got %s", screen().c_str());
+  CHECK(sim::lowPowerDozes == dozesBefore, "and there is no light sleep while Bluetooth is on");
+  sim::bleConnected = true;
+  runFor(300);
+  snap("phone_connected");
+  sim::bleLines = {"Hello"};
+  runFor(300);
+  snap("phone_refused");
+  CHECK(strstr(simBleStatus(), "reply=unknown line"), "a refused line is answered with the reason: %s", simBleStatus());
+  sim::bleLines = {"N=Europe/London", "Z=GMT0BST,M3.5.0/1,M10.5.0", "T=1782903600.5"};
+  runFor(300);
+  CHECK(net::timeIsValid() && hal::now() >= 1782903600 && hal::now() < 1782903603, "the phone set the clock (%ld)", (long)hal::now());
+  CHECK(settings.tz == "GMT0BST,M3.5.0/1,M10.5.0" && !strcmp(net::zoneName(), "Europe/London"), "and the time zone");
+  CHECK(strstr(simBleStatus(), "reply=ok") && strstr(simBleStatus(), "time=17829036"), "the phone can read the result: %s", simBleStatus());
+  int syncs = sim::syncsStarted;
+  sim::bleLines = {"S=HomeNet", "P=secret words", "J"};
+  runFor(300);
+  CHECK(sim::wifiSaved && !strcmp(net::ssid(), "HomeNet") && sim::syncsStarted == syncs + 1, "Wi-Fi from the phone is saved and joined");
+  snap("phone_time_set");
+  CHECK(ui::page() == 0, "the time set screen starts on its first page (page %d)", ui::page() + 1);
+  CHECK(goTo(screens::Button::Done), "the screen says the time is set and offers Done");
+  tapButton(screens::Button::Done);
+  CHECK(screen() == "face" && !ble::on(), "Done turns Bluetooth off, back to the face (%s)", screen().c_str());
+  settle(1500);
+
+  printf("Phone sync: Cancel, the 3 minute window, and no Bluetooth\n");
+  openSettings();
+  goTo(screens::Button::PhoneSync);
+  tapButton(screens::Button::PhoneSync);
+  goTo(screens::Button::Cancel);
+  tapButton(screens::Button::Cancel);
+  CHECK(screen() == "panel" && !ble::on() && find(screens::Button::PhoneSync, c), "Cancel turns Bluetooth off, back on its settings page");
+  sim::bleConnected = false;
+  tapButton(screens::Button::PhoneSync);
+  runFor(ble::WINDOW_MS + 2000);
+  CHECK(!ble::on(), "Bluetooth turns itself off after 3 minutes");
+  wake();
+  CHECK(screen() == "phone" && goTo(screens::Button::PhoneSync), "the screen says it closed and offers to open again (%s)", screen().c_str());
+  snap("phone_closed");
+  pressBoot();
+  settle();
+  sim::bleStarts = false;
+  goTo(screens::Button::PhoneSync);
+  tapButton(screens::Button::PhoneSync);
+  snap("phone_failed");
+  CHECK(screen() == "phone" && goTo(screens::Button::Back), "when Bluetooth does not start, the screen says so");
+  sim::bleStarts = true;
+  pressBoot();
+  pressBoot();
+  settle(1500);
+
+  printf("Night mode turns raise to wake off\n");
+  {
+    time_t now = hal::now();
+    tm lt;
+    localtime_r(&now, &lt);
+    // A night window around the current hour: 22-07 or 00-08 always covers 3 o'clock, so move the clock there.
+    lt.tm_hour = 3;
+    lt.tm_min = 0;
+    hal::setTime(mktime(&lt));
+  }
+  settings.raiseToWake = true;
+  settings.night = 1;
+  sim::accel = FLAT;
+  runFor(16000);
+  CHECK(screen() == "asleep", "asleep, got %s", screen().c_str());
+  wrist({{1000, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "asleep", "at 3 at night, raising the wrist does not wake it");
+  pressBoot();
+  CHECK(screen() == "face", "BOOT still wakes it, got %s", screen().c_str());
+  settings.night = 0;
+  runFor(16000);
+  wrist({{1000, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "face", "with night mode off it wakes again, got %s", screen().c_str());
+  runFor(16000);
+
+  printf("Set time after a power loss starts from the last known time\n");
+  wake();
+  settings.lastKnownTime = 1798761600LL - 3600 * 5 - 60 * 17;  // 2026-12-31 18:43 UTC
+  sim::clockSet = false;
+  openSettings();
+  goTo(screens::Button::SetTime);
+  tapButton(screens::Button::SetTime);
+  snap("settime_from_known");
+  // editTime is shown on the hour page: read it back by saving straight away.
+  for (int i = 0; i < 5; i++) {
+    swipeLeft();
+    settle();
+  }
+  tapButton(screens::Button::SaveTime);
+  {
+    time_t now = hal::now();
+    tm lt;
+    gmtime_r(&now, &lt);
+    CHECK(lt.tm_year + 1900 == 2026 && lt.tm_mon == 11 && lt.tm_mday == 31 && lt.tm_hour == 18 && lt.tm_min == 43,
+          "Set time started at the last known time (%04d-%02d-%02d %02d:%02d)", lt.tm_year + 1900, lt.tm_mon + 1, lt.tm_mday, lt.tm_hour, lt.tm_min);
+  }
+  settle(1500);
+}
+
+// Pure logic added in v0.10.0: screen turn maps, the touch check solver, phone lines, drift
+// learning, the battery estimate and the wrist gestures.
+void logicChecks() {
+  printf("Screen turn maps (v0.10.0)\n");
+  bool inversesOk = true, turnsOk = true;
+  for (uint8_t m = 0; m < orient::MAPS; m++)
+    for (int x = 0; x < 240; x += 37)
+      for (int y = 0; y < 240; y += 41) {
+        int ax, ay, bx, by;
+        orient::apply(m, x, y, ax, ay);
+        orient::apply(orient::inverse(m), ax, ay, bx, by);
+        inversesOk &= bx == x && by == y && ax >= 0 && ax < 240 && ay >= 0 && ay < 240;
+      }
+  // A quarter turn clockwise moves the top edge to the right edge.
+  int qx, qy;
+  orient::apply(1, 120, 0, qx, qy);
+  turnsOk &= qx == 239 && qy == 120;
+  orient::apply(3, 239, 120, qx, qy);
+  turnsOk &= qx == 120 && qy == 0;
+  CHECK(inversesOk, "every map is undone by its inverse and stays on the panel");
+  CHECK(turnsOk, "map 1 turns a quarter clockwise and map 3 turns it back");
+  CHECK(orient::expectedTouchMap(0) == 0 && orient::expectedTouchMap(1) == 3 && orient::expectedTouchMap(2) == 2 &&
+            orient::expectedTouchMap(3) == 1,
+        "expected touch maps for the four turns");
+
+  printf("Touch check solver: every panel turn and every way the touch chip could be mounted\n");
+  int solved = 0, cases = 0;
+  for (uint8_t truth = 0; truth < orient::MAPS; truth++) {
+    // Raw positions that map `truth` would take onto the dots, nudged by a sloppy finger.
+    int rx[2], ry[2];
+    for (int i = 0; i < 2; i++) {
+      orient::apply(orient::inverse(truth), orient::TARGET_X[i], orient::TARGET_Y[i], rx[i], ry[i]);
+      rx[i] += i ? -18 : 15;
+      ry[i] += i ? 12 : -20;
+    }
+    orient::Solve r = orient::solveTouchMap(rx, ry);
+    cases++;
+    solved += r.ok && r.map == truth;
+  }
+  CHECK(solved == cases, "the solver finds the right map in %d of %d cases, with taps 25 px off", solved, cases);
+  {
+    int rx[2] = {120, 120}, ry[2] = {120, 120};  // both taps in the middle: no map fits both dots
+    CHECK(!orient::solveTouchMap(rx, ry).ok, "two taps in the same place are refused");
+  }
+
+  printf("Phone lines\n");
+  sim::clockSet = false;
+  phone::begin();
+  CHECK(!strcmp(phone::apply("T=1767225600.250"), "ok") && net::timeIsValid() && hal::now() == 1767225600,
+        "T= sets the clock (%ld)", (long)hal::now());
+  CHECK(net::lastSource() == net::Source::Phone && phone::session().gotTime, "and it counts as a phone sync");
+  CHECK(strcmp(phone::apply("T=12345"), "ok") != 0, "a time before 2023 is refused");
+  CHECK(strcmp(phone::apply("T=soon"), "ok") != 0, "T= with no number is refused");
+  CHECK(!strcmp(phone::apply("Z=GMT0BST,M3.5.0/1,M10.5.0"), "ok") && settings.tz == "GMT0BST,M3.5.0/1,M10.5.0",
+        "Z= sets the time zone rules");
+  CHECK(!strcmp(phone::apply("N=Europe/London"), "ok") && !strcmp(net::zoneName(), "Europe/London"), "N= sets the zone name");
+  CHECK(strcmp(phone::apply("J"), "ok") != 0, "J before S= is refused");
+  CHECK(strcmp(phone::apply(("S=" + std::string(40, 'x')).c_str()), "ok") != 0,
+        "a network name over 32 characters is refused");
+  CHECK(strcmp(phone::apply("Hello"), "ok") != 0 && phone::session().error, "unknown lines are refused, with a reason");
+  {
+    char st[160];
+    phone::status(st, sizeof st, 64);
+    CHECK(strstr(st, "fw=" FW_VERSION) && strstr(st, "bat=64") && strstr(st, "time=1767225600"), "status tells the phone the firmware, time and battery: %s", st);
+  }
+
+  printf("Current Time Service writes\n");
+  {
+    char out[40];
+    uint8_t ct[10] = {0xEA, 0x07, 3, 29, 1, 30, 5, 7, 0, 0};  // 2026-03-29 01:30:05
+    CHECK(phone::fromCurrentTime(ct, sizeof ct, out, sizeof out) && !strcmp(out, "L=2026-03-29 01:30:05"), "Current Time becomes %s", out);
+    uint8_t bad[10] = {0xEA, 0x07, 13, 1, 0, 0, 0, 0, 0, 0};
+    CHECK(!phone::fromCurrentTime(bad, sizeof bad, out, sizeof out), "month 13 is refused");
+    CHECK(!phone::fromCurrentTime(ct, 5, out, sizeof out), "a short write is refused");
+    uint8_t lti[2] = {4, 4};  // UTC+1 plus one hour of summer time
+    CHECK(phone::fromLocalTimeInfo(lti, 2, out, sizeof out) && !strcmp(out, "O=7200"), "Local Time Information becomes %s", out);
+    uint8_t unknown[2] = {0x80, 0};
+    CHECK(!phone::fromLocalTimeInfo(unknown, 2, out, sizeof out), "an unknown zone is ignored");
+    phone::begin();
+    CHECK(!strcmp(phone::apply("O=7200"), "ok") && !strcmp(phone::apply("L=2026-07-01 13:00:00"), "ok") &&
+              hal::now() == 1782903600,  // 13:00 at UTC+2 is 11:00 UTC
+          "O= then L= sets the right UTC time (%ld)", (long)hal::now());
+    CHECK(phone::daysFromCivil(1970, 1, 1) == 0 && phone::daysFromCivil(2000, 3, 1) == 11017 && phone::daysFromCivil(2024, 2, 29) == 19782,
+          "calendar arithmetic, including leap days");
+  }
+
+  printf("Clock drift learning\n");
+  {
+    const int64_t H = 3600LL * 1000;
+    ClockTrim t;
+    CHECK(!t.learn(1000 * H, 0), "the first trusted time only starts a span");
+    CHECK(!t.learn(1002 * H, 5000) && t.ppb() == 0, "a span under 6 hours teaches nothing");
+    CHECK(t.learn(1026 * H, 8640), "24 hours later, 8.64 s fast");
+    CHECK(t.ppb() > 90000 && t.ppb() < 110000, "is learned as about 100 parts per million fast (%d ppb)", (int)t.ppb());
+    int64_t added = 0;
+    t.due(2000 * H);
+    for (int i = 1; i <= 8640; i++) added += t.due(2000 * H + i * 10000LL);  // a day in 10 s steps
+    CHECK(added < -8000 && added > -9300, "a day later the clock was slowed by %lld ms (8640 expected)", (long long)added);
+    t.forget();
+    CHECK(!t.learn(3000 * H, 20000) && t.ppb() > 90000, "after a hand setting the next sync starts a new span and keeps the rate");
+    ClockTrim wild;
+    wild.learn(0 + H, 0);
+    wild.learn(25 * H, 3600LL * 1000);  // an hour off in a day: not drift
+    CHECK(wild.ppb() == 0, "an error too big to be drift is ignored (%d ppb)", (int)wild.ppb());
+  }
+
+  printf("Battery time left\n");
+  {
+    battery::Estimate e;
+    const uint32_t MIN = 60000;
+    for (uint32_t m = 0; m <= 30; m++) e.add(m * MIN, 80);
+    CHECK(e.hoursLeft() < 0, "still measuring at first");
+    for (uint32_t m = 31; m <= 300; m++) e.add(m * MIN, 80 - (int)(m / 12));  // 5% an hour
+    float h = e.hoursLeft();
+    CHECK(h > 9 && h < 15, "falling 5%% an hour from about 55%%: about 11 hours left (%.1f)", h);
+    CHECK(!e.charging(), "not charging");
+    for (uint32_t m = 301; m <= 340; m++) e.add(m * MIN, 55 + (int)((m - 300) / 2));
+    CHECK(e.charging(), "a rise means charging");
+  }
+
+  printf("Wrist down to sleep\n");
+  {
+    DropDetector d;
+    uint32_t t = 1000;
+    auto feed = [&](float z, uint32_t ms) {
+      bool fired = false;
+      for (uint32_t end = t + ms; t < end; t += 80) fired |= d.update(t, z, 1.0f);
+      return fired;
+    };
+    CHECK(!feed(-0.5f, 1000), "not armed before a look: turning away does nothing");
+    CHECK(!feed(0.9f, 400), "looking at it arms it");
+    uint32_t awayAt = t;
+    bool fired = false;
+    uint32_t firedAt = 0;
+    for (; t < awayAt + 1000 && !fired; t += 80)
+      if (d.update(t, -0.3f, 1.0f)) { fired = true; firedAt = t; }
+    CHECK(fired && firedAt - awayAt <= 400, "turning the screen away sleeps it within 400 ms (%u ms)", firedAt - awayAt);
+    feed(0.9f, 400);
+    d.touched(t);
+    CHECK(!feed(-0.3f, 1000), "a touch puts it off");
+    d.reset();
+    feed(0.9f, 400);
+    CHECK(!feed(0.1f + 0.15f, 1000), "a screen only tilted (still above the line) stays on");
+  }
+
+  printf("Raise to wake: a slow drift up is not a raise\n");
+  {
+    RaiseDetector r;
+    uint32_t t = 0;
+    bool woke = false;
+    for (; t < 1000; t += 40) woke |= r.update(t, {0, -1, 0});
+    // Turn up over 1.2 s at a steady 60 degrees a second: inside the time window, but no flick.
+    Accel last{};
+    for (int i = 0; i <= 30; i++, t += 40) {
+      float a = (float)(i * 2.4f) * 3.14159f / 180;
+      last = {0, -cosf(a), sinf(a)};
+      woke |= r.update(t, last);
+    }
+    for (int i = 0; i < 15; i++, t += 40) woke |= r.update(t, last);  // held where the turn ended
+    CHECK(!woke, "a steady 60 degrees a second does not wake it");
+    r.reset();
+    for (int i = 0; i < 25; i++, t += 40) woke |= r.update(t, {0, -1, 0});
+    for (int i = 0; i <= 6; i++, t += 40) {
+      float a = (float)(i * 10.5f) * 3.14159f / 180;
+      last = {0, -cosf(a), sinf(a)};
+      woke |= r.update(t, last);
+    }
+    for (int i = 0; i < 10; i++, t += 40) woke |= r.update(t, last);
+    CHECK(woke && r.lastPeakRate() > RaiseDetector::FLICK_DPS, "a quick flick does (%.0f degrees a second)", r.lastPeakRate());
+    bool shaken = false;
+    r.reset();
+    for (int i = 0; i < 25; i++, t += 40) r.update(t, {0, -1, 0});
+    for (int i = 0; i < 20; i++, t += 40) shaken |= r.update(t, {0, -0.6f, 1.2f});  // 1.34 g: moving, not held
+    CHECK(!shaken, "a screen that is up but being shaken does not wake it");
+  }
+
+  printf("Night mode\n");
+  settings.night = 1;  // 22:00 to 07:00
+  CHECK(nightNow(23) && nightNow(3) && nightNow(6) && !nightNow(7) && !nightNow(21), "22:00 to 07:00 wraps past midnight");
+  settings.night = 3;  // 00:00 to 08:00
+  CHECK(nightNow(0) && !nightNow(8) && !nightNow(23), "00:00 to 08:00");
+  settings.night = 0;
+  CHECK(!nightNow(23), "off is off");
+
+  printf("Saved settings from v0.9.0 move to v0.10.0\n");
+  sim::flash.clear();
+  {
+    Preferences p;
+    p.begin("watch", false);
+    p.putUChar("ver", 3);
+    p.putUChar("face", 4);
+    p.putBool("raise", true);
+    p.end();
+  }
+  settings = Settings{};
+  loadSettings();
+  CHECK(settings.face == 4 && settings.screenTurn == DISPLAY_ROTATION && !touchChecked() && settings.night == 0 &&
+            settings.driftPpb == 0 && settings.lastKnownTime == 0,
+        "the face is kept; the screen turn starts at the default and touch is not yet checked");
+  settings.driftPpb = -52000;
+  settings.lastKnownTime = 1767225600LL;
+  settings.touchMap = 3;
+  settings.touchCheckedTurn = DISPLAY_ROTATION;
+  saveSettings();
+  settings = Settings{};
+  loadSettings();
+  CHECK(settings.driftPpb == -52000 && settings.lastKnownTime == 1767225600LL && touchChecked() && activeTouchMap() == 3,
+        "drift, the last known time and the touch check survive a restart");
+  {
+    Preferences p;
+    p.begin("watch", false);
+    p.putUChar("turn", 9);
+    p.putUChar("tmap", 12);
+    p.putInt("drift", 900000000);
+    p.end();
+  }
+  loadSettings();
+  CHECK(settings.screenTurn < orient::TURNS && settings.touchMap < orient::MAPS && settings.driftPpb == 0,
+        "damaged turn, map and drift values are brought back into range");
+  sim::flash.clear();
+  settings = Settings{};
+  sim::clockSet = false;
+}
 }  // namespace
 
 Face currentFaceForTest() { return (Face)(settings.face % FACE_COUNT); }
@@ -1295,6 +1873,7 @@ int main(int argc, char **argv) {
   screenVariants();
   contrastAudit();
   migration();
+  logicChecks();
   settings = Settings{};
   sim::flash.clear();
   timeSteps();

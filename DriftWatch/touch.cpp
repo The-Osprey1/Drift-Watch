@@ -51,15 +51,6 @@ bool read(TouchSample &out) {
   out.down = (d[1] & 0x0F) > 0;
   int x = ((d[2] & 0x0F) << 8) | d[3];
   int y = ((d[4] & 0x0F) << 8) | d[5];
-#if TOUCH_SWAP_XY
-  int t = x; x = y; y = t;
-#endif
-#if TOUCH_FLIP_X
-  x = 239 - x;
-#endif
-#if TOUCH_FLIP_Y
-  y = 239 - y;
-#endif
   out.x = x;
   out.y = y;
   return true;

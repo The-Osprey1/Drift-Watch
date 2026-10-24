@@ -1,5 +1,6 @@
-// Minimal CST816S touch driver. It reports raw finger position; the interface
-// decides what is a tap, drag or long press.
+// Minimal CST816S touch driver. It reports the raw finger position in the panel's own
+// frame; the interface turns it to match the screen turn (orient.h) and decides what is a
+// tap, drag or long press.
 #pragma once
 #include <stdint.h>
 

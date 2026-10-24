@@ -44,6 +44,15 @@ uint32_t portalSecondsLeft();
 bool hasSavedWifi();
 bool timeIsValid();
 void setClockByHand(time_t t);  // the time set on the watch itself; a later sync replaces it
+// A time sent by a phone over Bluetooth counts as a sync, like one over Wi-Fi.
+void setClockFromPhone(time_t utc, int ms);
+enum class Source : uint8_t { None, Wifi, Phone };
+Source lastSource();            // where the latest successful sync came from
+// Sets the POSIX time zone (saved) and/or the zone name shown in Details; nullptr leaves one as it is.
+void setZone(const char *posix, const char *name);
+// Saves a network to join, as the setup page does. Call startSync() to join it.
+void saveNetwork(const char *ssid, const char *password);
+int32_t driftPpb();             // the clock's learned error rate (see timekeep.h)
 bool clockSetByHand();          // true until the next successful sync
 time_t lastSync();
 const char *zoneName();     // e.g. "Europe/London" when found from the internet, else ""

@@ -60,6 +60,19 @@ void setTime(time_t t) {
   settimeofday(&tv, nullptr);
 }
 
+int64_t nowMs() {
+  timeval tv;
+  gettimeofday(&tv, nullptr);
+  return (int64_t)tv.tv_sec * 1000 + tv.tv_usec / 1000;
+}
+
+void setTimeMs(int64_t ms) {
+  timeval tv{(time_t)(ms / 1000), (suseconds_t)(ms % 1000 * 1000)};
+  settimeofday(&tv, nullptr);
+}
+
+void adjustMs(int64_t ms) { setTimeMs(nowMs() + ms); }
+
 WakeCause doze(uint32_t t, bool lowPower) {
   if (!lowPower) {
     delay(t);

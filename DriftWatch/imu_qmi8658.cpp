@@ -1,6 +1,7 @@
 #include "imu.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include "board.h"
 
 namespace {
 // The address depends on how the board wires the SA0 pin, so both are tried.
@@ -13,12 +14,18 @@ constexpr uint8_t REG_AX_L = 0x35;      // x, y, z, low byte first
 constexpr uint8_t REG_RESET = 0x60;
 
 constexpr uint8_t CTRL1_AUTO_INCREMENT = 0x40;  // little-endian, internal clock on
+constexpr uint8_t CTRL1_INT2_ENABLE = 0x10;     // INT2 pin driven (data ready goes there)
+// INT1 is left undriven, as before: on this board GPIO 4 also switches the MOSFET1 solder pads,
+// so driving it could switch on whatever a build has fitted there (a vibration motor, say).
 constexpr uint8_t CTRL2_4G_21HZ_LOW_POWER = 0x10 | 0x0D;
 constexpr uint8_t CTRL7_ACCEL_ON = 0x01;        // gyroscope stays off
 constexpr float LSB_PER_G = 8192.0f;            // at +/-4 g
 
 uint8_t addr = 0;
 bool found = false;
+volatile uint32_t edges[2] = {0, 0};
+void IRAM_ATTR edge1() { edges[0]++; }
+void IRAM_ATTR edge2() { edges[1]++; }
 
 bool readRegs(uint8_t reg, uint8_t *buf, size_t len) {
   Wire.beginTransmission(addr);
@@ -55,8 +62,12 @@ bool begin() {
   }
   writeReg(REG_RESET, 0xB0);
   delay(15);
-  found = writeReg(REG_CTRL1, CTRL1_AUTO_INCREMENT) && writeReg(REG_CTRL2, CTRL2_4G_21HZ_LOW_POWER) &&
-          writeReg(REG_CTRL7, CTRL7_ACCEL_ON);
+  found = writeReg(REG_CTRL1, CTRL1_AUTO_INCREMENT | CTRL1_INT2_ENABLE) &&
+          writeReg(REG_CTRL2, CTRL2_4G_21HZ_LOW_POWER) && writeReg(REG_CTRL7, CTRL7_ACCEL_ON);
+  pinMode(PIN_IMU_INT1, INPUT);
+  pinMode(PIN_IMU_INT2, INPUT);
+  attachInterrupt(digitalPinToInterrupt(PIN_IMU_INT1), edge1, CHANGE);
+  attachInterrupt(digitalPinToInterrupt(PIN_IMU_INT2), edge2, CHANGE);
   Serial.printf("imu: QMI8658 at 0x%02X (%s)\n", addr, found ? "ok" : "setup failed");
   return found;
 }
@@ -71,5 +82,7 @@ bool read(Accel &out) {
   out.z = (int16_t)(d[4] | d[5] << 8) / LSB_PER_G;
   return true;
 }
+
+uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? edges[line] : 0; }
 
 }  // namespace imu

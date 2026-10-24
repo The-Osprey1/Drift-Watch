@@ -34,6 +34,8 @@ constexpr uint16_t CYAN_DIM = rgb(0x0A4A55);
 constexpr uint16_t CYAN_DEEP = rgb(0x05262C);
 constexpr uint16_t MAGENTA_DIM = rgb(0x4A1024);
 constexpr uint16_t WINDOW = rgb(0x6E6610);   // lit windows, kept low so the skyline stays background
+constexpr uint16_t PHOSPHOR = rgb(0x19FFB0);  // radar beam: the green-cyan of a P7 radar tube
+constexpr uint16_t PHOSPHOR_TRAIL = rgb(0x0B8F68);  // trail at full strength, before fading
 
 // Roles on the settings and setup screens. Contrast on black, from these tokens
 // (checked by tools/host/simulate): N100 16.3:1, N300 8.2:1, CYAN 15.2:1,
@@ -80,15 +82,25 @@ constexpr uint32_t PRESS_MS = 0;        // pressed states draw on the touch-down
 constexpr uint32_t STATE_MS = 140;      // small state changes
 constexpr uint32_t FACE_MS = 220;       // face-to-face slide
 constexpr uint32_t PANEL_MS = 260;      // status panel slide
-constexpr uint32_t WAKE_MS = 160;       // backlight fade-in after the time is already drawn
+constexpr uint32_t WAKE_MS = 120;       // backlight fade-in after the time is already drawn
 constexpr uint32_t BOOT_MS = 900;       // cold-boot sequence
-constexpr uint32_t SWEEP_MS = 1100;     // radar sweep when the minute changes
+// Radar: one turn of the beam every 3.6 s (16.7 turns a minute), like a real plan position
+// indicator, with a phosphor trail that fades exponentially behind it.
+constexpr uint32_t RADAR_TURN_MS = 3600;
+constexpr float RADAR_TRAIL_DEG = 105;  // how far behind the beam the trail is drawn
+constexpr float RADAR_DECAY_DEG = 32;   // the trail's brightness falls to 37% over this angle
+constexpr uint32_t RADAR_FRAME_MS = 33; // about 30 frames a second: 3.3 degrees a frame
+constexpr int LOW_BATTERY_PCT = 20;     // below this the beam only moves with the seconds
 
 // Touch thresholds.
 constexpr int SLOP_PX = 10;             // movement before a touch counts as a drag
 constexpr int COMMIT_PX = 70;           // drag distance that completes a face change
 constexpr float FLICK_PX_PER_MS = 0.45f; // or a quick flick
 constexpr uint32_t LONG_PRESS_MS = 600;
+
+// Spring used for slides after a swipe: it starts at the finger's speed and settles on the
+// target without bouncing (critically damped). OMEGA sets how quickly, per millisecond.
+constexpr float SPRING_OMEGA = 0.03f;   // half way in about 50 ms, settled in about 200 ms
 
 // Ease-out cubic: fast start, decisive stop, no overshoot.
 inline float easeOut(float t) {

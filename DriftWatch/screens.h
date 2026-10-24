@@ -4,6 +4,7 @@
 #pragma once
 #include <TFT_eSPI.h>
 #include <time.h>
+#include "ble.h"
 #include "net.h"
 
 namespace screens {
@@ -18,10 +19,15 @@ enum class Button : uint8_t {
   Cancel, Back, Retry, EditWifi, TryAgain, Done,
   // Added in v0.9.0: settings, then the set time screen
   SetTime, RaiseWake, Minus, Plus, SaveTime,
+  // Added in v0.10.0
+  PhoneSync, Night, ScreenTurn, TouchCheck,
 };
 const char *buttonName(Button b);
 
-enum class Screen : uint8_t { Settings, Details, Setup, SetTime };
+enum class Screen : uint8_t { Settings, Details, Setup, SetTime, TouchCheck, PhoneSync };
+
+// Where the touch check is: tapping one of the two dots, or showing how it went.
+enum class CheckResult : uint8_t { Tapping, Matched, NoMatch };
 
 // The set time screen has one page per field, then a page to save.
 enum class TimeField : uint8_t { Hour, Minute, Day, Month, Year, Save };
@@ -68,6 +74,24 @@ struct View {
   bool raiseToWake;
   bool imuPresent;          // the motion sensor answered
   tm edit;                  // the time being set on the set time screen
+  // v0.10.0
+  uint8_t screenTurn;       // 0..3, see orient.h
+  bool touchChecked;        // the touch check was done for this screen turn
+  uint8_t night;            // night mode choice, see settings.h
+  int checkStep;            // touch check: which dot (0 or 1)
+  CheckResult checkResult;
+  ble::State ble;           // phone sync
+  const char *bleName;
+  uint32_t bleSecondsLeft;
+  bool phoneGotTime, phoneWifiSaved;
+  const char *phoneSsid;    // network the phone sent
+  const char *phoneError;   // the last line the watch refused, or nullptr
+  float batteryHours;       // measured time left, < 0 while measuring
+  bool charging;
+  long driftPpb;            // learned clock error
+  net::Source syncSource;
+  const char *syncAgo;      // e.g. "3 h ago", "" if never
+  uint32_t imuLine1, imuLine2;  // edges seen on the motion sensor's interrupt lines
   const char *version;
   const char *diag;         // diagnostics line, or nullptr
   Button pressed;
@@ -88,8 +112,12 @@ enum class SetupPhase : uint8_t { Hotspot, Connecting, Done, Failed, TimedOut };
 SetupPhase setupPhase(const View &v);
 
 // Settings items in page order; two per page, or one with large text.
-constexpr int SETTINGS_ITEMS = 8;
+constexpr int SETTINGS_ITEMS = 12;
 Button settingsItem(int i);
+
+// Where phone sync is.
+enum class PhonePhase : uint8_t { Waiting, Connected, TimeSet, Closed, Failed };
+PhonePhase phonePhase(const View &v);
 
 // Startup sequence, t from 0 to 1.
 void drawBoot(TFT_eSprite &s, float t, const char *version);

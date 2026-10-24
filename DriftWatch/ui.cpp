@@ -945,6 +945,27 @@ void pollBoot() {
 }
 
 void pollInput() {
+  if (Serial.available()) {
+    String line = Serial.readStringUntil('\n');
+    line.trim();
+    if (line.startsWith("TIME:")) {
+      time_t t = (time_t)line.substring(5).toInt();
+      if (t > 100000) {
+        net::setClockByHand(t);
+        dirty = true;
+        cacheValid = false;
+        Serial.printf("Time set to %ld\n", (long)t);
+      }
+    } else if (line.startsWith("WIFI:")) {
+      int comma = line.indexOf(',');
+      if (comma > 5) {
+        String s = line.substring(5, comma);
+        String p = line.substring(comma + 1);
+        net::saveWifi(s.c_str(), p.c_str());
+        Serial.printf("Configuring Wi-Fi for SSID: %s\n", s.c_str());
+      }
+    }
+  }
   TouchSample s{};
   touch::read(s);
   if (s.down && !finger.down) onFingerDown(s);

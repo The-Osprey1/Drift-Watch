@@ -25,129 +25,11 @@
 #include "sim.h"
 #include "theme.h"
 #include "ui.h"
+#include "sim_drive.h"
 
 Face currentFaceForTest();
 
 namespace {
-const char *outDir = ".";
-int failures = 0, checks = 0;
-FILE *report = nullptr;
-
-#define CHECK(cond, ...)                         \
-  do {                                           \
-    checks++;                                    \
-    if (!(cond)) {                               \
-      failures++;                                \
-      printf("  FAIL line %d: ", __LINE__);      \
-      printf(__VA_ARGS__);                       \
-      printf("\n");                              \
-    }                                            \
-  } while (0)
-
-void writePpm(const std::string &name, const TFT_eSPI &s) {
-  std::string path = std::string(outDir) + "/" + name + ".ppm";
-  FILE *f = fopen(path.c_str(), "wb");
-  fprintf(f, "P6\n%d %d\n255\n", s.width(), s.height());
-  for (uint16_t c : s.buf) {
-    uint8_t rgb[3] = {(uint8_t)(((c >> 11) & 31) * 255 / 31), (uint8_t)(((c >> 5) & 63) * 255 / 63),
-                      (uint8_t)((c & 31) * 255 / 31)};
-    fwrite(rgb, 1, 3, f);
-  }
-  fclose(f);
-}
-
-void snap(const char *name) { writePpm(std::string("sim_") + name, ui::display()); }
-std::string screen() { return ui::screenName(); }
-
-void runFor(uint32_t ms) {
-  uint32_t end = sim::clockMs + ms;
-  sim::runUntil = end;  // a screen-off sleep ends here, where the script changes something
-  while ((int32_t)(sim::clockMs - end) < 0) ui::loop();
-}
-
-void touchDown(int x, int y) {
-  sim::fingerX = x;
-  sim::fingerY = y;
-  sim::fingerDown = true;
-  ui::loop();
-}
-void touchUp() {
-  sim::fingerDown = false;
-  ui::loop();
-}
-
-// Moves the finger in steps of `stepMs`, like the touch chip reporting every 10-15 ms.
-void moveTo(int x, int y, uint32_t ms, uint32_t stepMs = 12) {
-  int x0 = sim::fingerX, y0 = sim::fingerY;
-  int n = max<int>(1, ms / stepMs);
-  for (int i = 1; i <= n; i++) {
-    sim::fingerX = x0 + (x - x0) * i / n;
-    sim::fingerY = y0 + (y - y0) * i / n;
-    runFor(stepMs);
-  }
-}
-
-void swipe(int x0, int y0, int x1, int y1, uint32_t ms) {
-  touchDown(x0, y0);
-  moveTo(x1, y1, ms);
-  touchUp();
-}
-void swipeLeft() { swipe(190, 120, 80, 120, 90); }
-void swipeRight() { swipe(60, 120, 170, 120, 90); }
-void swipeUp() { swipe(120, 180, 120, 80, 120); }
-void swipeDown() { swipe(120, 70, 120, 170, 120); }
-
-void tap(int x, int y) {
-  touchDown(x, y);
-  runFor(60);
-  touchUp();
-}
-
-void pressBoot(uint32_t holdMs = 40) {
-  sim::bootDown = true;
-  runFor(holdMs);
-  sim::bootDown = false;
-  runFor(20);
-}
-
-void settle(uint32_t ms = 400) { runFor(ms); }
-void settle(uint32_t ms);
-
-// Finds a control on the current screen and taps the centre of its hit region.
-bool find(screens::Button b, screens::Control &out) {
-  screens::Control ctl[2];
-  int n = ui::controls(ctl, 2);
-  for (int i = 0; i < n; i++)
-    if (ctl[i].id == b) {
-      out = ctl[i];
-      return true;
-    }
-  return false;
-}
-bool tapButton(screens::Button b) {
-  screens::Control c;
-  if (!find(b, c)) return false;
-  tap(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
-  return true;
-}
-
-void settle(uint32_t ms);
-// Swipes to the page of the current screen that holds `b`: back to the first page, then forward.
-bool goTo(screens::Button b) {
-  screens::Control c;
-  for (int i = 0; i < 16 && ui::page() > 0; i++) {
-    swipeRight();
-    settle(400);
-  }
-  for (int i = 0; i < 16 && !find(b, c); i++) {
-    int before = ui::page();
-    swipeLeft();
-    settle(400);
-    if (ui::page() == before) break;
-  }
-  return find(b, c);
-}
-
 // ---- Screen layout checks ----------------------------------------------------------
 float cornerDistance(const screens::Rect &r) {
   float worst = 0;
@@ -1585,8 +1467,8 @@ void v010Scenarios() {
         "BOOT skips the check and the expected map is used (%d)", activeTouchMap());
   goTo(screens::Button::ScreenTurn);
   for (int i = 0; i < 3; i++) {  // the expected map is wrong for this panel, so tap through the raw positions
-    screens::Control st;
-    find(screens::Button::ScreenTurn, st);
+    screens::Control st{};
+    CHECK(find(screens::Button::ScreenTurn, st), "Screen turn is on this page (%d)", i);
     tap(st.hit.x + st.hit.w / 2, st.hit.y + st.hit.h / 2);
     if (screen() == "touchcheck") doTouchCheck();
   }

@@ -1421,6 +1421,7 @@ void stepNetwork() {
     seenAttempts = net::attempts();
     // With no network saved there is nothing to retry; the clock may have been set by hand.
     nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    if (net::hasSavedWifi() && !nextSyncAt) nextSyncAt = 1;  // 0 means none; millis() can wrap onto it
     dirty = true;
   }
   net::Sync s = net::syncState();

@@ -40,10 +40,26 @@ void iconCheck(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 void iconCross(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 void iconAlert(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 
+// Small clock symbol: "in progress" without motion, used instead of a spinner with reduced motion.
+void iconPending(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
+
 // Text helpers. All text is drawn transparent so it sits cleanly on any background.
 void text(TFT_eSprite &s, const char *str, int x, int y, uint8_t font, uint16_t c, uint8_t datum = MC_DATUM);
 // Shortens `str` with "..." until it fits `maxW` pixels. Returns the fitted copy in `out`.
+// Only for text that is not essential (network and zone names); essential text wraps instead.
 const char *fit(TFT_eSprite &s, const char *str, uint8_t font, int maxW, char *out, size_t outSize);
+
+// Bold bitmap fonts for settings and setup, by role and text size (see type::Role).
+const GFXfont *font(type::Role role, bool large);
+void text(TFT_eSprite &s, const char *str, int x, int y, const GFXfont *f, uint16_t c, uint8_t datum = MC_DATUM);
+int textWidth(TFT_eSprite &s, const char *str, const GFXfont *f);
+inline int lineHeight(const GFXfont *f) { return f->yAdvance; }
+// Length of the next line of `str` from `start` that fits `maxW` pixels, breaking at
+// spaces, else after '/', and mid-word only if one word is wider than the line. Leading spaces
+// are skipped and returned in `skip`. Returns 0 at the end of the string.
+int nextLine(TFT_eSprite &s, const char *str, int start, const GFXfont *f, int maxW, int &skip);
+// Widest text that fits rows [top, bottom) inside the safe circle, less `margin` each side.
+int chordWidth(int top, int bottom, int margin);
 
 // Low skyline silhouette along the bottom of the screen. Windows change with `seed`.
 void skyline(TFT_eSprite &s, int horizon, uint32_t seed);

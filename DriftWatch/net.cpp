@@ -15,7 +15,9 @@ constexpr uint32_t NTP_TIMEOUT_MS = 10000;
 constexpr uint32_t PORTAL_TIMEOUT_MS = 300000;  // 5 minutes
 
 net::Sync syncNow = net::Sync::Idle;
+net::Result result = net::Result::None;
 net::Fail fail = net::Fail::None;
+uint16_t finished = 0;
 net::Portal portal = net::Portal::Off;
 uint32_t stateStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
@@ -31,6 +33,7 @@ bool portalSaved = false;
 // The HTTP request can take seconds, so it runs once in its own short-lived
 // task on core 0 (where Wi-Fi already runs) and the loop just checks the flag.
 volatile bool zoneDone = false, zoneOk = false;
+volatile bool zoneTaskRunning = false;  // a cancelled sync can leave one finishing in the background
 char zoneResultName[40], zoneResultPosix[64];
 
 // Turns a UTC offset in seconds into a fixed POSIX zone. POSIX signs are
@@ -72,6 +75,7 @@ void zoneTask(void *) {
   http.end();
   zoneOk = ok;
   zoneDone = true;  // written last; the loop reads the results only after seeing this
+  zoneTaskRunning = false;
   vTaskDelete(nullptr);
 }
 
@@ -94,7 +98,9 @@ void setState(net::Sync s) {
 
 void finish(net::Fail f) {
   fail = f;
-  setState(f == net::Fail::None ? net::Sync::Done : net::Sync::Failed);
+  result = f == net::Fail::None ? net::Result::Ok : net::Result::Failed;
+  finished++;
+  setState(net::Sync::Idle);
   wifiOff();
   hal::log("net: sync %s (reason %d)", f == net::Fail::None ? "done" : "failed", (int)f);
 }
@@ -135,13 +141,11 @@ bool hasSavedWifi() { return savedSsid[0] != 0; }
 
 void startSync() {
   if (portal == Portal::Waiting || portal == Portal::PhoneJoined) return;
-  if (syncNow == Sync::Connecting || syncNow == Sync::Zone || syncNow == Sync::Clock) return;
+  if (syncRunning()) return;
   if (!hasSavedWifi()) {
-    fail = Fail::NoNetworkSaved;
-    setState(Sync::Failed);
+    finish(Fail::NoNetworkSaved);
     return;
   }
-  fail = Fail::None;
   WiFi.mode(WIFI_STA);
   WiFi.begin();
   setState(Sync::Connecting);
@@ -152,10 +156,16 @@ void poll() {
   switch (syncNow) {
     case Sync::Connecting:
       if (WiFi.status() == WL_CONNECTED) {
-        if (settings.tz.isEmpty()) {
+        if (settings.tz.isEmpty() && !zoneTaskRunning) {
           zoneDone = zoneOk = false;
+          zoneTaskRunning = true;
           setState(Sync::Zone);
-          if (xTaskCreatePinnedToCore(zoneTask, "zone", 6144, nullptr, 1, nullptr, 0) != pdPASS) startClock();
+          if (xTaskCreatePinnedToCore(zoneTask, "zone", 6144, nullptr, 1, nullptr, 0) != pdPASS) {
+            zoneTaskRunning = false;
+            startClock();
+          }
+        } else if (settings.tz.isEmpty()) {
+          startClock();  // an earlier lookup is still finishing; keep the last known zone
         } else {
           strlcpy(posixTz, settings.tz.c_str(), sizeof posixTz);
           startClock();
@@ -205,13 +215,23 @@ void poll() {
   }
 }
 
+void cancelSync() {
+  if (!syncRunning()) return;
+  wifiOff();
+  setState(Sync::Idle);
+  hal::log("net: sync cancelled");
+}
+
 Sync syncState() { return syncNow; }
+bool syncRunning() { return syncNow != Sync::Idle; }
+Result lastResult() { return result; }
 Fail failReason() { return fail; }
+uint16_t attempts() { return finished; }
 int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
 
 void startPortal() {
   if (wm) return;
-  if (syncNow == Sync::Connecting || syncNow == Sync::Zone || syncNow == Sync::Clock) {
+  if (syncRunning()) {
     wifiOff();
     setState(Sync::Idle);
   }
@@ -221,6 +241,11 @@ void startPortal() {
   wm->setTitle("Drift-Watch");
   wm->addParameter(tzParam);
   wm->setBreakAfterConfig(true);
+  // Store the new network without joining it inside the library: its join waits in a
+  // loop (up to 60 s by default) and would freeze the screen. Our own sync joins it
+  // step by step instead. The library still waits once for this timeout (1 s minimum).
+  wm->setSaveConnect(false);
+  wm->setSaveConnectTimeout(1);
   portalSaved = false;
   wm->setSaveConfigCallback([] { portalSaved = true; });
   wm->setConfigPortalBlocking(false);

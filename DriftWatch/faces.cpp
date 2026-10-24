@@ -20,6 +20,15 @@ int displayHour(const FaceContext &c) {
   return h == 0 ? 12 : h;
 }
 
+// Shown while the clock is not set: what is happening, or what to do about it.
+const char *noTimeHint(const FaceContext &c) {
+  if (c.sync == SyncView::Syncing) {
+    static const char *stages[] = {"Syncing", "Joining Wi-Fi  1/3", "Finding zone  2/3", "Setting time  3/3"};
+    return stages[c.syncStage <= 3 ? c.syncStage : 0];
+  }
+  return c.noWifi ? "Swipe up: Wi-Fi setup" : "Swipe up to sync";
+}
+
 void dateText(const FaceContext &c, char *buf, size_t n) {
   snprintf(buf, n, "%s %d %s", DAYS[c.now.tm_wday], c.now.tm_mday, MONTHS[c.now.tm_mon]);
 }
@@ -54,12 +63,13 @@ void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
     gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::CYAN, false);
     gfx::cutBox(s, DATE_X + 1, DATE_Y + 1, DATE_W - 2, DATE_H - 2, 6, col::CYAN, false);
     gfx::text(s, "SYNCING", CX, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::CYAN);
+    gfx::text(s, noTimeHint(c), CX, 182, type::SMALL, col::CYAN);
   } else {
     gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::WARN, false);
     gfx::cutBox(s, DATE_X + 1, DATE_Y + 1, DATE_W - 2, DATE_H - 2, 6, col::WARN, false);
     gfx::iconAlert(s, DATE_X + 20, DATE_Y + DATE_H / 2, 14, col::WARN);
     gfx::text(s, "NO TIME", CX + 10, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::WARN);
-    gfx::text(s, "Swipe up to sync", CX, 182, type::SMALL, col::N300);
+    gfx::text(s, noTimeHint(c), CX, 182, type::SMALL, col::N300);
   }
 }
 
@@ -183,8 +193,14 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
   gfx::batteryGauge(s, CX, 168, 19, c.batteryPct, st.gaugeTrack, st.gaugeFill, st.gaugeInk);
 
   if (!c.timeValid) {
-    gfx::iconAlert(s, CX, 64, 14, col::WARN);
-    gfx::text(s, "NO TIME", CX, 82, type::SMALL, col::WARN);
+    // No hands without a time. Syncing is progress, not a fault, so it gets no warning sign.
+    if (c.sync == SyncView::Syncing) {
+      gfx::text(s, "SYNCING", CX, 66, type::SMALL, col::CYAN);
+    } else {
+      gfx::iconAlert(s, CX, 58, 14, col::WARN);
+      gfx::text(s, "NO TIME", CX, 76, type::SMALL, col::WARN);
+    }
+    gfx::text(s, noTimeHint(c), CX, 94, type::SMALL, c.sync == SyncView::Syncing ? col::CYAN : col::N300);
     return;
   }
   // Hour and minute hands move once a minute, so they live in the cached layer.
@@ -261,8 +277,14 @@ void radarLive(TFT_eSprite &s, const FaceContext &c) {
     if (c.use12h) strcat(buf, c.now.tm_hour < 12 ? "  AM" : "  PM");
     gfx::text(s, buf, CX, 152, type::SMALL, col::N300);
   } else {
-    gfx::text(s, c.sync == SyncView::Syncing ? "SYNCING" : "NO TIME", CX, 152, type::SMALL,
-              c.sync == SyncView::Syncing ? col::CYAN : col::WARN);
+    bool syncing = c.sync == SyncView::Syncing;
+    if (syncing) {
+      gfx::text(s, "SYNCING", CX, 152, type::SMALL, col::CYAN);
+    } else {
+      gfx::iconAlert(s, CX - 36, 152, 12, col::WARN);
+      gfx::text(s, "NO TIME", CX + 8, 152, type::SMALL, col::WARN);
+    }
+    gfx::text(s, noTimeHint(c), CX, 170, type::SMALL, syncing ? col::CYAN : col::N300);
   }
 }
 }  // namespace
@@ -298,6 +320,8 @@ uint32_t faceStaticKey(Face f, const FaceContext &c) {
   k = k * 131 + (uint32_t)(c.batteryPct + 1);
   k = k * 7 + c.use12h;
   k = k * 5 + (uint32_t)c.sync;
+  k = k * 5 + c.syncStage;
+  k = k * 2 + c.noWifi;
   return k;
 }
 

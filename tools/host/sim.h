@@ -18,7 +18,7 @@ extern int settingsSaves;
 // Wi-Fi script.
 extern net::Fail syncOutcome;     // None = success
 extern bool wifiSaved;
-extern int syncsStarted;
+extern int syncsStarted, syncsCancelled;
 void setPortal(net::Portal p);
 extern char zone[64];
 }

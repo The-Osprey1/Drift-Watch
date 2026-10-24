@@ -166,6 +166,13 @@ void iconAlert(TFT_eSprite &s, int cx, int cy, int size, uint16_t c) {
   s.fillRect(cx - (int)(0.75f * u), cy + 2.4f * u, max(2, (int)(1.5f * u)), max(2, (int)(1.3f * u)), col::BG);
 }
 
+void iconPending(TFT_eSprite &s, int cx, int cy, int size, uint16_t c) {
+  float r = size / 2.0f;
+  s.drawWideLine(cx, cy, cx, cy - r * 0.55f, max(1.5f, size / 7.0f), c);
+  s.drawWideLine(cx, cy, cx + r * 0.45f, cy, max(1.5f, size / 7.0f), c);
+  s.drawArc(cx, cy, (int)r, (int)r - max(2, size / 7), 0, 360, c, col::BG, true);
+}
+
 // ---- Text ------------------------------------------------------------------
 void text(TFT_eSprite &s, const char *str, int x, int y, uint8_t font, uint16_t c, uint8_t datum) {
   s.setTextFont(font);
@@ -191,6 +198,64 @@ const char *fit(TFT_eSprite &s, const char *str, uint8_t font, int maxW, char *o
     }
   }
   return out;
+}
+
+// TFT_eSPI declares all its free fonts when built with LOAD_GFXFF (build.sh sets
+// it); only the three used here end up in flash, about 10 KB together.
+const GFXfont *font(type::Role role, bool large) {
+  if (role == type::Role::Title) return large ? &FreeSansBold18pt7b : &FreeSansBold12pt7b;
+  return large ? &FreeSansBold12pt7b : &FreeSansBold9pt7b;
+}
+
+void text(TFT_eSprite &s, const char *str, int x, int y, const GFXfont *f, uint16_t c, uint8_t datum) {
+  s.setFreeFont(f);
+  s.setTextDatum(datum);
+  s.setTextColor(c);
+  s.drawString(str, x, y);
+}
+
+int textWidth(TFT_eSprite &s, const char *str, const GFXfont *f) {
+  s.setFreeFont(f);
+  return s.textWidth(str);
+}
+
+int nextLine(TFT_eSprite &s, const char *str, int start, const GFXfont *f, int maxW, int &skip) {
+  skip = 0;
+  while (str[start + skip] == ' ') skip++;
+  const char *p = str + start + skip;
+  int n = strlen(p);
+  if (n == 0) return 0;
+  s.setFreeFont(f);
+  char tmp[96];
+  auto width = [&](int len) {
+    len = min(len, (int)sizeof tmp - 1);
+    memcpy(tmp, p, len);
+    tmp[len] = 0;
+    return (int)s.textWidth(tmp);
+  };
+  if (width(n) <= maxW) return n;
+  // Prefer breaking at a space; break after '/' (long zone names) only if no space works.
+  int best = 0;
+  for (int pass = 0; pass < 2 && best == 0; pass++)
+    for (int i = 1; i < n; i++) {
+      bool brk = pass == 0 ? p[i] == ' ' : p[i - 1] == '/';
+      if (!brk) continue;
+      int len = i;
+      while (len > 0 && p[len - 1] == ' ') len--;
+      if (width(len) > maxW) break;
+      best = len;
+    }
+  if (best > 0) return best;
+  // One word is wider than the line: break it where it stops fitting.
+  int len = 1;
+  while (len < n && width(len + 1) <= maxW) len++;
+  return len;
+}
+
+int chordWidth(int top, int bottom, int margin) {
+  int dy = max(abs(top - CY), abs(bottom - CY));
+  float half = sqrtf(max(0.0f, (float)(SAFE_R * SAFE_R - dy * dy)));
+  return (int)(2 * half) - 2 * margin;
 }
 
 // ---- Skyline ---------------------------------------------------------------

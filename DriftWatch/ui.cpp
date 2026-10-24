@@ -12,6 +12,7 @@
 
 namespace {
 constexpr uint32_t SCREEN_TIMEOUT_MS = 15000;
+constexpr uint32_t RESULT_TIMEOUT_MS = 30000;          // a setup result stays up longer, to be read and acted on
 constexpr uint32_t RESYNC_MS = 6UL * 60 * 60 * 1000;   // every 6 hours
 constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync
 constexpr uint32_t BATTERY_READ_MS = 10000;
@@ -24,7 +25,7 @@ constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be m
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
 
-enum class Mode : uint8_t { Boot, Face, Panel, Setup };
+enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup };
 
 TFT_eSPI tft;
 TFT_eSprite spriteA(&tft), spriteB(&tft), cache(&tft);
@@ -52,10 +53,23 @@ uint32_t sweepStart = 0;
 int batteryPct = -1, batteryMv = -1;
 uint32_t lastBatteryRead = 0;
 uint32_t nextSyncAt = 0;
+uint16_t seenAttempts = 0;
 net::Sync seenSync = net::Sync::Idle;
 net::Portal seenPortal = net::Portal::Off;
 uint32_t uiKey = 0;
+bool uiAnimated = false;   // the last drawn screen has a spinner that needs frames
 screens::Button pressed = screens::Button::None;
+// Page shown on each paged screen. The settings page is kept while details or setup are open.
+int settingsPage = 0, detailsPage = 0, setupPage = 0;
+screens::SetupPhase seenPhase = screens::SetupPhase::Hotspot;
+
+// BOOT button: on a face a short press is next face and a long press opens settings,
+// so a face acts on release (or at the hold time). Everywhere else it acts on press.
+struct {
+  bool down = false;
+  bool used = false;      // this press has already done its one thing
+  uint32_t downAt = 0;
+} boot;
 
 // One finger's progress from touch-down to release.
 enum class Axis : uint8_t { None, Horizontal, Vertical };
@@ -71,7 +85,7 @@ struct Finger {
 
 // The one transition that can be running. A new touch takes over a face
 // slide where it is, so swipes never queue up.
-enum class Slide : uint8_t { None, Face, PanelOpen, PanelClose };
+enum class Slide : uint8_t { None, Face, PanelOpen, PanelClose, Page };
 struct Transition {
   Slide kind = Slide::None;
   bool dragging = false, animating = false;
@@ -79,6 +93,7 @@ struct Transition {
   int shownPos = -9999;    // last offset pushed to the panel
   uint32_t start = 0, duration = 0;
   int neighbour = -1;      // face drawn in `nb`
+  int toPage = 0;          // page drawn in `nb` during a page slide
 } tr;
 
 #if DRIFT_DIAG
@@ -142,10 +157,7 @@ void readBattery() {
   lastBatteryRead = hal::ms();
 }
 
-bool syncBusy() {
-  net::Sync s = net::syncState();
-  return s == net::Sync::Connecting || s == net::Sync::Zone || s == net::Sync::Clock;
-}
+bool syncBusy() { return net::syncRunning(); }
 
 FaceContext faceContext(bool withSweep) {
   FaceContext c{};
@@ -155,8 +167,10 @@ FaceContext faceContext(bool withSweep) {
   c.use12h = settings.use12h;
   c.batteryPct = batteryPct;
   if (syncBusy()) c.sync = SyncView::Syncing;
-  else if (net::syncState() == net::Sync::Failed) c.sync = SyncView::Failed;
+  else if (net::lastResult() == net::Result::Failed) c.sync = SyncView::Failed;
   else c.sync = net::lastSync() ? SyncView::Synced : SyncView::Never;
+  c.syncStage = net::syncStep();
+  c.noWifi = !net::hasSavedWifi();
   c.sweep = withSweep && sweeping ? min(1.0f, since(sweepStart) / (float)motion::SWEEP_MS) : -1;
   return c;
 }
@@ -199,22 +213,32 @@ void lastSyncText(char *buf, size_t n) {
   snprintf(buf, n, settings.use12h ? "%d:%02d" : "%02d:%02d", h, s.tm_min);
 }
 
-screens::PanelView panelView() {
+int &pageFor(Mode m) { return m == Mode::Details ? detailsPage : m == Mode::Setup ? setupPage : settingsPage; }
+
+screens::View view(Mode m, int page) {
   static char synced[8];
   lastSyncText(synced, sizeof synced);
-  screens::PanelView v{};
+  screens::View v{};
+  v.screen = m == Mode::Details ? screens::Screen::Details : m == Mode::Setup ? screens::Screen::Setup : screens::Screen::Settings;
+  v.page = page;
+  v.large = settings.largeText;
+  v.reducedMotion = settings.reducedMotion;
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
   v.use12h = settings.use12h;
-  v.reducedMotion = settings.reducedMotion;
   v.timeValid = net::timeIsValid();
-  v.sync = net::syncState();
+  v.stage = net::syncState();
+  v.result = net::lastResult();
   v.fail = net::failReason();
   v.syncStep = net::syncStep();
+  v.portal = net::portalState();
+  v.secondsLeft = net::portalSecondsLeft();
   v.lastSyncText = synced;
   v.zone = net::zoneName();
   v.ssid = net::ssid();
+  v.zoneManual = !settings.tz.isEmpty();
+  v.version = "v" FW_VERSION;
 #if DRIFT_DIAG
   v.diag = diag.line;
 #else
@@ -224,58 +248,46 @@ screens::PanelView panelView() {
   v.ms = hal::ms();
   return v;
 }
+screens::View view() { return view(mode, pageFor(mode)); }
+bool pagedMode() { return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup; }
+int pageCount() { return screens::pageCount(*cur, view()); }
 
-screens::SetupView setupView() {
-  static char synced[8];
-  lastSyncText(synced, sizeof synced);
-  screens::SetupView v{};
-  v.portal = net::portalState();
-  v.sync = net::syncState();
-  v.fail = net::failReason();
-  v.syncStep = net::syncStep();
-  v.secondsLeft = net::portalSecondsLeft();
-  v.lastSyncText = synced;
-  v.pressed = pressed;
-  v.ms = hal::ms();
-  v.reducedMotion = settings.reducedMotion;
-  return v;
-}
-
-// Everything on the panel or setup screen except the spinner, so a redraw is
-// only pushed when something the user can read has changed.
+// Everything on a settings, details or setup screen except the spinner, so a
+// redraw is only pushed when something the user can read has changed.
 uint32_t screenKey() {
   uint32_t k = (uint32_t)mode;
+  k = k * 31 + (uint32_t)pageFor(mode);
   k = k * 31 + (uint32_t)net::syncState();
+  k = k * 31 + (uint32_t)net::lastResult();
+  k = k * 31 + (uint32_t)net::attempts();
   k = k * 31 + (uint32_t)net::portalState();
   k = k * 31 + (uint32_t)net::failReason();
-  k = k * 31 + (uint32_t)net::syncStep();
   k = k * 31 + (uint32_t)pressed;
-  k = k * 31 + settings.brightnessLevel * 4 + settings.use12h * 2 + settings.reducedMotion;
+  k = k * 31 + settings.brightnessLevel * 16 + settings.use12h * 8 + settings.reducedMotion * 4 + settings.largeText * 2 +
+      net::timeIsValid();
   k = k * 131 + (uint32_t)(batteryPct + 1);
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
   return k;
 }
 
-bool spinnerShowing() {
-  if (!motionOn()) return false;
-  if (syncBusy()) return true;
-  net::Portal p = net::portalState();
-  return mode == Mode::Setup && p == net::Portal::Waiting;
-}
-
-void drawScreen(TFT_eSprite &s) {
-  if (mode == Mode::Setup) screens::drawSetup(s, setupView());
-  else screens::drawPanel(s, panelView());
-}
+void drawScreen(TFT_eSprite &s, Mode m, int page) { uiAnimated = screens::draw(s, view(m, page)); }
 
 void refreshScreen(bool force) {
   uint32_t k = screenKey();
-  bool spin = spinnerShowing() && since(lastPresent) >= SPINNER_FRAME_MS;
+  bool spin = uiAnimated && motionOn() && since(lastPresent) >= SPINNER_FRAME_MS;
   if (!force && k == uiKey && !spin) return;
   uiKey = k;
-  drawScreen(*cur);
+  drawScreen(*cur, mode, pageFor(mode));
   present(*cur);
+}
+
+// Settings open on the first page, except when the clock is not set: then they
+// open on the page with the fix (Wi-Fi setup if nothing is saved, else sync).
+int firstSettingsPage() {
+  if (net::timeIsValid()) return 0;
+  screens::Button fix = net::hasSavedWifi() ? screens::Button::SyncNow : screens::Button::WifiSetup;
+  return screens::pageOf(*cur, view(Mode::Panel, 0), fix);
 }
 
 // ---- Transitions ------------------------------------------------------------------
@@ -297,6 +309,24 @@ void prepareNeighbour(float pos) {
   if (tr.neighbour == want) return;
   renderFace(*nb, (Face)want, false);
   tr.neighbour = want;
+}
+
+// Settings, details and setup pages slide sideways like faces, but only on release.
+void changePage(int dir) {
+  int &page = pageFor(mode);
+  int to = page + dir;
+  if (to < 0 || to >= pageCount()) return;  // no wrap-around, and never a face change
+  pressed = screens::Button::None;
+  if (!haveSpare || !motionOn()) {
+    page = to;
+    refreshScreen(true);
+    return;
+  }
+  drawScreen(*nb, mode, to);
+  tr = Transition{};
+  tr.kind = Slide::Page;
+  tr.toPage = to;
+  animateTo(dir > 0 ? -W : W, motion::FACE_MS, W);
 }
 
 void showFaceSlide() {
@@ -345,16 +375,14 @@ void cutToFace(int step) {
 
 void openPanel() {
   pressed = screens::Button::None;
+  settingsPage = firstSettingsPage();
   if (!haveSpare || !motionOn()) {
     mode = Mode::Panel;
     refreshScreen(true);
     return;
   }
   if (mode == Mode::Face) renderFace(*cur, currentFace(), false);  // without the hold ring
-  Mode keep = mode;
-  mode = Mode::Panel;
-  screens::drawPanel(*nb, panelView());
-  mode = keep;
+  drawScreen(*nb, Mode::Panel, settingsPage);
   tr = Transition{};
   tr.kind = Slide::PanelOpen;
   tr.pos = 0;
@@ -392,7 +420,8 @@ void stepTransition() {
   if (p != tr.shownPos && (finished || since(lastPresent) >= ANIM_FRAME_MS)) {
     tr.shownPos = p;
     switch (tr.kind) {
-      case Slide::Face: showFaceSlide(); break;
+      case Slide::Face:
+      case Slide::Page: showFaceSlide(); break;
       case Slide::PanelOpen: presentVertical(*cur, *nb, (int)tr.pos); break;
       case Slide::PanelClose: presentVertical(*nb, *cur, (int)tr.pos); break;
       default: break;
@@ -422,6 +451,12 @@ void stepTransition() {
       mode = Mode::Face;
       dirty = true;
       break;
+    case Slide::Page:
+      std::swap(cur, nb);
+      pageFor(mode) = tr.toPage;
+      tr = Transition{};
+      uiKey = screenKey();
+      break;
     default:
       break;
   }
@@ -438,7 +473,8 @@ void sleepScreen() {
   tr = Transition{};
   sweeping = false;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
-  if (mode == Mode::Panel) mode = Mode::Face;
+  // Setup stays, so its progress or result is still there on wake.
+  if (mode == Mode::Panel || mode == Mode::Details) mode = Mode::Face;
   if (settingsDirty) {
     saveSettings();
     settingsDirty = false;
@@ -476,26 +512,62 @@ void stepFade() {
 }
 
 // ---- Actions --------------------------------------------------------------------------
+screens::SetupPhase setupPhase() {
+  screens::View v{};
+  v.portal = net::portalState();
+  v.stage = net::syncState();
+  v.result = net::lastResult();
+  return screens::setupPhase(v);
+}
+
+void showMode(Mode m) {
+  mode = m;
+  pressed = screens::Button::None;
+  if (m == Mode::Face) dirty = true;
+  else refreshScreen(true);
+}
+
+// Setup is reached from the Wi-Fi control (or at first start), so leaving it lands there.
+void showSettingsAtWifi() {
+  settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::WifiSetup);
+  showMode(Mode::Panel);
+}
+
+void openSetup() {
+  net::startPortal();
+  setupPage = 0;
+  showMode(Mode::Setup);
+}
+
+// Back goes up one level. In setup it depends on the phase: while the hotspot
+// waits for a phone, back cancels it (nothing has been saved yet); while
+// connecting, back leaves it running and the settings show its progress.
 void goBack() {
   pressed = screens::Button::None;
-  if (mode == Mode::Setup) {
-    net::cancelPortal();
-    mode = Mode::Panel;
-    refreshScreen(true);
-  } else if (mode == Mode::Panel) {
-    closeToFace();
+  switch (mode) {
+    case Mode::Setup:
+      if (setupPhase() == screens::SetupPhase::Hotspot) net::cancelPortal();
+      showSettingsAtWifi();
+      break;
+    case Mode::Details:
+      // Back to the settings page that holds Details, in the current text size.
+      settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::Details);
+      showMode(Mode::Panel);
+      break;
+    case Mode::Panel: closeToFace(); break;
+    default: break;
   }
 }
 
 void activate(screens::Button b) {
   using screens::Button;
   switch (b) {
-    case Button::Light:
+    case Button::Brightness:
       settings.brightnessLevel = (settings.brightnessLevel + 1) % BRIGHTNESS_LEVEL_COUNT;
       hal::backlight(backlightLevel());
       markSettingsChanged();
       break;
-    case Button::Clock:
+    case Button::TimeFormat:
       settings.use12h = !settings.use12h;
       cacheValid = false;
       markSettingsChanged();
@@ -504,21 +576,38 @@ void activate(screens::Button b) {
       settings.reducedMotion = !settings.reducedMotion;
       markSettingsChanged();
       break;
-    case Button::Sync:
-      net::startSync();
+    case Button::SyncNow:
+      net::startSync();  // ignored while one is already running, so taps never stack up
       break;
     case Button::WifiSetup:
+    case Button::EditWifi:
+    case Button::TryAgain:
+      openSetup();
+      return;
+    case Button::Details:
+      detailsPage = 0;
+      showMode(Mode::Details);
+      return;
+    case Button::TextSize: {
+      settings.largeText = !settings.largeText;
+      markSettingsChanged();
+      // Pages reflow with the new size; stay on the page with this control.
+      detailsPage = screens::pageOf(*cur, view(Mode::Details, 0), Button::TextSize);
+      break;
+    }
     case Button::Retry:
-      net::startPortal();
-      mode = Mode::Setup;
+      net::startSync();
       break;
     case Button::Cancel:
-      goBack();
+      if (setupPhase() == screens::SetupPhase::Connecting) net::cancelSync();
+      else net::cancelPortal();
+      showSettingsAtWifi();
       return;
-    case Button::Close:
+    case Button::Back:
+      showSettingsAtWifi();  // a running sync carries on
+      return;
     case Button::Done:
-      mode = Mode::Face;
-      dirty = true;
+      showMode(Mode::Face);
       return;
     default:
       break;
@@ -527,9 +616,8 @@ void activate(screens::Button b) {
 }
 
 screens::Button hitTest(int x, int y) {
-  if (mode == Mode::Panel) return screens::hitPanel(x, y);
-  if (mode == Mode::Setup) return screens::hitSetup(setupView(), x, y);
-  return screens::Button::None;
+  if (!pagedMode()) return screens::Button::None;
+  return screens::hit(*cur, view(), x, y);
 }
 
 // ---- Touch ------------------------------------------------------------------------------
@@ -569,7 +657,7 @@ void onFingerDown(const TouchSample &s) {
     return;
   }
   if (tr.kind != Slide::None) {
-    finger.ignore = true;  // panel slides are short; let them finish
+    finger.ignore = true;  // panel and page slides are short; let them finish
     return;
   }
   pressed = hitTest(s.x, s.y);
@@ -636,17 +724,19 @@ void onFingerUp() {
     animateTo(target, motion::FACE_MS, W);
     return;
   }
-  if (finger.axis == Axis::Horizontal && mode == Mode::Face) {
-    // Reduced motion, or no spare buffer: change on release.
-    if (dx <= -SWIPE_PX || vx < -motion::FLICK_PX_PER_MS) cutToFace(+1);
-    else if (dx >= SWIPE_PX || vx > motion::FLICK_PX_PER_MS) cutToFace(-1);
+  // Sideways swipes are scoped to the mode: faces on a face, pages on a paged
+  // screen. One swipe only ever does one of the two.
+  if (finger.axis == Axis::Horizontal) {
+    int dir = dx <= -SWIPE_PX || vx < -motion::FLICK_PX_PER_MS ? +1 : dx >= SWIPE_PX || vx > motion::FLICK_PX_PER_MS ? -1 : 0;
+    if (dir && mode == Mode::Face) cutToFace(dir);  // reduced motion, or no spare buffer: change on release
+    else if (dir && pagedMode()) changePage(dir);
     return;
   }
   if (finger.axis == Axis::Vertical) {
     bool up = dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS;
     bool down = dy >= SWIPE_PX || vy > motion::FLICK_PX_PER_MS;
     if (mode == Mode::Face && up) openPanel();
-    else if ((mode == Mode::Panel || mode == Mode::Setup) && down) goBack();
+    else if (pagedMode() && down) goBack();
     return;
   }
   if (finger.axis == Axis::None && pressed != screens::Button::None) {
@@ -658,13 +748,20 @@ void onFingerUp() {
 }
 
 // Returns true while the hold ring is on screen, so the face does not paint over it.
+// A still finger or a held BOOT button both open settings after the long-press time.
 bool stepHold() {
-  if (!finger.down || finger.ignore || finger.axis != Axis::None) return false;
   if (mode != Mode::Face || tr.kind != Slide::None) return false;
-  uint32_t held = since(finger.t0);
+  bool fingerHold = finger.down && !finger.ignore && finger.axis == Axis::None;
+  bool bootHold = boot.down && !boot.used;
+  if (!fingerHold && !bootHold) return false;
+  uint32_t held = fingerHold ? since(finger.t0) : since(boot.downAt);
   if (held >= motion::LONG_PRESS_MS) {
-    finger.longFired = true;
-    finger.ignore = true;  // the rest of this touch does nothing
+    if (fingerHold) {
+      finger.longFired = true;
+      finger.ignore = true;  // the rest of this touch does nothing
+    } else {
+      boot.used = true;      // releasing the button afterwards does nothing
+    }
     openPanel();
     return true;
   }
@@ -680,6 +777,34 @@ bool stepHold() {
   return true;
 }
 
+void pollBoot() {
+  bool down = hal::bootButtonDown();
+  if (down == boot.down) return;
+  boot.down = down;
+  lastActivity = hal::ms();
+  if (down) {
+    boot.downAt = hal::ms();
+    boot.used = true;
+    if (!awake) wakeScreen();  // the waking press does nothing else
+    else if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
+    else if (mode == Mode::Face) boot.used = tr.kind != Slide::None;  // decided on release or at the hold time
+    else if (tr.kind == Slide::None) goBack();
+    return;
+  }
+  // Released before the hold time on a face: next face.
+  if (boot.used || mode != Mode::Face || tr.kind != Slide::None) return;
+  boot.used = true;
+  dirty = true;  // clears a started hold ring
+  if (haveSpare && motionOn()) {
+    tr = Transition{};
+    tr.kind = Slide::Face;
+    prepareNeighbour(-1);
+    animateTo(-W, motion::FACE_MS, W);
+  } else {
+    cutToFace(+1);
+  }
+}
+
 void pollInput() {
   TouchSample s{};
   touch::read(s);
@@ -687,29 +812,7 @@ void pollInput() {
   else if (s.down) onFingerMove(s);
   else if (finger.down) onFingerUp();
 
-  static bool bootWas = false;
-  bool boot = hal::bootButtonDown();
-  bool bootPressed = boot && !bootWas;
-  bootWas = boot;
-  if (!bootPressed) return;
-  lastActivity = hal::ms();
-  if (!awake) {
-    wakeScreen();
-    return;
-  }
-  if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
-  else if (mode == Mode::Face && tr.kind == Slide::None) {
-    if (haveSpare && motionOn()) {
-      tr = Transition{};
-      tr.kind = Slide::Face;
-      prepareNeighbour(-1);
-      animateTo(-W, motion::FACE_MS, W);
-    } else {
-      cutToFace(+1);
-    }
-  } else if (tr.kind == Slide::None) {
-    goBack();
-  }
+  pollBoot();
 }
 
 // ---- Per-mode drawing -----------------------------------------------------------------------
@@ -717,9 +820,7 @@ void stepBoot() {
   uint32_t t = since(bootStart);
   if (t >= motion::BOOT_MS + BOOT_HOLD_MS) {
     if (!net::hasSavedWifi()) {
-      net::startPortal();
-      mode = Mode::Setup;
-      refreshScreen(true);
+      openSetup();
     } else {
       mode = Mode::Face;
       dirty = true;
@@ -754,10 +855,13 @@ void stepFace() {
 
 void stepNetwork() {
   net::poll();
+  if (net::attempts() != seenAttempts) {
+    seenAttempts = net::attempts();
+    nextSyncAt = hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    dirty = true;
+  }
   net::Sync s = net::syncState();
   if (s != seenSync) {
-    if (s == net::Sync::Done) nextSyncAt = hal::ms() + RESYNC_MS;
-    if (s == net::Sync::Failed) nextSyncAt = hal::ms() + RETRY_SYNC_MS;
     seenSync = s;
     dirty = true;
   }
@@ -765,6 +869,17 @@ void stepNetwork() {
   if (p != seenPortal) {
     seenPortal = p;
     lastActivity = hal::ms();
+  }
+  // A new setup phase has a new layout; start it on its first page, and give the
+  // result its full time on screen.
+  screens::SetupPhase ph = setupPhase();
+  if (ph != seenPhase) {
+    seenPhase = ph;
+    setupPage = 0;
+    if (mode == Mode::Setup) {
+      pressed = screens::Button::None;
+      lastActivity = hal::ms();
+    }
   }
   // Resync quietly while the screen is off so it never interrupts anything.
   if (!awake && nextSyncAt && (int32_t)(hal::ms() - nextSyncAt) >= 0) {
@@ -777,6 +892,13 @@ bool setupHoldsScreen() {
   if (mode != Mode::Setup) return false;
   net::Portal p = net::portalState();
   return p == net::Portal::Waiting || p == net::Portal::PhoneJoined || syncBusy();
+}
+
+uint32_t screenTimeout() {
+  if (mode != Mode::Setup) return SCREEN_TIMEOUT_MS;
+  screens::SetupPhase p = setupPhase();
+  bool result = p == screens::SetupPhase::Done || p == screens::SetupPhase::Failed || p == screens::SetupPhase::TimedOut;
+  return result ? RESULT_TIMEOUT_MS : SCREEN_TIMEOUT_MS;
 }
 
 #if DRIFT_DIAG
@@ -798,15 +920,26 @@ namespace ui {
 
 TFT_eSPI &display() { return tft; }
 
+int controls(screens::Control *out, int max) { return pagedMode() ? screens::controls(*cur, view(), out, max) : 0; }
+int page() { return pageFor(mode); }
+
 const char *screenName() {
-  static const char *names[] = {"boot", "face", "panel", "setup"};
-  static const char *sliding[] = {"boot+slide", "face+slide", "panel+slide", "setup+slide"};
+  static const char *names[] = {"boot", "face", "panel", "details", "setup"};
+  static const char *sliding[] = {"boot+slide", "face+slide", "panel+slide", "details+slide", "setup+slide"};
   if (!awake) return "asleep";
   return (tr.kind != Slide::None ? sliding : names)[(int)mode];
 }
 
 void begin() {
   hal::begin();
+  // Start from a clean interface state (the simulation calls begin() more than once).
+  cur = &spriteA;
+  nb = &spriteB;
+  tr = Transition{};
+  finger = Finger{};
+  pressed = screens::Button::None;
+  awake = true;
+  settingsPage = detailsPage = setupPage = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
@@ -817,6 +950,7 @@ void begin() {
   // Three full 16-bit frames (115 KB each) in PSRAM: what is on screen, the
   // incoming screen during a slide, and the cached static face layer. Without
   // PSRAM the watch still works, with cuts instead of slides.
+  haveSpare = haveCache = false;
   bool a = spriteA.createSprite(W, H) != nullptr;
   if (!a) {
     spriteA.setColorDepth(8);
@@ -835,17 +969,13 @@ void begin() {
 
   bool sequence = hal::coldBoot() && motionOn();
   mode = sequence ? Mode::Boot : Mode::Face;
-  if (!sequence && !net::hasSavedWifi()) {
-    net::startPortal();
-    mode = Mode::Setup;
-  }
   bootStart = lastActivity = hal::ms();
-  if (mode == Mode::Face) {
+  if (!sequence && !net::hasSavedWifi()) {
+    openSetup();
+  } else if (mode == Mode::Face) {
     renderFace(*cur, currentFace(), false);
     present(*cur);
     dirty = false;
-  } else if (mode == Mode::Setup) {
-    refreshScreen(true);
   } else {
     screens::drawBoot(*cur, 0, "v" FW_VERSION);
     present(*cur);
@@ -867,9 +997,9 @@ void loop() {
     return;
   }
 
-  bool held = finger.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot;
+  bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot;
   if (held) lastActivity = hal::ms();
-  if (since(lastActivity) > SCREEN_TIMEOUT_MS) {
+  if (since(lastActivity) > screenTimeout()) {
     sleepScreen();
     return;
   }
@@ -884,7 +1014,7 @@ void loop() {
   stepDiag();
 #endif
 
-  bool busy = tr.kind != Slide::None || fading || sweeping || mode == Mode::Boot || finger.down;
+  bool busy = tr.kind != Slide::None || fading || sweeping || mode == Mode::Boot || finger.down || boot.down;
   hal::idle(busy ? 1 : 10);
 }
 

@@ -34,12 +34,25 @@ constexpr uint16_t CYAN_DIM = rgb(0x0A4A55);
 constexpr uint16_t CYAN_DEEP = rgb(0x05262C);
 constexpr uint16_t MAGENTA_DIM = rgb(0x4A1024);
 constexpr uint16_t WINDOW = rgb(0x6E6610);   // lit windows, kept low so the skyline stays background
+
+// Roles on the settings and setup screens. Contrast on black, from these tokens
+// (checked by tools/host/simulate): N100 16.3:1, N300 8.2:1, CYAN 15.2:1,
+// MAGENTA 5.8:1, WARN 8.0:1 for text; OUTLINE 4.3:1 for control edges (3:1 goal).
+constexpr uint16_t TEXT = N100;              // essential text and values
+constexpr uint16_t TEXT_2 = N300;            // labels and supporting text
+constexpr uint16_t OUTLINE = N400;           // control edges
 }  // namespace col
 
 namespace type {
-// Built-in TFT_eSPI fonts. Line heights: font 2 = 16 px, font 4 = 26 px.
+// Built-in TFT_eSPI fonts, used by the watch faces. Line heights: font 2 = 16 px, font 4 = 26 px.
 constexpr uint8_t SMALL = 2;    // secondary information
-constexpr uint8_t MEDIUM = 4;   // date, panel values
+constexpr uint8_t MEDIUM = 4;   // date
+// Settings and setup text uses bold bitmap fonts (FreeSansBold, see gfx::font) in two roles.
+// Measured capital heights: 9 pt = 13 px, 12 pt = 18 px, 18 pt = 26 px.
+//   role    normal   large text
+//   Body    9 pt     12 pt  (labels, instructions, button words; 138%)
+//   Title   12 pt    18 pt  (values and headlines; 144%)
+enum class Role : uint8_t { Body, Title };
 // Segment time digits, height in pixels.
 constexpr float TIME_HERO = 56;   // digital face
 constexpr float TIME_INSET = 44;  // radar face
@@ -50,7 +63,9 @@ constexpr int CX = 120, CY = 120;
 constexpr int SAFE_R = 112;     // all text and controls stay inside this circle
 constexpr int DECOR_R = 119;    // decoration may reach this far
 constexpr int GAP = 4;          // base spacing unit
-constexpr int TOUCH_MIN = 44;   // smallest touch target side
+// Touch target goal for settings and setup: 68 px is about 9.2 mm at 0.135 mm per pixel.
+constexpr int TOUCH_MIN = 68;
+constexpr int TOUCH_SPACING = 8; // smallest gap between neighbouring touch regions
 }  // namespace layout
 
 namespace stroke {

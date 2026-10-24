@@ -3,17 +3,27 @@
 // blocking, so touch and the clock stay live during animations and Wi-Fi.
 //
 // Controls
-//   swipe left / right     next / previous face (the face follows your finger)
-//   swipe up, or hold      open the status and settings panel
-//   swipe down, or BOOT    go back one level (panel or setup -> face)
-//   BOOT on a face         next face
-//   any touch or BOOT      wakes the screen; that touch does nothing else
+//   on a face
+//     swipe left / right     next / previous face (the face follows your finger)
+//     swipe up, or hold      open settings (a ring grows while you hold)
+//     BOOT, short press      next face (on release)
+//     BOOT, hold 0.6 s       open settings
+//   on settings, details or setup
+//     swipe left / right     next / previous page; never changes the face
+//     swipe down, or BOOT    back one level (setup or details -> settings -> face)
+//     tap                    a control acts on release, unless the finger moved
+//   any touch or BOOT        wakes the screen; that touch or press does nothing else
 #pragma once
 #include <TFT_eSPI.h>
+#include "screens.h"
 
 namespace ui {
 void begin();
 void loop();
 TFT_eSPI &display();     // for the computer simulation, which reads the pixels
-const char *screenName(); // "boot", "face", "panel", "setup" or "asleep", plus "+slide" mid-transition
+// "boot", "face", "panel", "details", "setup" or "asleep", plus "+slide" mid-transition
+const char *screenName();
+// For the simulation: the controls on screen now, and the page of the paged screen.
+int controls(screens::Control *out, int max);
+int page();
 }

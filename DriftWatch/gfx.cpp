@@ -22,6 +22,14 @@ void fillPoly(TFT_eSprite &s, const Pt *p, int n, uint16_t c) {
                    lroundf(p[i + 1].x), lroundf(p[i + 1].y), c);
 }
 
+uint16_t blend(uint16_t fg, uint16_t bg, float a) {
+  if (a <= 0) return bg;
+  if (a >= 1) return fg;
+  auto mix = [a](int f, int b) { return (int)(b + (f - b) * a + 0.5f); };
+  int r = mix(fg >> 11, bg >> 11), g = mix((fg >> 5) & 63, (bg >> 5) & 63), b = mix(fg & 31, bg & 31);
+  return (uint16_t)(r << 11 | g << 5 | b);
+}
+
 void strokePoly(TFT_eSprite &s, const Pt *p, int n, uint16_t c) {
   for (int i = 0; i < n; i++) {
     const Pt &a = p[i], &b = p[(i + 1) % n];

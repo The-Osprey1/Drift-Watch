@@ -7,12 +7,14 @@
 #include <esp_wifi.h>
 #include "hal.h"
 #include "settings.h"
+#include "timekeep.h"
 
 namespace {
 constexpr uint32_t CONNECT_TIMEOUT_MS = 15000;
 constexpr uint32_t ZONE_TIMEOUT_MS = 6000;
 constexpr uint32_t NTP_TIMEOUT_MS = 10000;
 constexpr uint32_t PORTAL_TIMEOUT_MS = 300000;  // 5 minutes
+constexpr uint32_t TRIM_MS = 10000;             // how often the clock is nudged for drift
 
 net::Sync syncNow = net::Sync::Idle;
 net::Result result = net::Result::None;
@@ -25,6 +27,11 @@ uint16_t finished = 0;
 net::Portal portal = net::Portal::Off;
 uint32_t stateStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
+net::Source source = net::Source::None;
+ClockTrim trim;
+uint32_t lastTrim = 0;
+int64_t clockStartWall = 0;  // wall clock (ms) when the time server was asked, to measure drift
+uint32_t clockStartMs = 0;
 char zone[40] = "";
 char savedSsid[33] = "";
 char posixTz[64] = "UTC0";
@@ -131,7 +138,19 @@ void finish(net::Fail f) {
   hal::log("net: sync %s (reason %d)", f == net::Fail::None ? "done" : "failed", (int)f);
 }
 
+// A trusted time was just applied. `errorMs` is how far ahead the watch had been.
+void learnDrift(int64_t errorMs) {
+  if (trim.learn(hal::nowMs(), errorMs)) {
+    settings.driftPpb = trim.ppb();
+    saveSettings();
+  }
+  hal::log("net: clock was %lld ms %s, drift now %ld ppb", (long long)(errorMs < 0 ? -errorMs : errorMs),
+           errorMs >= 0 ? "fast" : "slow", (long)trim.ppb());
+}
+
 void startClock() {
+  clockStartWall = hal::nowMs();
+  clockStartMs = hal::ms();
   setenv("TZ", posixTz, 1);
   tzset();
   sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
@@ -170,6 +189,7 @@ void saveWifi(const char *ssid, const char *password) {
 }
 
 void begin() {
+  trim.setPpb(settings.driftPpb);
   if (settings.tz.isEmpty()) {
     settings.tz = "PST8PDT,M3.2.0,M11.1.0";
     saveSettings();
@@ -237,6 +257,8 @@ void poll() {
     case Sync::Clock:
       if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
         lastSyncTime = time(nullptr);
+        learnDrift(clockStartWall + (int64_t)(hal::ms() - clockStartMs) - hal::nowMs());
+        source = Source::Wifi;
         finish(Fail::None);
       } else if (elapsed > NTP_TIMEOUT_MS) {
         finish(Fail::ClockFailed);
@@ -244,6 +266,15 @@ void poll() {
       break;
     default:
       break;
+  }
+
+  // Nudge the clock for the drift learned from earlier syncs.
+  if (hal::ms() - lastTrim >= TRIM_MS) {
+    lastTrim = hal::ms();
+    if (timeIsValid()) {
+      int64_t step = trim.due(hal::nowMs());
+      if (step) hal::adjustMs(step);
+    }
   }
 
   if (wm) {
@@ -290,7 +321,20 @@ void startPortal() {
   // then switched station mode off again, which stopped and restarted the radio just before
   // the hotspot came up and could leave it not broadcasting.
   WiFi.mode(WIFI_AP);
+  // Worldwide settings: channels 1 to 11 are allowed everywhere, so any phone can see the
+  // hotspot whatever country it is set to.
+  wifi_country_t country = {};
+  strcpy(country.cc, "01");
+  country.schan = 1;
+  country.nchan = 11;
+  country.policy = WIFI_COUNTRY_POLICY_MANUAL;
+  esp_wifi_set_country(&country);
   wm = new WiFiManager();
+  // Spelled out rather than left to the library's defaults. The library already answers every
+  // name lookup with this address and sends phones' "am I online?" checks to its page, which
+  // is what makes iPhones and Android phones pop the setup page up by themselves.
+  wm->setAPStaticIPConfig(IPAddress(192, 168, 4, 1), IPAddress(192, 168, 4, 1), IPAddress(255, 255, 255, 0));
+  wm->setWiFiAPChannel(1);
   if (!bandNote)
     bandNote = new WiFiManagerParameter(
         "<p><b>This watch only works with 2.4 GHz Wi-Fi.</b> Only networks it can use are listed. "
@@ -310,6 +354,7 @@ void startPortal() {
   wm->setSaveConfigCallback([] { portalSaved = true; });
   wm->setConfigPortalBlocking(false);
   wm->startConfigPortal(SETUP_AP_NAME);
+  WiFi.setTxPower(WIFI_POWER_19_5dBm);  // full power while the hotspot is open
   hal::log("net: hotspot %s %s at %s", SETUP_AP_NAME, (WiFi.getMode() & WIFI_AP) ? "up" : "NOT up",
            WiFi.softAPIP().toString().c_str());
   portal = Portal::Waiting;
@@ -333,8 +378,53 @@ bool timeIsValid() { return time(nullptr) > 1700000000; }  // later than Nov 202
 void setClockByHand(time_t t) {
   hal::setTime(t);
   byHand = true;
+  trim.forget();  // a hand setting is too rough to measure drift against
   hal::log("net: clock set by hand");
 }
+
+void setClockFromPhone(time_t utc, int ms) {
+  int64_t trueMs = (int64_t)utc * 1000 + ms;
+  int64_t errorMs = hal::nowMs() - trueMs;
+  bool wasValid = timeIsValid();
+  hal::setTimeMs(trueMs);
+  if (wasValid) learnDrift(errorMs);  // a clock that was never set says nothing about drift
+  lastSyncTime = utc;
+  source = Source::Phone;
+  byHand = false;
+  fail = Fail::None;
+  result = Result::Ok;
+  finished++;
+  hal::log("net: clock set from phone");
+}
+
+Source lastSource() { return source; }
+
+void setZone(const char *posix, const char *name) {
+  if (posix) {
+    settings.tz = posix;
+    saveSettings();
+    strlcpy(posixTz, posix, sizeof posixTz);
+    setenv("TZ", posixTz, 1);
+    tzset();
+  }
+  if (name) strlcpy(zone, name, sizeof zone);
+}
+
+void saveNetwork(const char *newSsid, const char *password) {
+  if (wm) closePortal(Portal::Closed);
+  if (syncRunning()) cancelSync();
+  WiFi.mode(WIFI_STA);
+  wifi_config_t conf = {};
+  strlcpy((char *)conf.sta.ssid, newSsid, sizeof conf.sta.ssid);
+  strlcpy((char *)conf.sta.password, password, sizeof conf.sta.password);
+  esp_wifi_set_storage(WIFI_STORAGE_FLASH);
+  esp_wifi_set_config(WIFI_IF_STA, &conf);
+  readSavedSsid();
+  wifiOff();
+  hal::log("net: network %s saved from phone", savedSsid);
+}
+
+int32_t driftPpb() { return trim.ppb(); }
 bool clockSetByHand() { return byHand; }
 time_t lastSync() { return lastSyncTime; }
 const char *zoneName() { return zone; }

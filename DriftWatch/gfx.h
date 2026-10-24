@@ -13,6 +13,8 @@ Pt polar(float deg, float r);
 Pt alongHand(float deg, float along, float side);
 
 void fillPoly(TFT_eSprite &s, const Pt *p, int n, uint16_t c);
+// Mixes two RGB565 colours: `a` = 1 gives `fg`, 0 gives `bg`.
+uint16_t blend(uint16_t fg, uint16_t bg, float a);
 void strokePoly(TFT_eSprite &s, const Pt *p, int n, uint16_t c);
 // Straight radial bar from r0 to r1, `w` pixels wide.
 void radialBar(TFT_eSprite &s, float deg, float r0, float r1, float w, uint16_t c);

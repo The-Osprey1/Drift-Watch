@@ -18,7 +18,7 @@ struct FaceContext {
   SyncView sync;
   uint8_t syncStage;  // 1..3 while syncing (joining, time zone, clock), else 0
   bool noWifi;        // no network saved: the fix is Wi-Fi setup, not a sync
-  float sweep;        // radar sweep progress 0..1, or < 0 when idle
+  float beamDeg;      // radar beam angle, degrees clockwise from 12, or < 0 for no beam
 };
 
 // Draws the parts that only change once a minute (or when the date, battery

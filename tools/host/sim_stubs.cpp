@@ -2,7 +2,10 @@
 // Wi-Fi, driven by the variables in sim.h.
 #include <stdarg.h>
 #include <Preferences.h>
+#include "ble.h"
 #include "hal.h"
+#include "orient.h"
+#include "ui.h"
 #include "net.h"
 #include "settings.h"
 #include "sim.h"
@@ -25,8 +28,23 @@ net::JoinWhy joinWhy = net::JoinWhy::NotFound;
 bool imuPresent = true;
 Accel accel = {0, 0, 1};  // lying flat, screen up
 int dozes = 0, lowPowerDozes = 0;
+uint32_t imuLineEdges[2] = {0, 0};
+bool panelTurnsClockwise = true;
+uint8_t touchMount = 0;
+std::vector<std::string> bleLines;
+bool bleConnected = false, bleStarts = true;
+int bleOpens = 0;
+
+void rawTouch(int x, int y, int &rx, int &ry) {
+  // Where the drawn point is on the panel: setRotation(r) turns the picture r quarter turns.
+  int turn = ui::display().rotation, px = x, py = y;
+  uint8_t quarter = panelTurnsClockwise ? 1 : 3;
+  for (int i = 0; i < turn; i++) orient::apply(quarter, px, py, px, py);
+  orient::apply(touchMount, px, py, rx, ry);
+}
 }  // namespace sim
 
+HostSerial Serial;
 uint32_t millis() { return sim::clockMs; }
 uint32_t micros() { return sim::clockMs * 1000; }
 void delay(uint32_t ms) { sim::clockMs += ms; }
@@ -48,6 +66,11 @@ uint32_t freePsram() { return 1700000; }
 void setTime(time_t t) {
   sim::clockSet = true;
   sim::epochAtZero = t - sim::clockMs / 1000;
+}
+int64_t nowMs() { return (int64_t)now() * 1000 + sim::clockMs % 1000; }
+void setTimeMs(int64_t ms) { setTime((time_t)(ms / 1000)); }
+void adjustMs(int64_t ms) {
+  if (sim::clockSet) sim::epochAtZero += ms / 1000;
 }
 // Light sleep ends early on a touch or BOOT press; the scripts set those between loops,
 // so a wait that starts with nothing pressed simply runs its full time.
@@ -74,14 +97,17 @@ bool read(Accel &out) {
   out = sim::accel;
   return sim::imuPresent;
 }
+uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? sim::imuLineEdges[line] : 0; }
 }  // namespace imu
 
 namespace touch {
 bool begin() { return true; }
 bool read(TouchSample &out) {
   out.down = sim::fingerDown;
-  out.x = sim::fingerX;
-  out.y = sim::fingerY;
+  int rx, ry;
+  sim::rawTouch(sim::fingerX, sim::fingerY, rx, ry);
+  out.x = rx;
+  out.y = ry;
   return true;
 }
 }  // namespace touch
@@ -98,6 +124,8 @@ net::Portal portal = net::Portal::Off;
 uint32_t stepStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
 char simZone[64] = "";
+net::Source source = net::Source::None;
+char savedSsid[33] = "";
 constexpr uint32_t STEP_MS[] = {0, 1200, 400, 400};
 }  // namespace
 
@@ -128,7 +156,7 @@ void poll() {
     case Sync::Clock:
       if (e >= STEP_MS[3]) {
         if (sim::syncOutcome == Fail::ClockFailed) end(Fail::ClockFailed);
-        else { sim::clockSet = true; lastSyncTime = hal::now(); end(Fail::None); }
+        else { sim::clockSet = true; lastSyncTime = hal::now(); source = Source::Wifi; end(Fail::None); }
       }
       break;
     default: break;
@@ -168,5 +196,73 @@ int joinCode() { return sim::joinWhy == JoinWhy::NotFound ? 201 : sim::joinWhy =
 bool radioOn() { return syncNow != Sync::Idle || portal == Portal::Waiting || portal == Portal::PhoneJoined; }
 time_t lastSync() { return lastSyncTime; }
 const char *zoneName() { return simZone; }
-const char *ssid() { return sim::wifiSaved ? "HomeNet-5G" : ""; }
+const char *ssid() { return !sim::wifiSaved ? "" : savedSsid[0] ? savedSsid : "HomeNet-5G"; }
+void setClockFromPhone(time_t utc, int) {
+  hal::setTime(utc);
+  lastSyncTime = utc;
+  source = Source::Phone;
+  byHand = false;
+  fail = Fail::None;
+  result = Result::Ok;
+  finished++;
+}
+Source lastSource() { return source; }
+void setZone(const char *posix, const char *name) {
+  if (posix) {
+    settings.tz = posix;
+    saveSettings();
+  }
+  if (name) snprintf(simZone, sizeof simZone, "%s", name);
+}
+void saveWifi(const char *s, const char *p) {
+  saveNetwork(s, p);
+  startSync();
+}
+void saveNetwork(const char *s, const char *) {
+  snprintf(savedSsid, sizeof savedSsid, "%s", s);
+  sim::wifiSaved = true;
+}
+int32_t driftPpb() { return settings.driftPpb; }
 }  // namespace net
+
+// Bluetooth: open and close only change state; scripts push lines into sim::bleLines.
+namespace {
+ble::State bleState = ble::State::Off;
+uint32_t bleOpenedAt = 0, bleLastLine = 0;
+std::string bleStatus;
+}
+namespace ble {
+void open() {
+  sim::bleOpens++;
+  bleOpenedAt = sim::clockMs;
+  bleLastLine = 0;
+  if (bleState == State::Waiting || bleState == State::Connected) return;
+  bleState = sim::bleStarts ? State::Waiting : State::Failed;
+}
+void close() {
+  bleState = State::Off;
+  sim::bleConnected = false;
+}
+void poll() {
+  if (bleState != State::Waiting && bleState != State::Connected) return;
+  bleState = sim::bleConnected ? State::Connected : State::Waiting;
+  if (!secondsLeft()) close();
+}
+State state() { return bleState; }
+bool on() { return bleState == State::Waiting || bleState == State::Connected; }
+uint32_t secondsLeft() {
+  if (!on()) return 0;
+  uint32_t used = sim::clockMs - (bleLastLine ? bleLastLine : bleOpenedAt);
+  return used >= WINDOW_MS ? 0 : (WINDOW_MS - used + 999) / 1000;
+}
+const char *name() { return "Drift-1A2B"; }
+bool nextLine(char *out, size_t n) {
+  if (!on() || sim::bleLines.empty()) return false;
+  snprintf(out, n, "%s", sim::bleLines.front().c_str());
+  sim::bleLines.erase(sim::bleLines.begin());
+  bleLastLine = sim::clockMs;
+  return true;
+}
+void setStatus(const char *text) { bleStatus = text; }
+}  // namespace ble
+const char *simBleStatus() { return bleStatus.c_str(); }

@@ -6,6 +6,7 @@
 #include "screens.h"
 #include <stdarg.h>
 #include "gfx.h"
+#include "orient.h"
 #include "settings.h"
 #include "theme.h"
 
@@ -61,15 +62,17 @@ struct Item {
   int bars;  // brightness bars before the value, 0 = none
 };
 
+constexpr int MAX_BLOCKS = 16;
+
 struct Doc {
-  Block blocks[10];
+  Block blocks[MAX_BLOCKS];
   int nb = 0;
   Item items[2];
   int ni = 0;
-  char text[8][72];
+  char text[14][72];
   int nt = 0;
   const char *fmt(const char *f, ...) {
-    char *out = text[nt < 7 ? nt++ : 7];
+    char *out = text[nt < 13 ? nt++ : 13];
     va_list ap;
     va_start(ap, f);
     vsnprintf(out, sizeof text[0], f, ap);
@@ -77,7 +80,7 @@ struct Doc {
     return out;
   }
   void add(const char *t, Role r, uint16_t c, Icon i = Icon::None, Place p = Place::Main) {
-    if (nb < 10) blocks[nb++] = {t, r, c, i, p};
+    if (nb < MAX_BLOCKS) blocks[nb++] = {t, r, c, i, p};
   }
   void action(Button id, const char *value, uint16_t edge) {
     if (ni < 2) items[ni++] = {id, nullptr, Icon::None, 0, value, edge, edge, 0};
@@ -418,8 +421,12 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       it.value = "Set time";
       break;
     case Button::RaiseWake:
-      it.label = v.imuPresent ? "Raise to wake" : "No sensor";
-      it.value = v.raiseToWake && v.imuPresent ? "On" : "Off";
+      it.label = v.imuPresent ? "Wake gesture" : "No sensor";
+      it.value = !v.imuPresent                       ? "Off"
+                 : v.raiseToWake && v.twistToWake ? "Raise, twist"
+                 : v.raiseToWake                  ? "Raise"
+                 : v.twistToWake                  ? "Twist"
+                                                  : "Off";
       break;
     case Button::SyncNow:
       // The label carries the state; the value is what a tap does.
@@ -456,6 +463,30 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
     case Button::Details:
       it.label = "Status and";
       it.value = "Text size";
+      break;
+    case Button::PhoneSync:
+      it.label = "Phone sync";
+      it.value = "Bluetooth";
+      it.valueColor = it.edge = col::CYAN;
+      break;
+    case Button::Night:
+      it.label = "Night mode";
+      if (!v.night) it.value = "Off";
+      else if (v.use12h) {
+        int from = NIGHT_FROM[v.night % NIGHT_CHOICES], to = NIGHT_TO[v.night % NIGHT_CHOICES];
+        it.value = d.fmt("%d%s-%d%s", from % 12 ? from % 12 : 12, from < 12 ? "am" : "pm", to % 12 ? to % 12 : 12, to < 12 ? "am" : "pm");
+      } else {
+        it.value = d.fmt("%02d:00-%02d:00", NIGHT_FROM[v.night % NIGHT_CHOICES], NIGHT_TO[v.night % NIGHT_CHOICES]);
+      }
+      break;
+    case Button::ScreenTurn:
+      it.label = "Screen turn";
+      it.value = orient::turnName(v.screenTurn);
+      break;
+    case Button::TouchCheck:
+      it.label = "Touch check";
+      it.labelIcon = v.touchChecked ? Icon::Check : Icon::None;
+      it.value = v.touchChecked ? "Lined up" : "Not done";
       break;
     default:
       break;
@@ -619,8 +650,16 @@ bool drawSetTime(TFT_eSprite &s, const View &v, int page) {
 // ---- Details and setup documents ----------------------------------------------------------
 void detailsDoc(const View &v, Doc &d) {
   d.add("Status", Role::Body, col::TEXT_2);
-  if (v.batteryPct >= 0) d.add(d.fmt("Battery %d%%, %d.%02d V", v.batteryPct, v.batteryMv / 1000, v.batteryMv % 1000 / 10), Role::Body, col::TEXT);
-  else d.add("Battery: no reading", Role::Body, col::TEXT_2);
+  if (v.batteryPct >= 0) {
+    d.add(d.fmt("Battery %d%%, %d.%02d V", v.batteryPct, v.batteryMv / 1000, v.batteryMv % 1000 / 10), Role::Body, col::TEXT);
+    // Measured on this watch from how fast the level falls, never assumed.
+    if (v.charging) d.add("Charging", Role::Body, col::TEXT_2);
+    else if (v.batteryHours < 0) d.add("Time left: measuring", Role::Body, col::TEXT_2);
+    else if (v.batteryHours < 48) d.add(d.fmt("About %d h left", (int)(v.batteryHours + 0.5f)), Role::Body, col::TEXT);
+    else d.add(d.fmt("About %d days %d h left", (int)v.batteryHours / 24, (int)v.batteryHours % 24), Role::Body, col::TEXT);
+  } else {
+    d.add("Battery: no reading", Role::Body, col::TEXT_2);
+  }
   if (!v.timeValid) d.add("Time not set", Role::Body, col::WARN, Icon::Alert);
   if (running(v)) d.add(d.fmt("Syncing: %s, step %d of 3", stageText(v.stage), v.syncStep), Role::Body, col::CYAN, Icon::Busy);
   if (v.clockByHand && v.timeValid) d.add("Clock set by hand", Role::Body, col::TEXT);
@@ -632,14 +671,24 @@ void detailsDoc(const View &v, Doc &d) {
     d.add(d.fmt("Last sync failed: %s", failText(v.fail)), Role::Body, col::WARN, Icon::Alert);
     d.add(failHint(v.fail), Role::Body, col::TEXT_2);
   } else if (v.lastSyncText[0]) {
-    d.add(d.fmt("Last sync %s", v.lastSyncText), Role::Body, col::TEXT, Icon::Check);
+    d.add(d.fmt("Last sync %s%s, %s", v.lastSyncText, v.syncSource == net::Source::Phone ? " by phone" : "", v.syncAgo),
+          Role::Body, col::TEXT, Icon::Check);
   } else if (!running(v)) {
     d.add("Not synced yet", Role::Body, col::TEXT_2);
   }
   if (v.zone[0]) d.add(d.fmt("Time zone %s", v.zone), Role::Body, col::TEXT);
   else d.add(v.zoneManual ? "Time zone typed in setup" : "Time zone not found yet", Role::Body, col::TEXT_2);
   d.add(v.ssid[0] ? d.fmt("Wi-Fi %s", v.ssid) : "No Wi-Fi saved", Role::Body, v.ssid[0] ? col::TEXT : col::TEXT_2);
+  if (v.driftPpb) {
+    float perDay = v.driftPpb * 86400e-9f;
+    d.add(d.fmt("Clock drift %.1f s a day %s, corrected", perDay < 0 ? -perDay : perDay, perDay < 0 ? "slow" : "fast"), Role::Body,
+          col::TEXT_2);
+  }
   d.add(v.imuPresent ? "Motion sensor found" : "Motion sensor not found", Role::Body, col::TEXT_2);
+  // For the watch test: which of the sensor's interrupt lines reach the processor.
+  if (v.imuPresent) d.add(d.fmt("Sensor lines: GPIO 4 %lu, GPIO 3 %lu", (unsigned long)v.imuLine1, (unsigned long)v.imuLine2), Role::Body, col::TEXT_2);
+  d.add(d.fmt("Screen %s, touch %s", orient::turnName(v.screenTurn), v.touchChecked ? "checked" : "not checked"), Role::Body,
+        col::TEXT_2);
   d.add(d.fmt("Firmware %s", v.version), Role::Body, col::TEXT_2);
   if (v.diag) d.add(v.diag, Role::Body, col::TEXT_2);
   d.add("Bigger text on these screens. Faces stay the same.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
@@ -705,9 +754,77 @@ void setupDoc(const View &v, Doc &d) {
   }
 }
 
+void phoneDoc(const View &v, Doc &d) {
+  switch (phonePhase(v)) {
+    case PhonePhase::Waiting:
+      d.add("Phone sync", Role::Title, col::TEXT);
+      d.add("On your phone, open the Drift sync page and tap Connect. Pick", Role::Body, col::TEXT);
+      d.add(v.bleName, Role::Title, col::CYAN);
+      d.add("iPhone: use the Bluefy app. Android or a computer: Chrome or Edge.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
+      d.action(Button::Cancel, "Cancel", col::TEXT_2);
+      d.items[0].label = d.fmt("Closes in %u:%02u", (unsigned)(v.bleSecondsLeft / 60), (unsigned)(v.bleSecondsLeft % 60));
+      d.items[0].labelColor = col::TEXT_2;
+      d.items[0].valueColor = col::TEXT;
+      break;
+    case PhonePhase::Connected:
+      d.add("Phone connected", Role::Title, col::CYAN, Icon::Check);
+      d.add("Tap Sync time on the phone.", Role::Body, col::TEXT);
+      if (v.phoneError) d.add(d.fmt("Last message refused: %s", v.phoneError), Role::Body, col::WARN, Icon::Alert);
+      d.action(Button::Cancel, "Cancel", col::TEXT_2);
+      break;
+    case PhonePhase::TimeSet:
+      d.add("Time set", Role::Title, col::CYAN, Icon::Check);
+      d.add(d.fmt("Clock %s", v.nowText), Role::Body, col::TEXT);
+      if (v.phoneWifiSaved) d.add(d.fmt("Wi-Fi %s saved. The watch joins it next.", v.phoneSsid), Role::Body, col::TEXT_2);
+      d.action(Button::Done, "Done", col::CYAN);
+      break;
+    case PhonePhase::Closed:
+      d.add("Phone sync closed", Role::Title, col::TEXT);
+      d.add(v.phoneWifiSaved ? d.fmt("Wi-Fi %s saved.", v.phoneSsid) : "Nothing was changed.", Role::Body, col::TEXT_2);
+      d.action(Button::PhoneSync, "Open again", col::CYAN);
+      d.action(Button::Back, "Back", col::TEXT_2);
+      break;
+    case PhonePhase::Failed:
+      d.add("No Bluetooth", Role::Title, col::WARN, Icon::Cross);
+      d.add("Bluetooth did not start. Restart the watch and try again.", Role::Body, col::TEXT);
+      d.action(Button::Back, "Back", col::TEXT_2);
+      break;
+  }
+}
+
 void buildDoc(const View &v, Doc &d) {
   if (v.screen == Screen::Details) detailsDoc(v, d);
+  else if (v.screen == Screen::PhoneSync) phoneDoc(v, d);
   else setupDoc(v, d);
+}
+
+// ---- Touch check ----------------------------------------------------------------------------
+// A dot to tap, then a second; the raw positions decide how touch is turned (orient.h). The
+// dots are drawn in screen space, so they always appear where the screen turn puts them.
+bool drawTouchCheck(TFT_eSprite &s, const View &v) {
+  const GFXfont *body = fontFor(Role::Body, v.large), *title = fontFor(Role::Title, v.large);
+  // Short words: the middle of the circle is the only wide part, and the dots take some of it.
+  if (v.checkResult == CheckResult::Matched) {
+    gfx::iconCheck(s, CX, 92, 30, col::CYAN);
+    gfx::text(s, "Lined up", CX, 136, title, col::TEXT, MC_DATUM);
+    return false;
+  }
+  if (v.checkResult == CheckResult::NoMatch) {
+    gfx::iconAlert(s, CX, 92, 30, col::WARN);
+    gfx::text(s, "No match", CX, 136, title, col::TEXT, MC_DATUM);
+    gfx::text(s, "Tap again", CX, 164, body, col::TEXT_2, MC_DATUM);
+    return false;
+  }
+  int step = constrain(v.checkStep, 0, 1);
+  int tx = orient::TARGET_X[step], ty = orient::TARGET_Y[step];
+  s.drawCircle(tx, ty, 15, col::CYAN);
+  s.drawCircle(tx, ty, 14, col::CYAN);
+  s.fillSmoothCircle(tx, ty, 5, col::CYAN, col::BG);
+  gfx::text(s, "Touch check", CX, 88, body, col::TEXT_2, MC_DATUM);
+  gfx::text(s, "BOOT skips", CX, 114, body, col::N400, MC_DATUM);
+  gfx::text(s, "Tap the dot", CX, 158, title, col::TEXT, MC_DATUM);
+  gfx::text(s, step ? "2 of 2" : "1 of 2", CX, 190, body, col::TEXT_2, MC_DATUM);
+  return false;
 }
 
 // Page plan for a document: everything on one page if it fits, otherwise
@@ -716,7 +833,7 @@ struct Plan {
   bool single;
   int pages;
   bool notesWithActions;
-  int order[10], n;           // blocks in content-page order
+  int order[MAX_BLOCKS], n;   // blocks in content-page order
   int start[8], count[8];     // per content page, into `order`
   int contentPages;
 };
@@ -749,7 +866,7 @@ bool placeItems(Ctx &c, const Doc &d, const Control *ctl) {
 Plan plan(TFT_eSprite &s, const View &v, const Doc &d) {
   Plan p{};
   Ctx c{s, v, false, false};
-  int mainIdx[10], nm = 0, afterIdx[10], na = 0, noteIdx[10], nn = 0;
+  int mainIdx[MAX_BLOCKS], nm = 0, afterIdx[MAX_BLOCKS], na = 0, noteIdx[MAX_BLOCKS], nn = 0;
   for (int i = 0; i < d.nb; i++) {
     if (d.blocks[i].place == Place::After) afterIdx[na++] = i;
     else if (d.blocks[i].place == Place::Note) noteIdx[nn++] = i;
@@ -760,7 +877,7 @@ Plan plan(TFT_eSprite &s, const View &v, const Doc &d) {
   Control ctl[2];
   singleRects(d.ni, ctl, d);
   int actTop = d.ni ? ctl[0].visible.y : PAGE_BOTTOM, actBottom = d.ni ? ctl[0].visible.y + ctl[0].visible.h : TOP;
-  int above[10], nab = 0;
+  int above[MAX_BLOCKS], nab = 0;
   for (int i = 0; i < nm; i++) above[nab++] = mainIdx[i];
   for (int i = 0; i < nn; i++) above[nab++] = noteIdx[i];
   if (flow(c, d, above, nab, TOP, actTop - 6) == nab && flow(c, d, afterIdx, na, actBottom + 4, AFTER_BOTTOM, false) == na &&
@@ -811,7 +928,7 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
   Control ctl[2];
   int nc = docControls(s, v, d, p, page, ctl, 2);
   if (p.single) {
-    int main[10], nm = 0, after[10], na = 0;
+    int main[MAX_BLOCKS], nm = 0, after[MAX_BLOCKS], na = 0;
     for (int i = 0; i < d.nb; i++) (d.blocks[i].place == Place::After ? after[na++] : main[nm++]) = i;
     int actTop = nc ? ctl[0].visible.y : PAGE_BOTTOM, actBottom = nc ? ctl[0].visible.y + ctl[0].visible.h : TOP;
     flow(c, d, main, nm, TOP, actTop - 6);
@@ -819,7 +936,7 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
   } else if (page < p.contentPages) {
     flow(c, d, p.order + p.start[page], p.count[page], TOP, PAGE_BOTTOM);
   } else if (p.notesWithActions) {
-    int notes[10], nn = 0;
+    int notes[MAX_BLOCKS], nn = 0;
     for (int i = 0; i < d.nb; i++)
       if (d.blocks[i].place == Place::Note) notes[nn++] = i;
     flow(c, d, notes, nn, TOP, ctl[0].visible.y - 6);
@@ -832,17 +949,20 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
 
 // ---- Public ------------------------------------------------------------------------------
 Button settingsItem(int i) {
-  // Setting the clock and syncing it share a page, so a watch with no time opens on both fixes.
+  // Setting the clock by hand or from a phone share a page, and syncing over Wi-Fi follows,
+  // so a watch with no time opens on the fixes.
   static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::SetTime,
-                                                Button::SyncNow,    Button::RaiseWake,  Button::Motion,
-                                                Button::WifiSetup,  Button::Details};
+                                                Button::PhoneSync,  Button::SyncNow,    Button::WifiSetup,
+                                                Button::RaiseWake,  Button::Night,      Button::Motion,
+                                                Button::ScreenTurn, Button::TouchCheck, Button::Details};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
 }
 
 const char *buttonName(Button b) {
   static const char *names[] = {"none",     "brightness", "time format", "motion",   "sync now",   "wi-fi setup",
                                 "details",  "text size",  "cancel",      "back",     "retry",      "edit wi-fi",
-                                "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time"};
+                                "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time",
+                                "phone sync", "night mode", "screen turn", "touch check"};
   return names[(int)b];
 }
 
@@ -855,6 +975,14 @@ SetupPhase setupPhase(const View &v) {
     return SetupPhase::Connecting;  // the sync starts on the next poll
   }
   return SetupPhase::Hotspot;
+}
+
+PhonePhase phonePhase(const View &v) {
+  if (v.ble == ble::State::Failed) return PhonePhase::Failed;
+  if (v.phoneGotTime) return PhonePhase::TimeSet;
+  if (v.ble == ble::State::Off) return PhonePhase::Closed;
+  if (v.ble == ble::State::Connected) return PhonePhase::Connected;
+  return PhonePhase::Waiting;
 }
 
 void stepTime(tm &t, TimeField f, int dir) {
@@ -878,6 +1006,7 @@ void stepTime(tm &t, TimeField f, int dir) {
 int pageCount(TFT_eSprite &s, const View &v) {
   if (v.screen == Screen::Settings) return settingsPages(v);
   if (v.screen == Screen::SetTime) return TIME_PAGES;
+  if (v.screen == Screen::TouchCheck) return 1;
   Doc d;
   buildDoc(v, d);
   return plan(s, v, d).pages;
@@ -888,6 +1017,7 @@ bool draw(TFT_eSprite &s, const View &v) {
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
   if (v.screen == Screen::Settings) return drawSettings(s, v, page);
   if (v.screen == Screen::SetTime) return drawSetTime(s, v, page);
+  if (v.screen == Screen::TouchCheck) return drawTouchCheck(s, v);
   return drawDoc(s, v, page);
 }
 
@@ -895,6 +1025,7 @@ int controls(TFT_eSprite &s, const View &v, Control *out, int max) {
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
   if (v.screen == Screen::Settings) return settingsControls(v, page, out, max);
   if (v.screen == Screen::SetTime) return setTimeControls(v, page, out, max);
+  if (v.screen == Screen::TouchCheck) return 0;  // taps there are raw positions, not controls
   Doc d;
   buildDoc(v, d);
   return docControls(s, v, d, plan(s, v, d), page, out, max);

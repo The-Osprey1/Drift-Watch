@@ -28,4 +28,5 @@ const char *screenName();
 // For the simulation: the controls on screen now, and the page of the paged screen.
 int controls(screens::Control *out, int max);
 int page();
+float beamAngle();  // the radar beam's angle now, < 0 when there is none
 }

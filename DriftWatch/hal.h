@@ -17,6 +17,9 @@ uint32_t freeHeap();
 uint32_t freePsram();
 void log(const char *fmt, ...);
 void setTime(time_t t);              // sets the wall clock, for the manual time setting
+int64_t nowMs();                     // wall clock in milliseconds
+void setTimeMs(int64_t ms);
+void adjustMs(int64_t ms);           // moves the wall clock by this much (drift correction)
 
 // What ended a wait while the screen is off.
 enum class WakeCause : uint8_t { Timer, Touch, Button };

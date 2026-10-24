@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Drift sync</title>
+<meta name="description" content="Set a Drift-Watch's time, time zone and Wi-Fi from this browser over Bluetooth.">
+<style>
+  :root {
+    --bg: #07080b; --panel: #0e1016; --line: #2a303c; --text: #dce2ea; --text2: #9aa2b4;
+    --cyan: #00f0ff; --yellow: #fcee0a; --warn: #ff7a1a; --ok: #19ffb0;
+  }
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --bg: #f4f6f9; --panel: #ffffff; --line: #c9d0db; --text: #11141a; --text2: #4a5263;
+      --cyan: #006a73; --yellow: #6b6400; --warn: #a84300; --ok: #00704c;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 34rem; margin: 0 auto; padding: 24px 16px 48px; }
+  h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: 0.02em; }
+  h1 span { color: var(--yellow); }
+  p.lead { color: var(--text2); margin: 0 0 24px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  ol { margin: 0; padding-left: 1.2rem; color: var(--text2); }
+  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 20px; border-radius: 10px; border: 2px solid var(--cyan);
+           background: transparent; color: var(--cyan); cursor: pointer; width: 100%; margin-top: 12px; }
+  button.primary { background: var(--cyan); color: var(--bg); }
+  button:disabled { opacity: 0.4; cursor: default; }
+  label { display: block; color: var(--text2); font-size: 0.9rem; margin-top: 12px; }
+  input { font: inherit; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
+          background: var(--bg); color: var(--text); }
+  .status { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; color: var(--text2); word-break: break-all; }
+  .msg { margin-top: 12px; }
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--warn); }
+  .note { color: var(--text2); font-size: 0.9rem; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 0.95rem; }
+  dt { color: var(--text2); }
+  dd { margin: 0; word-break: break-word; }
+</style>
+</head>
+<body>
+<main>
+  <h1><span>DRIFT</span> sync</h1>
+  <p class="lead">Sets your Drift-Watch's time, time zone and Wi-Fi over Bluetooth. Nothing is installed and nothing leaves this page except what you send to the watch.</p>
+
+  <section id="unsupported" hidden>
+    <h2>This browser can't use Bluetooth</h2>
+    <p class="note">On an iPhone or iPad, open this page in the free <b>Bluefy</b> app. On Android, Windows, macOS, Linux or a Chromebook, use <b>Chrome</b> or <b>Edge</b>. The page must be opened over https.</p>
+  </section>
+
+  <section>
+    <h2>1. Open phone sync on the watch</h2>
+    <ol>
+      <li>Swipe up on the watch face to open Settings.</li>
+      <li>Find <b>Phone sync</b> (page 2) and tap it. The watch shows its name, such as Drift-1A2B, for 3 minutes.</li>
+    </ol>
+    <button id="connect" class="primary">Connect to the watch</button>
+    <p id="connMsg" class="msg" role="status"></p>
+  </section>
+
+  <section>
+    <h2>2. Set the time</h2>
+    <dl>
+      <dt>Time zone</dt><dd id="zoneName">-</dd>
+      <dt>Rules sent</dt><dd id="zonePosix" class="status">-</dd>
+    </dl>
+    <button id="sync" disabled>Sync time</button>
+    <p id="syncMsg" class="msg" role="status"></p>
+  </section>
+
+  <section>
+    <h2>3. Wi-Fi (optional)</h2>
+    <p class="note">Lets the watch keep itself right over the internet. It only works with 2.4 GHz networks. The password goes straight to the watch, over a Bluetooth link that is not encrypted, so only do this with the watch close to you.</p>
+    <label for="ssid">Network name</label>
+    <input id="ssid" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
+    <label for="pass">Password</label>
+    <input id="pass" type="password" autocomplete="off" maxlength="64">
+    <button id="wifi" disabled>Send Wi-Fi to the watch</button>
+    <p id="wifiMsg" class="msg" role="status"></p>
+  </section>
+
+  <section>
+    <h2>Watch says</h2>
+    <p id="status" class="status">Not connected.</p>
+  </section>
+</main>
+<script>
+"use strict";
+const SERVICE = "8f1d0001-6b5c-4c8e-9d3a-2a6b7c8d9e01";
+const COMMAND = "8f1d0002-6b5c-4c8e-9d3a-2a6b7c8d9e01";
+const STATUS = "8f1d0003-6b5c-4c8e-9d3a-2a6b7c8d9e01";
+const $ = (id) => document.getElementById(id);
+let device = null, command = null;
+
+// A POSIX time zone string for this browser's zone, including its summer time rules, worked
+// out by finding this year's offset changes. The watch's C library understands these.
+function posixZone(now = new Date()) {
+  const year = now.getFullYear();
+  const offsetAt = (ms) => new Date(ms).getTimezoneOffset();  // minutes west of UTC, like POSIX
+  const fmt = (min) => {
+    const sign = min < 0 ? "-" : "", a = Math.abs(min);
+    return sign + Math.floor(a / 60) + (a % 60 ? ":" + String(a % 60).padStart(2, "0") : "");
+  };
+  const name = (min) => {  // <+0100> style names: no letters are needed
+    const east = -min, a = Math.abs(east);
+    return "<" + (east < 0 ? "-" : "+") + String(Math.floor(a / 60)).padStart(2, "0") + String(a % 60).padStart(2, "0") + ">";
+  };
+  // Find each change by stepping through the year an hour at a time, then to the minute.
+  const start = Date.UTC(year, 0, 1), end = Date.UTC(year + 1, 0, 1), hour = 3600000;
+  const changes = [];
+  for (let t = start; t < end; t += hour) {
+    const a = offsetAt(t), b = offsetAt(t + hour);
+    if (a === b) continue;
+    let at = t + hour;
+    for (let m = t + 60000; m <= t + hour; m += 60000) if (offsetAt(m) !== a) { at = m; break; }
+    changes.push({ at, from: a, to: b });
+  }
+  const jan = offsetAt(start);
+  if (changes.length !== 2) return name(jan) + fmt(jan);  // no summer time (or something unusual): fixed
+  const std = Math.max(changes[0].from, changes[0].to), dst = Math.min(changes[0].from, changes[0].to);
+  const rule = (c) => {
+    // The rule is written in the local time that applies just before the change.
+    const d = new Date(c.at - c.from * 60000);
+    const day = d.getUTCDate(), month = d.getUTCMonth() + 1;
+    const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), month, 0)).getUTCDate();
+    const week = day + 7 > daysInMonth ? 5 : Math.ceil(day / 7);
+    const h = d.getUTCHours(), m = d.getUTCMinutes();
+    return "M" + month + "." + week + "." + d.getUTCDay() + "/" + h + (m ? ":" + String(m).padStart(2, "0") : "");
+  };
+  const into = changes.find((c) => c.to === dst), out = changes.find((c) => c.to === std);
+  return name(std) + fmt(std) + name(dst) + fmt(dst) + "," + rule(into) + "," + rule(out);
+}
+
+function say(id, text, kind) {
+  const el = $(id);
+  el.textContent = text;
+  el.className = "msg" + (kind ? " " + kind : "");
+}
+
+async function send(line) {
+  if (!command) throw new Error("Not connected");
+  const data = new TextEncoder().encode(line);
+  if (command.writeValueWithResponse) await command.writeValueWithResponse(data);
+  else await command.writeValue(data);
+}
+
+function connected(on) {
+  $("sync").disabled = !on;
+  $("wifi").disabled = !on;
+  $("connect").textContent = on ? "Connected to " + (device && device.name || "the watch") : "Connect to the watch";
+  if (!on) $("status").textContent = "Not connected.";
+}
+
+async function connect() {
+  say("connMsg", "Choose the watch in the list that opens...");
+  try {
+    device = await navigator.bluetooth.requestDevice({ filters: [{ namePrefix: "Drift" }, { services: [SERVICE] }], optionalServices: [SERVICE] });
+    device.addEventListener("gattserverdisconnected", () => {
+      command = null;
+      connected(false);
+      say("connMsg", "The watch disconnected. Open Phone sync on the watch again if you need to.", "err");
+    });
+    const server = await device.gatt.connect();
+    const service = await server.getPrimaryService(SERVICE);
+    command = await service.getCharacteristic(COMMAND);
+    const status = await service.getCharacteristic(STATUS);
+    status.addEventListener("characteristicvaluechanged", (e) => { $("status").textContent = new TextDecoder().decode(e.target.value); });
+    await status.startNotifications().catch(() => {});
+    $("status").textContent = new TextDecoder().decode(await status.readValue());
+    connected(true);
+    say("connMsg", "Connected.", "ok");
+  } catch (err) {
+    command = null;
+    connected(false);
+    say("connMsg", err.name === "NotFoundError" ? "No watch chosen. Is Phone sync open on the watch?" : "Could not connect: " + err.message, "err");
+  }
+}
+
+async function syncTime() {
+  say("syncMsg", "Sending...");
+  try {
+    const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
+    if (zone) await send("N=" + zone);
+    await send("Z=" + posixZone());
+    await send("T=" + (Date.now() / 1000).toFixed(3));  // last, so the time lands as fresh as possible
+    say("syncMsg", "Time sent. The watch should show it now.", "ok");
+  } catch (err) {
+    say("syncMsg", "Could not send: " + err.message, "err");
+  }
+}
+
+async function sendWifi() {
+  const ssid = $("ssid").value.trim(), pass = $("pass").value;
+  if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
+  say("wifiMsg", "Sending...");
+  try {
+    await send("S=" + ssid);
+    await send("P=" + pass);
+    await send("J");
+    $("pass").value = "";
+    say("wifiMsg", "Sent. The watch saves it and tries to join.", "ok");
+  } catch (err) {
+    say("wifiMsg", "Could not send: " + err.message, "err");
+  }
+}
+
+(function start() {
+  try {
+    $("zoneName").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
+    $("zonePosix").textContent = posixZone();
+  } catch (e) { /* the zone is shown when it can be worked out */ }
+  if (!navigator.bluetooth) {
+    $("unsupported").hidden = false;
+    $("connect").disabled = true;
+    return;
+  }
+  $("connect").addEventListener("click", connect);
+  $("sync").addEventListener("click", syncTime);
+  $("wifi").addEventListener("click", sendWifi);
+})();
+</script>
+</body>
+</html>

@@ -1,11 +1,15 @@
 #include "ui.h"
 #include <utility>
+#include "battery.h"
+#include "ble.h"
 #include "board.h"
 #include "faces.h"
 #include "gfx.h"
 #include "hal.h"
 #include "imu.h"
 #include "net.h"
+#include "orient.h"
+#include "phone.h"
 #include "raise.h"
 #include "screens.h"
 #include "settings.h"
@@ -29,10 +33,15 @@ constexpr uint32_t REPEAT_MS = 120, REPEAT_FAST_MS = 50;  // then this often, fa
 constexpr uint32_t IMU_READ_MS = 80;                   // motion samples while the screen is off
 constexpr uint32_t DOZE_RAISE_MS = 100;                // screen-off wait with raise-to-wake on
 constexpr uint32_t DOZE_MS = 500;                      // and with it off; touch and BOOT wake it early
+constexpr uint32_t IMU_AWAKE_MS = 80;                  // motion samples while the screen is on, for wrist-down sleep
+constexpr uint32_t CHECK_RESULT_MS = 1400;             // touch check result stays up this long
+constexpr uint32_t BOOT_CHECK_MS = 4000;               // holding BOOT this long opens the touch check anywhere
+constexpr uint32_t KNOWN_TIME_SAVE_S = 3600;           // remember the clock in flash at most hourly
+constexpr uint32_t SPRING_MAX_MS = 450;                // a spring slide always ends by then
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
 
-enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup, SetTime };
+enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup, SetTime, TouchCheck, PhoneSync };
 
 TFT_eSPI tft;
 TFT_eSprite spriteA(&tft), spriteB(&tft), cache(&tft);
@@ -54,10 +63,11 @@ uint32_t fadeStart = 0;
 uint32_t cacheKey = 0;
 bool cacheValid = false, dirty = true;
 int shownSecond = -1, lastMinute = -1;
-bool sweeping = false;
+bool sweeping = false;      // the radar beam is turning
 uint32_t sweepStart = 0;
 
 int batteryPct = -1, batteryMv = -1;
+battery::Estimate batteryLife;
 uint32_t lastBatteryRead = 0;
 uint32_t nextSyncAt = 0;
 uint16_t seenAttempts = 0;
@@ -71,7 +81,22 @@ int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0;
 tm editTime{};  // what the set time screen shows; applied only by Save
 
 RaiseDetector wristRaise;
+TwistDetector wristTwist;
+DropDetector wristDrop;
 uint32_t lastImuRead = 0;
+bool wokeByRaise = false;
+
+// Touch check: two raw taps, then the result for a moment. `checkReturn` is where it goes
+// afterwards: the settings page it was opened from, or the face.
+struct {
+  int step = 0;
+  screens::CheckResult result = screens::CheckResult::Tapping;
+  int rawX[2] = {}, rawY[2] = {};
+  uint32_t resultAt = 0;
+  Mode back = Mode::Face;
+  screens::Button backTo = screens::Button::None;
+} check;
+int rawX = 0, rawY = 0;  // latest touch position as the chip reported it
 screens::SetupPhase seenPhase = screens::SetupPhase::Hotspot;
 
 // BOOT button: on a face a short press is next face and a long press opens settings,
@@ -79,6 +104,7 @@ screens::SetupPhase seenPhase = screens::SetupPhase::Hotspot;
 struct {
   bool down = false;
   bool used = false;      // this press has already done its one thing
+  bool checkOpened = false;  // held long enough to open the touch check
   uint32_t downAt = 0;
 } boot;
 
@@ -107,6 +133,8 @@ struct Transition {
   uint32_t start = 0, duration = 0;
   int neighbour = -1;      // face drawn in `nb`
   int toPage = 0;          // page drawn in `nb` during a page slide
+  bool spring = false;     // animate with the spring from velocity v0 (px per ms) instead of easing
+  float v0 = 0;
 } tr;
 
 #if DRIFT_DIAG
@@ -154,20 +182,24 @@ void presentVertical(TFT_eSprite &top, TFT_eSprite &bottom, int offset) {
   lastPresent = hal::ms();
 }
 
-int percentFromMilliVolts(int mv) {
-  static const int volts[] = {3300, 3500, 3600, 3700, 3800, 3900, 4000, 4100, 4200};
-  static const int pct[] = {0, 5, 15, 30, 50, 65, 80, 90, 100};
-  if (mv < 2500) return -1;  // nothing plausible on the pin
-  if (mv <= volts[0]) return 0;
-  for (int i = 1; i < 9; i++)
-    if (mv < volts[i]) return pct[i - 1] + (pct[i] - pct[i - 1]) * (mv - volts[i - 1]) / (volts[i] - volts[i - 1]);
-  return 100;
-}
-
 void readBattery() {
   batteryMv = hal::batteryMilliVolts();
-  batteryPct = percentFromMilliVolts(batteryMv);
+  batteryPct = battery::percentFromMilliVolts(batteryMv);
+  batteryLife.add(hal::ms(), batteryPct);
   lastBatteryRead = hal::ms();
+}
+
+// Below 20% and not charging, the radar beam only moves with the seconds.
+bool lowPower() { return batteryPct >= 0 && batteryPct < motion::LOW_BATTERY_PCT && !batteryLife.charging(); }
+
+// Night mode turns the wrist gestures off inside its window (touch and BOOT still wake the screen).
+bool gesturesOn() {
+  if (!(settings.raiseToWake || settings.twistToWake) || !imu::present()) return false;
+  if (!settings.night || !net::timeIsValid()) return true;
+  time_t t = hal::now();
+  tm n;
+  localtime_r(&t, &n);
+  return !nightNow(n.tm_hour);
 }
 
 bool syncBusy() { return net::syncRunning(); }
@@ -184,7 +216,11 @@ FaceContext faceContext(bool withSweep) {
   else c.sync = net::lastSync() ? SyncView::Synced : SyncView::Never;
   c.syncStage = net::syncStep();
   c.noWifi = !net::hasSavedWifi();
-  c.sweep = withSweep && sweeping ? min(1.0f, since(sweepStart) / (float)motion::SWEEP_MS) : -1;
+  c.beamDeg = -1;
+  if (withSweep && currentFace() == FACE_RADAR && motionOn()) {
+    if (sweeping) c.beamDeg = (since(sweepStart) % motion::RADAR_TURN_MS) * 360.0f / motion::RADAR_TURN_MS;
+    else if ((lowPower() || !haveCache) && c.timeValid) c.beamDeg = c.now.tm_sec * 6;  // one step a second, with the seconds dot
+  }
   return c;
 }
 
@@ -226,8 +262,28 @@ void lastSyncText(char *buf, size_t n) {
   snprintf(buf, n, settings.use12h ? "%d:%02d" : "%02d:%02d", h, s.tm_min);
 }
 
+int phonePage = 0, checkPage = 0;
 int &pageFor(Mode m) {
-  return m == Mode::Details ? detailsPage : m == Mode::Setup ? setupPage : m == Mode::SetTime ? setTimePage : settingsPage;
+  return m == Mode::Details     ? detailsPage
+         : m == Mode::Setup     ? setupPage
+         : m == Mode::SetTime   ? setTimePage
+         : m == Mode::PhoneSync ? phonePage
+         : m == Mode::TouchCheck ? checkPage
+                                 : settingsPage;
+}
+
+// "3 h ago" style age of the last sync.
+void syncAgoText(char *buf, size_t n) {
+  time_t t = net::lastSync();
+  if (!t) {
+    buf[0] = 0;
+    return;
+  }
+  long ago = (long)(hal::now() - t);
+  if (ago < 120) snprintf(buf, n, "just now");
+  else if (ago < 7200) snprintf(buf, n, "%ld min ago", ago / 60);
+  else if (ago < 172800) snprintf(buf, n, "%ld h ago", ago / 3600);
+  else snprintf(buf, n, "%ld days ago", ago / 86400);
 }
 
 screens::View view(Mode m, int page) {
@@ -237,6 +293,8 @@ screens::View view(Mode m, int page) {
   v.screen = m == Mode::Details ? screens::Screen::Details
              : m == Mode::Setup ? screens::Screen::Setup
              : m == Mode::SetTime ? screens::Screen::SetTime
+             : m == Mode::TouchCheck ? screens::Screen::TouchCheck
+             : m == Mode::PhoneSync ? screens::Screen::PhoneSync
                                   : screens::Screen::Settings;
   v.page = page;
   v.large = settings.largeText;
@@ -260,8 +318,31 @@ screens::View view(Mode m, int page) {
   v.joinCode = net::joinCode();
   v.clockByHand = net::clockSetByHand();
   v.raiseToWake = settings.raiseToWake;
+  v.twistToWake = settings.twistToWake;
   v.imuPresent = imu::present();
   v.edit = editTime;
+  v.screenTurn = settings.screenTurn;
+  v.touchChecked = touchChecked();
+  v.night = settings.night;
+  v.checkStep = check.step;
+  v.checkResult = check.result;
+  v.ble = ble::state();
+  v.bleName = ble::name();
+  v.bleSecondsLeft = ble::secondsLeft();
+  const phone::Session &ps = phone::session();
+  v.phoneGotTime = ps.gotTime;
+  v.phoneWifiSaved = ps.wifiSaved;
+  v.phoneSsid = ps.ssid;
+  v.phoneError = ps.error;
+  v.batteryHours = batteryLife.hoursLeft();
+  v.charging = batteryLife.charging();
+  v.driftPpb = net::driftPpb();
+  v.syncSource = net::lastSource();
+  static char ago[24];
+  syncAgoText(ago, sizeof ago);
+  v.syncAgo = ago;
+  v.imuLine1 = imu::lineEdges(0);
+  v.imuLine2 = imu::lineEdges(1);
   static char nowBuf[8];
   {
     time_t t = hal::now();
@@ -282,7 +363,9 @@ screens::View view(Mode m, int page) {
   return v;
 }
 screens::View view() { return view(mode, pageFor(mode)); }
-bool pagedMode() { return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup || mode == Mode::SetTime; }
+bool pagedMode() {
+  return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup || mode == Mode::SetTime || mode == Mode::PhoneSync;
+}
 int pageCount() { return screens::pageCount(*cur, view()); }
 
 // Everything on a settings, details or setup screen except the spinner, so a
@@ -302,10 +385,26 @@ uint32_t screenKey() {
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
   k = k * 31 + (uint32_t)net::joinWhy() * 2 + net::clockSetByHand();
-  k = k * 31 + settings.raiseToWake;
-  k = k * 61 + (uint32_t)(hal::now() / 60);  // the clock shown on the Set time control
+  k = k * 31 + settings.raiseToWake * 2 + settings.twistToWake;
+  // The clock shown on the Set time control: only its page is redrawn when the minute turns.
+  // Set time is the third item, with two items a page (one with large text).
+  bool clockShown = mode != Mode::Panel || settingsPage == (settings.largeText ? 2 : 1);
+  if (clockShown) k = k * 61 + (uint32_t)(hal::now() / 60);
   k = k * 31 + (uint32_t)(editTime.tm_year * 400 + editTime.tm_mon * 32 + editTime.tm_mday);
   k = k * 31 + (uint32_t)(editTime.tm_hour * 60 + editTime.tm_min);
+  k = k * 31 + settings.screenTurn * 8 + settings.night * 2 + touchChecked();
+  k = k * 31 + (uint32_t)check.step * 4 + (uint32_t)check.result;
+  k = k * 31 + (uint32_t)ble::state();
+  k = k * 1031 + ble::secondsLeft();
+  k = k * 31 + phone::session().lines;
+  if (mode == Mode::Details) {
+    // Time left and the age of the last sync, as worded on the screen.
+    float h = batteryLife.hoursLeft();
+    k = k * 1031 + (uint32_t)(h < 0 ? 0 : (int)(h + 0.5f) + 1);
+    char ago[24];
+    syncAgoText(ago, sizeof ago);
+    for (const char *p = ago; *p; p++) k = k * 31 + (uint8_t)*p;
+  }
   return k;
 }
 
@@ -339,6 +438,33 @@ void animateTo(float target, uint32_t fullDuration, float fullDistance) {
   // snap-back still reads as motion rather than a jump.
   float part = fabsf(target - tr.pos) / fullDistance;
   tr.duration = motionOn() ? (uint32_t)(fullDuration * max(0.35f, min(1.0f, part))) : 0;
+  tr.spring = false;
+}
+
+// After a swipe the slide carries on at the finger's speed (`v` px per ms, + = towards larger
+// positions) and settles with a critically damped spring, so a hard flick lands quickly and a
+// gentle one glides. A finger moving the other way, or barely moving, gets a small push
+// towards the target so the slide never starts with a stall.
+void springTo(float target, float v) {
+  constexpr float MIN_PUSH = 0.5f;  // px per ms
+  float dir = target > tr.pos ? 1.0f : target < tr.pos ? -1.0f : 0.0f;
+  if (v * dir < MIN_PUSH) v = dir * MIN_PUSH;
+  tr.dragging = false;
+  tr.animating = true;
+  tr.from = tr.pos;
+  tr.to = target;
+  tr.start = hal::ms();
+  tr.spring = true;
+  tr.v0 = v;
+  tr.duration = motionOn() ? SPRING_MAX_MS : 0;
+}
+
+// Spring position at `t` ms; sets `done` once it has settled.
+float springPos(uint32_t t, bool &done) {
+  float w = motion::SPRING_OMEGA, x0 = tr.from - tr.to, b = tr.v0 + w * x0, e = expf(-w * t);
+  float x = (x0 + b * t) * e, v = (b - w * (x0 + b * t)) * e;
+  done = t >= tr.duration || (t > 30 && fabsf(x) < 0.5f && fabsf(v) < 0.02f);
+  return done ? tr.to : tr.to + x;
 }
 
 // Makes sure `nb` holds the face on the side the current one is moving away from.
@@ -350,7 +476,7 @@ void prepareNeighbour(float pos) {
 }
 
 // Settings, details and setup pages slide sideways like faces, but only on release.
-void changePage(int dir) {
+void changePage(int dir, float v = 0) {
   int &page = pageFor(mode);
   int to = page + dir;
   if (to < 0 || to >= pageCount()) return;  // no wrap-around, and never a face change
@@ -364,7 +490,8 @@ void changePage(int dir) {
   tr = Transition{};
   tr.kind = Slide::Page;
   tr.toPage = to;
-  animateTo(dir > 0 ? -W : W, motion::FACE_MS, W);
+  if (v) springTo(dir > 0 ? -W : W, v);
+  else animateTo(dir > 0 ? -W : W, motion::FACE_MS, W);
 }
 
 void showFaceSlide() {
@@ -382,12 +509,7 @@ void commitFace(int step) {
   shownSecond = -1;
   lastMinute = -1;
   tr = Transition{};
-  if (currentFace() == FACE_RADAR && motionOn()) {
-    sweeping = true;
-    sweepStart = hal::ms();
-  } else {
-    sweeping = false;
-  }
+  sweeping = false;  // stepFace starts the beam on the radar face
 }
 
 // Mid-drag arrival on the neighbour: it becomes current and the drag continues.
@@ -411,7 +533,7 @@ void cutToFace(int step) {
   tr = Transition{};
 }
 
-void openPanel() {
+void openPanel(float v = 0) {
   pressed = screens::Button::None;
   settingsPage = firstSettingsPage();
   if (!haveSpare || !motionOn()) {
@@ -424,10 +546,11 @@ void openPanel() {
   tr = Transition{};
   tr.kind = Slide::PanelOpen;
   tr.pos = 0;
-  animateTo(H, motion::PANEL_MS, H);
+  if (v) springTo(H, v);
+  else animateTo(H, motion::PANEL_MS, H);
 }
 
-void closeToFace() {
+void closeToFace(float v = 0) {
   pressed = screens::Button::None;
   if (!haveSpare || !motionOn()) {
     mode = Mode::Face;
@@ -438,17 +561,25 @@ void closeToFace() {
   tr = Transition{};
   tr.kind = Slide::PanelClose;
   tr.pos = H;
-  animateTo(0, motion::PANEL_MS, H);
+  if (v) springTo(0, v);
+  else animateTo(0, motion::PANEL_MS, H);
 }
 
 void stepTransition() {
   if (tr.kind == Slide::None) return;
   if (tr.animating) {
-    float t = tr.duration ? since(tr.start) / (float)tr.duration : 1;
-    tr.pos = tr.from + (tr.to - tr.from) * motion::easeOut(t);
-    if (t >= 1) {
-      tr.pos = tr.to;
-      tr.animating = false;
+    if (tr.spring) {
+      bool done;
+      tr.pos = springPos(since(tr.start), done);
+      if (tr.kind == Slide::Face) tr.pos = constrain(tr.pos, (float)-W, (float)W);
+      if (done) tr.animating = false;
+    } else {
+      float t = tr.duration ? since(tr.start) / (float)tr.duration : 1;
+      tr.pos = tr.from + (tr.to - tr.from) * motion::easeOut(t);
+      if (t >= 1) {
+        tr.pos = tr.to;
+        tr.animating = false;
+      }
     }
     // A flick can carry a face past centre to the other side.
     if (tr.kind == Slide::Face && tr.pos != 0) prepareNeighbour(tr.pos);
@@ -512,8 +643,19 @@ void sleepScreen() {
   sweeping = false;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
-  if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime) mode = Mode::Face;
+  if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
+  if (mode == Mode::PhoneSync) {
+    ble::close();
+    mode = Mode::Face;
+  }
   wristRaise.reset();  // a wrist that is still up must come down and rise again
+  wristTwist.reset();
+  wokeByRaise = false;
+  // Remember roughly what time it is, as a starting point for Set time if the power is lost.
+  if (net::timeIsValid() && hal::now() - settings.lastKnownTime >= (time_t)KNOWN_TIME_SAVE_S) {
+    settings.lastKnownTime = hal::now();
+    settingsDirty = true;
+  }
   if (settingsDirty) {
     saveSettings();
     settingsDirty = false;
@@ -526,6 +668,7 @@ void wakeScreen() {
   hal::idle(5);
   awake = true;
   lastActivity = hal::ms();
+  wristDrop.reset();
   // Draw the current time first, then fade the light up over it.
   if (mode == Mode::Face) {
     renderFace(*cur, currentFace(), false);
@@ -595,7 +738,16 @@ void openSetTime() {
     localtime_r(&now, &editTime);
     screens::stepTime(editTime, screens::TimeField::Hour, 0);  // seconds to zero
   } else {
+    // After a power loss, start from the last time the watch knew (saved at most an hour
+    // before), else from the firmware's build date.
     editTime = buildDate();
+    time_t known = (time_t)settings.lastKnownTime;
+    tm k;
+    localtime_r(&known, &k);
+    if (known > mktime(&editTime) && k.tm_year + 1900 <= screens::YEAR_MAX) {
+      editTime = k;
+      screens::stepTime(editTime, screens::TimeField::Hour, 0);
+    }
   }
   setTimePage = 0;
   showMode(Mode::SetTime);
@@ -616,12 +768,117 @@ void openSetup() {
   showMode(Mode::Setup);
 }
 
+void showSettingsAt(screens::Button b) {
+  settingsPage = max(0, screens::pageOf(*cur, view(Mode::Panel, 0), b));
+  showMode(Mode::Panel);
+}
+
+// ---- Screen turn and touch check ----------------------------------------------------------
+void applyTurn() {
+  tft.setRotation(settings.screenTurn);
+  hal::log("ui: screen turn %d (%s), touch map %d%s", settings.screenTurn, orient::turnName(settings.screenTurn),
+           activeTouchMap(), touchChecked() ? " checked" : " expected");
+}
+
+void openTouchCheck(Mode back, screens::Button backTo) {
+  check = {};
+  check.back = back;
+  check.backTo = backTo;
+  pressed = screens::Button::None;
+  showMode(Mode::TouchCheck);
+}
+
+void leaveTouchCheck() {
+  if (check.back == Mode::Panel) showSettingsAt(check.backTo);
+  else showMode(Mode::Face);
+}
+
+// A raw tap on the touch check: the first dot, the second, then the verdict.
+void touchCheckTap(int x, int y) {
+  if (check.result != screens::CheckResult::Tapping) return;
+  check.rawX[check.step] = x;
+  check.rawY[check.step] = y;
+  if (check.step == 0) {
+    check.step = 1;
+  } else {
+    orient::Solve r = orient::solveTouchMap(check.rawX, check.rawY);
+    hal::log("ui: touch check raw (%d,%d) (%d,%d) -> map %d, off by %d and %d px, %s", check.rawX[0], check.rawY[0],
+             check.rawX[1], check.rawY[1], r.map, r.error[0], r.error[1], r.ok ? "ok" : "no match");
+    if (r.ok) {
+      settings.touchMap = r.map;
+      settings.touchCheckedTurn = settings.screenTurn;
+      markSettingsChanged();
+    }
+    check.result = r.ok ? screens::CheckResult::Matched : screens::CheckResult::NoMatch;
+    check.resultAt = hal::ms();
+  }
+  refreshScreen(true);
+}
+
+void stepTouchCheck() {
+  if (check.result == screens::CheckResult::Tapping || since(check.resultAt) < CHECK_RESULT_MS) return;
+  if (check.result == screens::CheckResult::Matched) {
+    leaveTouchCheck();
+  } else {
+    check.step = 0;  // try again
+    check.result = screens::CheckResult::Tapping;
+    refreshScreen(true);
+  }
+}
+
+// ---- Phone sync -------------------------------------------------------------------------------
+void openPhoneSync() {
+  phone::begin();
+  ble::open();
+  phonePage = 0;
+  showMode(Mode::PhoneSync);
+}
+
+void closePhoneSync() {
+  ble::close();
+  showSettingsAt(screens::Button::PhoneSync);
+}
+
+// Applies what the phone wrote and tells it how that went.
+void stepPhone() {
+  ble::poll();
+  // A new phase (found, time set, closed) starts on its first page.
+  static screens::PhonePhase shownPhase = screens::PhonePhase::Waiting;
+  if (mode == Mode::PhoneSync) {
+    screens::PhonePhase ph = screens::phonePhase(view());
+    if (ph != shownPhase && tr.kind == Slide::None) phonePage = 0;
+    shownPhase = ph;
+  }
+  char line[128], status[160];
+  bool any = false;
+  while (ble::nextLine(line, sizeof line)) {
+    const char *reply = phone::apply(line);
+    hal::log("ui: phone %c... -> %s", line[0], reply);  // never logs the password itself
+    any = true;
+    snprintf(status, sizeof status, "reply=%s;", reply);
+    size_t n = strlen(status);
+    phone::status(status + n, sizeof status - n, batteryPct);
+    ble::setStatus(status);
+  }
+  if (any) {
+    lastActivity = hal::ms();
+    cacheValid = false;  // the time or zone may have changed
+    lastMinute = -1;
+  }
+}
+
 // Back goes up one level. In setup it depends on the phase: while the hotspot
 // waits for a phone, back cancels it (nothing has been saved yet); while
 // connecting, back leaves it running and the settings show its progress.
-void goBack() {
+void goBack(float v = 0) {
   pressed = screens::Button::None;
   switch (mode) {
+    case Mode::TouchCheck:
+      leaveTouchCheck();  // skipped: the touch map stays as it was
+      break;
+    case Mode::PhoneSync:
+      closePhoneSync();
+      break;
     case Mode::Setup:
       if (setupPhase() == screens::SetupPhase::Hotspot) net::cancelPortal();
       showSettingsAtWifi();
@@ -636,7 +893,7 @@ void goBack() {
       settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::Details);
       showMode(Mode::Panel);
       break;
-    case Mode::Panel: closeToFace(); break;
+    case Mode::Panel: closeToFace(v); break;
     default: break;
   }
 }
@@ -664,10 +921,15 @@ void activate(screens::Button b) {
     case Button::SetTime:
       openSetTime();
       return;
-    case Button::RaiseWake:
-      settings.raiseToWake = !settings.raiseToWake;
+    case Button::RaiseWake: {
+      // Wake gesture: both, then raise only, twist only, off, and round again.
+      int g = settings.raiseToWake && settings.twistToWake ? 0 : settings.raiseToWake ? 1 : settings.twistToWake ? 2 : 3;
+      g = (g + 1) % 4;
+      settings.raiseToWake = g == 0 || g == 1;
+      settings.twistToWake = g == 0 || g == 2;
       markSettingsChanged();
       break;
+    }
     case Button::Minus:
     case Button::Plus:
       screens::stepTime(editTime, (screens::TimeField)setTimePage, b == Button::Plus ? +1 : -1);
@@ -694,15 +956,39 @@ void activate(screens::Button b) {
     case Button::Retry:
       net::startSync();
       break;
+    case Button::PhoneSync:
+      openPhoneSync();
+      return;
+    case Button::Night:
+      settings.night = (settings.night + 1) % NIGHT_CHOICES;
+      markSettingsChanged();
+      break;
+    case Button::ScreenTurn:
+      // Turn the screen, then check touch for the new turn straight away. BOOT skips the check
+      // and keeps the expected touch map for this turn.
+      settings.screenTurn = (settings.screenTurn + 1) % orient::TURNS;
+      markSettingsChanged();
+      applyTurn();
+      openTouchCheck(Mode::Panel, Button::ScreenTurn);
+      return;
+    case Button::TouchCheck:
+      openTouchCheck(Mode::Panel, Button::TouchCheck);
+      return;
     case Button::Cancel:
+      if (mode == Mode::PhoneSync) {
+        closePhoneSync();
+        return;
+      }
       if (setupPhase() == screens::SetupPhase::Connecting) net::cancelSync();
       else net::cancelPortal();
       showSettingsAtWifi();
       return;
     case Button::Back:
-      showSettingsAtWifi();  // a running sync carries on
+      if (mode == Mode::PhoneSync) closePhoneSync();
+      else showSettingsAtWifi();  // a running sync carries on
       return;
     case Button::Done:
+      if (mode == Mode::PhoneSync) ble::close();
       showMode(Mode::Face);
       return;
     default:
@@ -732,13 +1018,32 @@ void noteLooking() {
 
 // While the screen is off, watches for the wrist being raised.
 void stepRaise() {
-  if (!settings.raiseToWake || !imu::present() || since(lastImuRead) < IMU_READ_MS) return;
+  if (!gesturesOn() || since(lastImuRead) < IMU_READ_MS) return;
   lastImuRead = hal::ms();
   Accel a;
   if (!imu::read(a)) return;
-  if (wristRaise.update(hal::ms(), a)) {
-    hal::log("ui: raise to wake");
+  // Both detectors see every sample, so each keeps its own picture of the wrist.
+  bool raised = wristRaise.update(hal::ms(), a) && settings.raiseToWake;
+  bool twisted = wristTwist.update(hal::ms(), a, wristRaise.facing()) && settings.twistToWake;
+  if (raised || twisted) {
+    if (raised) hal::log("ui: raise to wake (turned at %d deg/s)", (int)wristRaise.lastPeakRate());
+    else hal::log("ui: wrist twist wake (turned at %d deg/s)", (int)wristTwist.lastPeakRate());
     wakeScreen();
+    wokeByRaise = true;
+  }
+}
+
+// While the screen is on a face, turning the wrist away after a look puts it to sleep early.
+void stepDrop() {
+  if (!gesturesOn() || mode != Mode::Face || tr.kind != Slide::None || finger.down || boot.down) return;
+  if (since(lastImuRead) < IMU_AWAKE_MS) return;
+  lastImuRead = hal::ms();
+  Accel a;
+  if (!imu::read(a)) return;
+  float g = sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
+  if (wristDrop.update(hal::ms(), a.z * wristRaise.facing(), g)) {
+    hal::log("ui: wrist down, screen off");
+    sleepScreen();
   }
 }
 
@@ -750,6 +1055,7 @@ void onFingerDown(const TouchSample &s) {
   finger.y0 = finger.y = s.y;
   finger.t0 = finger.lastMoveAt = finger.lastSampleAt = hal::ms();
   lastActivity = hal::ms();
+  wristDrop.touched(hal::ms());
   noteLooking();
 
   if (!awake) {
@@ -781,6 +1087,11 @@ void onFingerDown(const TouchSample &s) {
   }
   if (tr.kind != Slide::None) {
     finger.ignore = true;  // panel and page slides are short; let them finish
+    return;
+  }
+  if (mode == Mode::TouchCheck) {
+    finger.ignore = true;  // a tap here is a raw position, never a control or a swipe
+    touchCheckTap(rawX, rawY);
     return;
   }
   pressed = hitTest(s.x, s.y);
@@ -844,7 +1155,7 @@ void onFingerUp() {
     else if (vx > motion::FLICK_PX_PER_MS) target = W;
     else if (tr.pos < -motion::COMMIT_PX) target = -W;
     else if (tr.pos > motion::COMMIT_PX) target = W;
-    animateTo(target, motion::FACE_MS, W);
+    springTo(target, vx);
     return;
   }
   // Sideways swipes are scoped to the mode: faces on a face, pages on a paged
@@ -852,14 +1163,14 @@ void onFingerUp() {
   if (finger.axis == Axis::Horizontal) {
     int dir = dx <= -SWIPE_PX || vx < -motion::FLICK_PX_PER_MS ? +1 : dx >= SWIPE_PX || vx > motion::FLICK_PX_PER_MS ? -1 : 0;
     if (dir && mode == Mode::Face) cutToFace(dir);  // reduced motion, or no spare buffer: change on release
-    else if (dir && pagedMode()) changePage(dir);
+    else if (dir && pagedMode()) changePage(dir, vx ? vx : (dir > 0 ? -0.01f : 0.01f));
     return;
   }
   if (finger.axis == Axis::Vertical) {
     bool up = dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS;
     bool down = dy >= SWIPE_PX || vy > motion::FLICK_PX_PER_MS;
-    if (mode == Mode::Face && up) openPanel();
-    else if (pagedMode() && down) goBack();
+    if (mode == Mode::Face && up) openPanel(vy ? -vy : 0.01f);
+    else if (pagedMode() && down) goBack(vy ? -vy : -0.01f);
     return;
   }
   if (finger.axis == Axis::None && pressed != screens::Button::None) {
@@ -923,6 +1234,7 @@ void pollBoot() {
   if (down) {
     boot.downAt = hal::ms();
     boot.used = true;
+    boot.checkOpened = false;
     noteLooking();
     if (!awake) wakeScreen();  // the waking press does nothing else
     else if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
@@ -942,6 +1254,15 @@ void pollBoot() {
   } else {
     cutToFace(+1);
   }
+}
+
+// Holding BOOT for 4 s opens the touch check from anywhere: the way back if touch is so far off
+// that the Touch check control cannot be tapped.
+void stepBootCheck() {
+  if (!boot.down || boot.checkOpened || !awake || since(boot.downAt) < BOOT_CHECK_MS) return;
+  boot.checkOpened = true;
+  tr = Transition{};
+  openTouchCheck(Mode::Face, screens::Button::None);
 }
 
 void pollInput() {
@@ -968,6 +1289,13 @@ void pollInput() {
   }
   TouchSample s{};
   touch::read(s);
+  // The chip reports positions in the panel's own frame; turn them to match the screen.
+  rawX = s.x;
+  rawY = s.y;
+  int x, y;
+  orient::apply(activeTouchMap(), s.x, s.y, x, y);
+  s.x = x;
+  s.y = y;
   if (s.down && !finger.down) onFingerDown(s);
   else if (s.down) onFingerMove(s);
   else if (finger.down) onFingerUp();
@@ -979,8 +1307,10 @@ void pollInput() {
 void stepBoot() {
   uint32_t t = since(bootStart);
   if (t >= motion::BOOT_MS + BOOT_HOLD_MS) {
-    if (!net::hasSavedWifi()) {
-      openSetup();
+    // Always on to the face, never into the Wi-Fi hotspot: without a time the face says how to
+    // set one. The first start with a new screen turn checks touch first.
+    if (!touchChecked()) {
+      openTouchCheck(Mode::Face, screens::Button::None);
     } else {
       mode = Mode::Face;
       dirty = true;
@@ -994,18 +1324,17 @@ void stepBoot() {
 
 void stepFace() {
   FaceContext c = faceContext(false);
-  if (c.now.tm_min != lastMinute) {
-    if (lastMinute >= 0 && currentFace() == FACE_RADAR && motionOn()) {
-      sweeping = true;
-      sweepStart = hal::ms();
-    }
-    lastMinute = c.now.tm_min;
+  lastMinute = c.now.tm_min;
+  // The radar beam turns all the time the radar face is on screen, unless motion is reduced,
+  // the battery is low, or memory is short and there is no cached dial to draw over (then it
+  // steps with the seconds, drawn once a second).
+  bool beam = currentFace() == FACE_RADAR && motionOn() && !lowPower() && haveCache;
+  if (beam != sweeping) {
+    sweeping = beam;
+    sweepStart = hal::ms();
+    dirty = true;
   }
-  if (sweeping && since(sweepStart) >= motion::SWEEP_MS) {
-    sweeping = false;
-    dirty = true;  // final frame without the beam
-  }
-  bool due = dirty || c.now.tm_sec != shownSecond || (sweeping && since(lastPresent) >= ANIM_FRAME_MS * 2);
+  bool due = dirty || c.now.tm_sec != shownSecond || (sweeping && since(lastPresent) >= motion::RADAR_FRAME_MS);
   if (!due) return;
   renderFace(*cur, currentFace(), true);
   present(*cur);
@@ -1050,12 +1379,14 @@ void stepNetwork() {
 }
 
 bool setupHoldsScreen() {
+  if (mode == Mode::PhoneSync) return ble::on();  // the screen stays on while Bluetooth is open
   if (mode != Mode::Setup) return false;
   net::Portal p = net::portalState();
   return p == net::Portal::Waiting || p == net::Portal::PhoneJoined || syncBusy();
 }
 
 uint32_t screenTimeout() {
+  if (mode == Mode::PhoneSync) return RESULT_TIMEOUT_MS;
   if (mode != Mode::Setup) return SCREEN_TIMEOUT_MS;
   screens::SetupPhase p = setupPhase();
   bool result = p == screens::SetupPhase::Done || p == screens::SetupPhase::Failed || p == screens::SetupPhase::TimedOut;
@@ -1083,10 +1414,12 @@ TFT_eSPI &display() { return tft; }
 
 int controls(screens::Control *out, int max) { return pagedMode() ? screens::controls(*cur, view(), out, max) : 0; }
 int page() { return pageFor(mode); }
+float beamAngle() { return faceContext(true).beamDeg; }
 
 const char *screenName() {
-  static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime"};
-  static const char *sliding[] = {"boot+slide", "face+slide", "panel+slide", "details+slide", "setup+slide", "settime+slide"};
+  static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone"};
+  static const char *sliding[] = {"boot+slide",  "face+slide",    "panel+slide",      "details+slide",
+                                  "setup+slide", "settime+slide", "touchcheck+slide", "phone+slide"};
   if (!awake) return "asleep";
   return (tr.kind != Slide::None ? sliding : names)[(int)mode];
 }
@@ -1106,7 +1439,7 @@ void begin() {
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
 
   tft.init();
-  tft.setRotation(0);
+  applyTurn();  // sprites stay 240 x 240: the panel turns the picture as it is written
   tft.fillScreen(TFT_BLACK);
   // Three full 16-bit frames (115 KB each) in PSRAM: what is on screen, the
   // incoming screen during a slide, and the cached static face layer. Without
@@ -1126,6 +1459,11 @@ void begin() {
   touch::begin();
   imu::begin();
   wristRaise = RaiseDetector{};
+  wristDrop = DropDetector{};
+  check = {};
+  batteryLife = battery::Estimate{};
+  sweeping = false;
+  phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
   net::begin();
@@ -1134,8 +1472,8 @@ void begin() {
   bool sequence = hal::coldBoot() && motionOn();
   mode = sequence ? Mode::Boot : Mode::Face;
   bootStart = lastActivity = hal::ms();
-  if (!sequence && !net::hasSavedWifi()) {
-    openSetup();
+  if (!sequence && !touchChecked()) {
+    openTouchCheck(Mode::Face, screens::Button::None);
   } else if (mode == Mode::Face) {
     renderFace(*cur, currentFace(), false);
     present(*cur);
@@ -1150,6 +1488,7 @@ void begin() {
 void loop() {
   pollInput();
   stepNetwork();
+  if (ble::on() || ble::state() != ble::State::Off) stepPhone();
   if (since(lastBatteryRead) > BATTERY_READ_MS) readBattery();
   if (settingsDirty && since(settingsChangedAt) > SAVE_DELAY_MS) {
     saveSettings();
@@ -1160,12 +1499,12 @@ void loop() {
     // The panel is asleep; only touch, BOOT, motion, Wi-Fi and the clock need attention.
     stepRaise();
     if (awake) return;
-    if (net::radioOn()) {
-      hal::idle(50);  // Wi-Fi needs the processor awake
+    if (net::radioOn() || ble::on()) {
+      hal::idle(50);  // Wi-Fi and Bluetooth need the processor awake
       return;
     }
     // Light sleep wakes early on touch or BOOT, so it can wait longer; a plain wait has to poll.
-    bool raising = settings.raiseToWake && imu::present();
+    bool raising = (settings.raiseToWake || settings.twistToWake) && imu::present();
     uint32_t wait = !DRIFT_LIGHT_SLEEP ? 50 : raising ? DOZE_RAISE_MS : DOZE_MS;
     hal::WakeCause why = hal::doze(wait, DRIFT_LIGHT_SLEEP);
     if (why != hal::WakeCause::Timer) {
@@ -1183,10 +1522,16 @@ void loop() {
   }
 
   stepFade();
+  stepBootCheck();
+  stepDrop();
+  if (!awake) return;
   if (tr.kind != Slide::None) stepTransition();
   else if (mode == Mode::Boot) stepBoot();
   else if (mode == Mode::Face) {
     if (!stepHold()) stepFace();
+  } else if (mode == Mode::TouchCheck) {
+    stepTouchCheck();
+    refreshScreen(false);
   } else {
     stepRepeat();
     refreshScreen(false);

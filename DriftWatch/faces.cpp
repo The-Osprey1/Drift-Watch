@@ -3,8 +3,11 @@
 //   Stealth  - silver hands and markers, cyan glow inlays, magenta seconds hand only.
 //   Corpo    - yellow structure, black hands edged in yellow, red for seconds and inlays.
 //   Hologram - cyan throughout, white inlays, magenta seconds hand.
-//   Radar    - yellow time, cyan hour ring, magenta seconds dot.
+//   Radar    - yellow time, cyan hour ring, magenta seconds dot, phosphor green beam.
+// Without a set clock no face shows a warning: the time is dashed, and a calm line says how
+// to set it (or what the sync is doing).
 #include "faces.h"
+#include <math.h>
 #include "gfx.h"
 #include "theme.h"
 
@@ -50,7 +53,7 @@ void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
   gfx::battery(s, CX, 46, c.batteryPct, col::N100);
 
   gfx::TimeLayout tl = gfx::timeLayout(CX, DIGI_TIME_Y, type::TIME_HERO);
-  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, col::YELLOW);
+  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
   if (c.use12h && c.timeValid)
     gfx::text(s, c.now.tm_hour < 12 ? "AM" : "PM", tl.x + tl.width, tl.y - 9, type::SMALL, col::CYAN, MR_DATUM);
 
@@ -65,11 +68,9 @@ void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
     gfx::text(s, "SYNCING", CX, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::CYAN);
     gfx::text(s, noTimeHint(c), CX, 182, type::SMALL, col::CYAN);
   } else {
-    gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::WARN, false);
-    gfx::cutBox(s, DATE_X + 1, DATE_Y + 1, DATE_W - 2, DATE_H - 2, 6, col::WARN, false);
-    gfx::iconAlert(s, DATE_X + 20, DATE_Y + DATE_H / 2, 14, col::WARN);
-    gfx::text(s, "NO TIME", CX + 10, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::WARN);
-    gfx::text(s, noTimeHint(c), CX, 182, type::SMALL, col::N300);
+    gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::N600, false);
+    gfx::text(s, "SET TIME", CX, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::N300);
+    gfx::text(s, noTimeHint(c), CX, 182, type::SMALL, col::N400);
   }
 }
 
@@ -194,13 +195,9 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
 
   if (!c.timeValid) {
     // No hands without a time. Syncing is progress, not a fault, so it gets no warning sign.
-    if (c.sync == SyncView::Syncing) {
-      gfx::text(s, "SYNCING", CX, 66, type::SMALL, col::CYAN);
-    } else {
-      gfx::iconAlert(s, CX, 58, 14, col::WARN);
-      gfx::text(s, "NO TIME", CX, 76, type::SMALL, col::WARN);
-    }
-    gfx::text(s, noTimeHint(c), CX, 94, type::SMALL, c.sync == SyncView::Syncing ? col::CYAN : col::N300);
+    bool syncing = c.sync == SyncView::Syncing;
+    gfx::text(s, syncing ? "SYNCING" : "SET TIME", CX, 70, type::SMALL, syncing ? col::CYAN : col::N300);
+    gfx::text(s, noTimeHint(c), CX, 90, type::SMALL, syncing ? col::CYAN : col::N400);
     return;
   }
   // Hour and minute hands move once a minute, so they live in the cached layer.
@@ -224,6 +221,9 @@ void dialLive(TFT_eSprite &s, Face f, const FaceContext &c) {
 
 // ---- Radar -------------------------------------------------------------------
 void radarStatic(TFT_eSprite &s, const FaceContext &c) {
+  // Range rings and a cross of bearing ticks, all in logical screen space, so they follow the
+  // screen turn like everything else.
+  for (int r : {38, 62}) s.drawCircle(CX, CY, r, col::N800);
   s.drawCircle(CX, CY, 86, col::N700);
   for (int d = 0; d < 360; d += 90) {
     Pt a = gfx::polar(d, 78), b = gfx::polar(d, 90);
@@ -247,29 +247,41 @@ void radarStatic(TFT_eSprite &s, const FaceContext &c) {
   }
 }
 
-void radarSweep(TFT_eSprite &s, float t) {
-  // One clockwise pass with a short fading trail.
-  static const uint16_t trail[] = {rgb(0x00A8B3), rgb(0x007780), rgb(0x004C52), rgb(0x002A2E)};
-  float deg = t * 360;
-  for (int i = 3; i >= 0; i--) {
-    Pt a = gfx::polar(deg - (i + 1) * 4, 18), b = gfx::polar(deg - (i + 1) * 4, 96);
-    s.drawWideLine(a.x, a.y, b.x, b.y, 2.0f, trail[i], col::BG);
+// Brightness of the phosphor `behind` degrees after the beam passed: exponential decay.
+float phosphor(float behind) {
+  if (behind < 0) behind += 360;
+  return behind > motion::RADAR_TRAIL_DEG ? 0 : expf(-behind / motion::RADAR_DECAY_DEG);
+}
+
+void radarSweep(TFT_eSprite &s, float deg) {
+  // The trail is a fan of thin wedges, each a little darker than the one ahead of it, drawn
+  // oldest first so the beam ends on top. Kept dim so the time stays readable through it.
+  constexpr float SLICE = 3, R0 = 18, R1 = 96;
+  for (float behind = motion::RADAR_TRAIL_DEG; behind > 0; behind -= SLICE) {
+    float a0 = deg - behind, a1 = a0 + SLICE + 0.6f;  // slight overlap: no hairline gaps
+    uint16_t k = gfx::blend(col::PHOSPHOR_TRAIL, col::BG, 0.55f * phosphor(behind));
+    Pt p[] = {gfx::polar(a0, R0), gfx::polar(a0, R1), gfx::polar(a1, R1), gfx::polar(a1, R0)};
+    gfx::fillPoly(s, p, 4, k);
   }
-  Pt a = gfx::polar(deg, 18), b = gfx::polar(deg, 96);
-  s.drawWideLine(a.x, a.y, b.x, b.y, 2.0f, col::CYAN, col::BG);
+  Pt a = gfx::polar(deg, R0), b = gfx::polar(deg, R1);
+  s.drawWideLine(a.x, a.y, b.x, b.y, 2.0f, col::PHOSPHOR, col::BG);
 }
 
 void radarLive(TFT_eSprite &s, const FaceContext &c) {
-  if (c.sweep >= 0 && c.sweep < 1) radarSweep(s, c.sweep);
+  if (c.beamDeg >= 0) radarSweep(s, c.beamDeg);
 
   if (c.timeValid) {
-    Pt d = gfx::polar(c.now.tm_sec * 6, 94);
-    s.fillSmoothCircle(d.x, d.y, 3, col::MAGENTA, col::BG);
+    // The seconds dot is the blip: it flares as the beam passes over it, then fades.
+    float sec = c.now.tm_sec * 6;
+    Pt d = gfx::polar(sec, 94);
+    float glow = c.beamDeg >= 0 ? phosphor(c.beamDeg - sec) : 0;
+    if (glow > 0.05f) s.fillSmoothCircle(d.x, d.y, 3 + 3 * glow, gfx::blend(col::MAGENTA, col::BG, 0.45f * glow), col::BG);
+    s.fillSmoothCircle(d.x, d.y, 3, glow > 0.5f ? col::WHITE : col::MAGENTA, col::BG);
   }
 
   gfx::battery(s, CX, 72, c.batteryPct, col::N300);
   gfx::TimeLayout tl = gfx::timeLayout(CX, 114, type::TIME_INSET);
-  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, col::YELLOW);
+  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
 
   char buf[28];
   if (c.timeValid) {
@@ -278,13 +290,8 @@ void radarLive(TFT_eSprite &s, const FaceContext &c) {
     gfx::text(s, buf, CX, 152, type::SMALL, col::N300);
   } else {
     bool syncing = c.sync == SyncView::Syncing;
-    if (syncing) {
-      gfx::text(s, "SYNCING", CX, 152, type::SMALL, col::CYAN);
-    } else {
-      gfx::iconAlert(s, CX - 36, 152, 12, col::WARN);
-      gfx::text(s, "NO TIME", CX + 8, 152, type::SMALL, col::WARN);
-    }
-    gfx::text(s, noTimeHint(c), CX, 170, type::SMALL, syncing ? col::CYAN : col::N300);
+    gfx::text(s, syncing ? "SYNCING" : "SET TIME", CX, 152, type::SMALL, syncing ? col::CYAN : col::N300);
+    gfx::text(s, noTimeHint(c), CX, 170, type::SMALL, syncing ? col::CYAN : col::N400);
   }
 }
 }  // namespace

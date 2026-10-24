@@ -33,9 +33,22 @@ class String {
     size_t a = s_.find_first_not_of(" \t\r\n"), b = s_.find_last_not_of(" \t\r\n");
     s_ = a == std::string::npos ? "" : s_.substr(a, b - a + 1);
   }
+  bool startsWith(const char *p) const { return s_.rfind(p, 0) == 0; }
+  int indexOf(char c) const { size_t i = s_.find(c); return i == std::string::npos ? -1 : (int)i; }
+  String substring(int from) const { return from >= (int)s_.size() ? String() : String(s_.substr(from)); }
+  String substring(int from, int to) const { return from >= to ? String() : String(s_.substr(from, to - from)); }
+  long toInt() const { return atol(s_.c_str()); }
  private:
   std::string s_;
 };
+
+// Serial: the simulation sends nothing in, and what the watch prints is dropped.
+struct HostSerial {
+  int available() { return 0; }
+  String readStringUntil(char) { return String(); }
+  template <class... A> void printf(const char *, A...) {}
+};
+extern HostSerial Serial;
 
 uint32_t millis();
 uint32_t micros();

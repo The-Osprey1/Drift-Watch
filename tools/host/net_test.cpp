@@ -569,6 +569,15 @@ void drift() {
   CHECK(llabs(net::driftPpb() + 120000) < 2000, "a slower clock is learned too (%ld ppb)", (long)net::driftPpb());
   CHECK(worst <= 250, "and once learned the watch is never more than 250 ms off before a sync (%lld ms)", (long long)worst);
 
+  printf("Drift: a phone sync teaches it as well as a Wi-Fi one\n");
+  ratePpm = 30;
+  runFor(86400000, 1000);
+  int64_t before = watchErrorMs();
+  net::setClockFromPhone((time_t)(truthMs() / 1000), (int)(truthMs() % 1000));
+  CHECK(llabs(watchErrorMs()) <= 1, "the phone's time is applied (%lld ms off; %lld before)", (long long)watchErrorMs(),
+        (long long)before);
+  CHECK(llabs(net::driftPpb() - 30000) < 1000, "and the new rate learned from it (%ld ppb)", (long)net::driftPpb());
+
   printf("Drift: a sync over less than 6 hours teaches nothing\n");
   int32_t ppb = net::driftPpb();
   ratePpm = 0;

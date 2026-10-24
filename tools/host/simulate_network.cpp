@@ -194,6 +194,26 @@ void quietResync() {
   CHECK(screen() == "asleep", "and the screen never came on (%s)", screen().c_str());
 }
 
+void retryAfterFailure() {
+  printf("Screen off: a resync with no answer from the time server is retried after 30 minutes and recovers\n");
+  uint32_t t0 = sim::clockMs;
+  while (!net::syncRunning() && sim::clockMs - t0 < 7UL * 3600 * 1000) runFor(1000);
+  netsim::status = WL_CONNECTED;
+  runFor(11500);  // no answer: the sync gives up after 10 s
+  CHECK(net::failReason() == net::Fail::ClockFailed && net::timeIsValid() && !net::radioOn(),
+        "the sync fails, the clock stays valid and the radio goes off");
+  netsim::status = WL_DISCONNECTED;
+  t0 = sim::clockMs;
+  while (!net::syncRunning() && sim::clockMs - t0 < 3600UL * 1000) runFor(1000);
+  CHECK(net::syncRunning() && llabs((int32_t)(sim::clockMs - t0) - 30 * 60 * 1000) < 15000,
+        "a retry starts about 30 minutes later (%.1f min)", (sim::clockMs - t0) / 60000.0);
+  netsim::status = WL_CONNECTED;
+  waitFor(net::Sync::Clock, 500);
+  netsim::sntpAnswer(truthMs());
+  runFor(200);
+  CHECK(net::lastResult() == net::Result::Ok && screen() == "asleep", "and succeeds with the screen still off");
+}
+
 void warmRestart() {
   printf("Restart: the typed zone and network come back from flash\n");
   sim::cold = false;
@@ -216,6 +236,7 @@ int main(int argc, char **argv) {
   startUp();
   setup();
   quietResync();
+  retryAfterFailure();
   warmRestart();
   (void)PACIFIC;
   printf("%d of %d checks passed\n", checks - failures, checks);

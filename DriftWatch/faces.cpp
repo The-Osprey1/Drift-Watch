@@ -4,6 +4,7 @@
 //   Corpo    - yellow structure, black hands edged in yellow, red for seconds and inlays.
 //   Hologram - cyan throughout, white inlays, magenta seconds hand.
 //   Radar    - yellow time, cyan hour ring, magenta seconds dot, phosphor green beam.
+//   Phantom  - black and silver, a crimson jewel in the movement, the seconds hand eclipsed.
 // Without a set clock no face shows a warning: the time is dashed, and a calm line says how
 // to set it (or what the sync is doing).
 #include "faces.h"
@@ -294,6 +295,191 @@ void radarLive(TFT_eSprite &s, const FaceContext &c) {
     gfx::text(s, noTimeHint(c), CX, 170, type::SMALL, syncing ? col::CYAN : col::N400);
   }
 }
+// ---- Phantom -----------------------------------------------------------------
+// Layers, bottom to top: dial and movement plate (cached), the balance wheel and hairspring
+// (each frame, clipped to the opening), the opening's lip, hour and minute hands, the seconds
+// hand, the pivot. The lip is drawn over the seconds hand, so the hand slides under it.
+namespace ph {
+const uint16_t DIAL = rgb(0x090A0D), DIAL_EDGE = rgb(0x15171C), RECESS = rgb(0x030304);
+const uint16_t PLATE = rgb(0x2B2F36), PLATE_GRAIN = rgb(0x363B43);
+const uint16_t RING = rgb(0x8C939E), RING_DIM = rgb(0x3A3F47), LIP_HI = rgb(0xB9C0CA), LIP_LO = rgb(0x111316);
+const uint16_t RIM = rgb(0xC8B27E), RIM_DARK = rgb(0x6E5F3E), SPRING = rgb(0x8F98A6);
+const uint16_t JEWEL = 0xA004, JEWEL_HI = rgb(0xFF8FA0);
+const uint16_t HAND = col::N100, HAND_EDGE = rgb(0x5A606B), SECONDS = rgb(0xE8ECF2);
+constexpr float BAL_R = 70;              // balance centre, px from the dial centre at 12 o'clock
+constexpr int BAL_X = CX, BAL_Y = CY - (int)BAL_R;
+constexpr float RIM_R = 24, RIM_W = 3.2f;
+
+// Inside the opening, with a margin in px from its edges (the lip and the sides).
+bool inOpening(float x, float y, float margin) {
+  float dx = x - CX, dy = y - CY, r = sqrtf(dx * dx + dy * dy);
+  if (r < phantom::APERTURE_R0 + margin || r > phantom::APERTURE_R1 - margin) return false;
+  float deg = atan2f(dx, -dy) * 57.29578f;  // clockwise from 12
+  float edge = 32.0f - margin / r * 57.29578f;
+  return fabsf(deg) < edge;
+}
+
+// Opening mask: one bit a pixel over its bounding box, worked out once.
+constexpr int MX = 62, MY = 14, MW = 116, MH = 82;
+uint8_t mask[MW * MH / 8 + 1];
+bool maskReady = false;
+bool masked(int x, int y) {
+  if (!maskReady) {
+    for (int j = 0; j < MH; j++)
+      for (int i = 0; i < MW; i++)
+        if (inOpening(MX + i + 0.5f, MY + j + 0.5f, 1.5f)) mask[(j * MW + i) >> 3] |= 1 << ((j * MW + i) & 7);
+    maskReady = true;
+  }
+  int i = x - MX, j = y - MY;
+  if (i < 0 || j < 0 || i >= MW || j >= MH) return false;
+  return mask[(j * MW + i) >> 3] & (1 << ((j * MW + i) & 7));
+}
+
+// A pixel of the mechanism: only inside the opening, blended by coverage `a`.
+void mechPixel(TFT_eSprite &s, int x, int y, uint16_t c, float a) {
+  if (a <= 0 || !masked(x, y)) return;
+  s.drawPixel(x, y, a >= 1 ? c : gfx::blend(c, s.readPixel(x, y), a));
+}
+
+// A thin line of the mechanism, clipped to the opening.
+void mechLine(TFT_eSprite &s, float x0, float y0, float x1, float y1, uint16_t c) {
+  int n = (int)(fmaxf(fabsf(x1 - x0), fabsf(y1 - y0)) * 1.5f) + 1;
+  for (int i = 0; i <= n; i++) {
+    float t = i / (float)n;
+    mechPixel(s, lroundf(x0 + (x1 - x0) * t), lroundf(y0 + (y1 - y0) * t), c, 1);
+  }
+}
+
+uint32_t hash(int x, int y) {
+  uint32_t h = (uint32_t)x * 374761393u + (uint32_t)y * 668265263u;
+  h = (h ^ (h >> 13)) * 1274126177u;
+  return h ^ (h >> 16);
+}
+
+void phantomStatic(TFT_eSprite &s, const FaceContext &c) {
+  // Dial: a faint lift towards the edge instead of a flat black.
+  for (int r = 120; r > 0; r -= 6) s.fillCircle(CX, CY, r, gfx::blend(DIAL_EDGE, DIAL, r / 120.0f * 0.6f));
+  // The opening: a recess, the movement plate with fine circular graining, and its edges.
+  for (int y = MY; y < MY + MH; y++)
+    for (int x = MX; x < MX + MW; x++) {
+      if (!inOpening(x + 0.5f, y + 0.5f, 0)) continue;
+      float d = hypotf(x - BAL_X, y - BAL_Y);
+      bool grain = ((int)(d * 0.9f) % 3 == 0) ^ ((hash(x, y) & 7) == 0);
+      uint16_t k = inOpening(x + 0.5f, y + 0.5f, 3) ? (grain ? PLATE_GRAIN : PLATE) : RECESS;
+      s.drawPixel(x, y, k);
+    }
+  gfx::arc(s, (int)phantom::APERTURE_R1 + 1, (int)phantom::APERTURE_R1 - 1, phantom::APERTURE_FROM,
+           360 + phantom::APERTURE_TO, LIP_LO, false);
+
+  // Chapter ring: minute ticks and hour indices, left out wherever they would cross the opening.
+  gfx::arc(s, 118, 116, 0, 360, RING_DIM);
+  for (int i = 0; i < 60; i++) {
+    float deg = i * 6;
+    if (phantom::inAperture(deg) || phantom::inAperture(deg + 3) || phantom::inAperture(deg - 3)) continue;
+    if (i % 5 == 0) gfx::radialBar(s, deg, 92, 111, 3.2f, RING);
+    else {
+      Pt a = gfx::polar(deg, 107), b = gfx::polar(deg, 112);
+      s.drawWideLine(a.x, a.y, b.x, b.y, 1.0f, RING_DIM, DIAL);
+    }
+  }
+
+  // Date at 3 o'clock and battery at 6, both well clear of the opening.
+  char buf[8];
+  const int wx = 150, wy = 109, ww = 34, wh = 22;
+  s.drawRect(wx, wy, ww, wh, RING_DIM);
+  if (c.timeValid) snprintf(buf, sizeof buf, "%d", c.now.tm_mday);
+  else strcpy(buf, "--");
+  gfx::text(s, buf, wx + ww / 2, wy + wh / 2 + 1, type::MEDIUM, col::N100);
+  gfx::batteryGauge(s, CX, 170, 18, c.batteryPct, RING_DIM, RING, col::N100);
+
+  if (!c.timeValid) {
+    bool syncing = c.sync == SyncView::Syncing;
+    gfx::text(s, syncing ? "SYNCING" : "SET TIME", CX, 116, type::SMALL, syncing ? col::CYAN : col::N300);
+    gfx::text(s, noTimeHint(c), CX, 136, type::SMALL, syncing ? col::CYAN : col::N400);
+  }
+}
+
+// Balance wheel: rim, three arms and the hairspring, drawn pixel by pixel inside the opening.
+void balance(TFT_eSprite &s, float deg) {
+  float a = deg * DEG_TO_RAD, ca = cosf(a), sa = sinf(a);
+  static const float ARM_C[3] = {1, -0.5f, -0.5f}, ARM_S[3] = {0, 0.8660254f, -0.8660254f};  // arms 120 degrees apart
+  int r = (int)(RIM_R + RIM_W + 1);
+  for (int y = BAL_Y - r; y <= BAL_Y + r; y++)
+    for (int x = BAL_X - r; x <= BAL_X + r; x++) {
+      float dx = x - BAL_X, dy = y - BAL_Y, d = sqrtf(dx * dx + dy * dy);
+      float rim = RIM_W / 2 - fabsf(d - RIM_R);
+      if (rim > -0.5f) {
+        mechPixel(s, x, y, d < RIM_R ? RIM_DARK : RIM, fminf(1, rim + 0.5f));
+        continue;
+      }
+      if (d > RIM_R || d < 3) continue;
+      // Arms, turned with the wheel: three at 120 degrees.
+      float u = dx * ca + dy * sa, v = -dx * sa + dy * ca;
+      for (int k = 0; k < 3; k++) {
+        float cu = ARM_C[k], su = ARM_S[k];
+        float along = u * su - v * cu, across = u * cu + v * su;
+        if (along > 0 && fabsf(across) < 1.4f) mechPixel(s, x, y, RIM, 1.4f - fabsf(across));
+      }
+    }
+  // Hairspring: a flat spiral that winds and unwinds with the wheel, so it seems to breathe.
+  float breathe = deg / phantom::BALANCE_DEG;  // -1..1
+  float px = BAL_X + 4, py = BAL_Y;
+  for (int i = 1; i <= 140; i++) {
+    float t = i / 140.0f, th = t * 4.2f * 6.2831853f + a * 0.35f;
+    float rr = 4 + t * (RIM_R - 9) * (1 + 0.06f * breathe * (1 - t));
+    float qx = BAL_X + rr * cosf(th), qy = BAL_Y + rr * sinf(th);
+    mechLine(s, px, py, qx, qy, SPRING);
+    px = qx, py = qy;
+  }
+}
+
+// The opening's inner edge, drawn after the seconds hand: a bright bevel over a dark shadow.
+void lip(TFT_eSprite &s) {
+  float from = phantom::APERTURE_FROM, to = 360 + phantom::APERTURE_TO;
+  gfx::arc(s, (int)phantom::APERTURE_R0 + 1, (int)phantom::APERTURE_R0 - 2, from, to, LIP_LO, false);
+  gfx::arc(s, (int)phantom::APERTURE_R0 - 2, (int)phantom::APERTURE_R0 - 3, from, to, LIP_HI, false);
+  for (float d : {from, to}) {
+    Pt a = gfx::polar(d, phantom::APERTURE_R0 - 3), b = gfx::polar(d, phantom::APERTURE_R1);
+    s.drawWideLine(a.x, a.y, b.x, b.y, 2.0f, LIP_HI, DIAL);
+  }
+}
+
+void dauphine(TFT_eSprite &s, float deg, float len, float w) {
+  Pt edge[] = {gfx::alongHand(deg, -8, 0), gfx::alongHand(deg, len * 0.25f, w + 1), gfx::alongHand(deg, len + 1.5f, 0),
+               gfx::alongHand(deg, len * 0.25f, -w - 1)};
+  gfx::fillPoly(s, edge, 4, HAND_EDGE);
+  Pt body[] = {gfx::alongHand(deg, -6, 0), gfx::alongHand(deg, len * 0.25f, w), gfx::alongHand(deg, len, 0),
+               gfx::alongHand(deg, len * 0.25f, -w)};
+  gfx::fillPoly(s, body, 4, HAND);
+  Pt ridge[] = {gfx::alongHand(deg, 0, 0), gfx::alongHand(deg, len * 0.25f, w), gfx::alongHand(deg, len, 0)};
+  gfx::fillPoly(s, ridge, 3, col::WHITE);  // the lit half of a faceted hand
+}
+
+void phantomLive(TFT_eSprite &s, const FaceContext &c) {
+  // The mechanism stands still at rest without smooth motion.
+  balance(s, c.animate ? phantom::balanceDeg(c.animMs) : 0);
+  s.fillSmoothCircle(BAL_X, BAL_Y, 3, JEWEL, PLATE);
+  s.drawPixel(BAL_X - 1, BAL_Y - 1, JEWEL_HI);
+
+  float sec = c.now.tm_sec + (c.animate ? c.ms / 1000.0f : 0);
+  phantom::Needle n = phantom::needleAt(sec, c.animate);
+  if (c.timeValid && n.visible) {
+    uint16_t k = gfx::blend(SECONDS, DIAL, n.alpha);
+    Pt tail = gfx::polar(n.deg + 180, 18), tip = gfx::polar(n.deg, n.length);
+    s.drawWideLine(tail.x, tail.y, tip.x, tip.y, 1.6f, k, DIAL);
+    Pt w0 = gfx::polar(n.deg + 180, 9), w1 = gfx::polar(n.deg + 180, 18);
+    s.drawWideLine(w0.x, w0.y, w1.x, w1.y, 4.0f, k, DIAL);  // counterweight
+  }
+  lip(s);
+  if (c.timeValid) {
+    float m = c.now.tm_min + sec / 60, h = (c.now.tm_hour % 12) + m / 60;
+    dauphine(s, h * 30, 56, 5);
+    dauphine(s, m * 6, 88, 3.6f);
+  }
+  s.fillSmoothCircle(CX, CY, 5, col::N300, DIAL);
+  s.fillSmoothCircle(CX, CY, 2, DIAL, col::N300);
+}
+}  // namespace ph
 }  // namespace
 
 void drawFaceStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
@@ -304,6 +490,7 @@ void drawFaceStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
     case FACE_CORPO:
     case FACE_HOLO: dialStatic(s, f, c); break;
     case FACE_RADAR: radarStatic(s, c); break;
+    case FACE_PHANTOM: ph::phantomStatic(s, c); break;
     default: break;
   }
 }
@@ -315,6 +502,7 @@ void drawFaceLive(TFT_eSprite &s, Face f, const FaceContext &c) {
     case FACE_CORPO:
     case FACE_HOLO: dialLive(s, f, c); break;
     case FACE_RADAR: radarLive(s, c); break;
+    case FACE_PHANTOM: ph::phantomLive(s, c); break;
     default: break;
   }
 }
@@ -333,6 +521,49 @@ uint32_t faceStaticKey(Face f, const FaceContext &c) {
 }
 
 const char *faceName(Face f) {
-  static const char *names[] = {"DIGITAL", "STEALTH", "CORPO", "HOLOGRAM", "RADAR"};
+  static const char *names[] = {"DIGITAL", "STEALTH", "CORPO", "HOLOGRAM", "RADAR", "Phantom"};
+  static_assert(sizeof names / sizeof names[0] == FACE_COUNT, "a name for every face");
   return f < FACE_COUNT ? names[f] : "?";
 }
+
+bool faceAnimates(Face f) { return f == FACE_RADAR || f == FACE_PHANTOM; }
+
+namespace phantom {
+namespace {
+float smoothstep(float u) { return u <= 0 ? 0 : u >= 1 ? 1 : u * u * (3 - 2 * u); }
+}  // namespace
+
+bool inAperture(float deg) {
+  deg = fmodf(fmodf(deg, 360) + 360, 360);
+  return deg >= APERTURE_FROM || deg <= APERTURE_TO;
+}
+
+float reboundDeg(float s) {
+  if (s < 5 || s >= 5 + REBOUND_S) return 0;
+  float f = (s - 5) / REBOUND_S;
+  return expf(-8 * f) * sinf(4 * 3.14159265f * f) * REBOUND_DEG;
+}
+
+Needle needleAt(float s, bool smooth) {
+  Needle n{true, 6 * s, FULL_PX, 1};
+  if (s >= 58 || s < 2) return {false, 6 * s, 0, 0};
+  if (s >= 55) {
+    float u = (s - 55) / 3;  // 0 at 55 s, 1 at 58 s
+    n.length = FULL_PX - (FULL_PX - LIP_PX) * smoothstep(u);
+    n.alpha = u < 0.5f ? 1 : 1 - (u - 0.5f) / 0.5f;  // gone by the time it would vanish
+  } else if (s < 5) {
+    float u = (s - 2) / 3;  // 0 at 2 s, 1 at 5 s
+    n.length = LIP_PX + (FULL_PX - LIP_PX) * smoothstep(u);
+    n.alpha = u < 0.3f ? u / 0.3f : 1;
+  } else if (smooth) {
+    n.deg += reboundDeg(s);
+  }
+  return n;
+}
+
+float balanceDeg(uint32_t animMs) {
+  // Four whole swings a second; the phase comes from elapsed time, so a slow frame never slows it.
+  float phase = (animMs % 1000) / 1000.0f * BALANCE_HZ;
+  return BALANCE_DEG * sinf(phase * 6.2831853f);
+}
+}  // namespace phantom

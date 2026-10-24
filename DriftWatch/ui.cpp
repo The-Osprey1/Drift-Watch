@@ -66,7 +66,7 @@ uint32_t fadeStart = 0;
 uint32_t cacheKey = 0;
 bool cacheValid = false, dirty = true;
 int shownSecond = -1, lastMinute = -1;
-bool sweeping = false;      // the radar beam is turning
+bool faceMoving = false;    // the face animates between seconds: the radar beam, Phantom's movement
 uint32_t sweepStart = 0;
 
 int batteryPct = -1, batteryMv = -1;
@@ -180,10 +180,16 @@ void present(TFT_eSprite &s) {
 
 // Shows `a` and `b` side by side, shifted so `offset` columns of `a` are off the left edge.
 void presentHorizontal(TFT_eSprite &a, TFT_eSprite &b, int offset) {
+#if DRIFT_DIAG
+  uint32_t t = micros();
+#endif
   offset = constrain(offset, 0, W);
   if (offset < W) a.pushSprite(0, 0, offset, 0, W - offset, H);
   if (offset > 0) b.pushSprite(W - offset, 0, 0, 0, offset, H);
   lastPresent = hal::ms();
+#if DRIFT_DIAG
+  diag.pushUs += micros() - t;
+#endif
 }
 
 // Shows `top` above `bottom`, shifted so `offset` rows of `top` are off the top edge.
@@ -218,8 +224,14 @@ bool syncBusy() { return net::syncRunning(); }
 
 FaceContext faceContext(bool withSweep) {
   FaceContext c{};
-  time_t t = hal::now();
+  // One reading of the wall clock for the whole frame: the time shown and the fraction of a
+  // second the smooth hands use can never disagree.
+  int64_t wall = hal::nowMs();
+  time_t t = (time_t)(wall / 1000);
   localtime_r(&t, &c.now);
+  c.ms = (uint16_t)(wall % 1000);
+  c.animMs = hal::ms();
+  c.animate = withSweep && faceMoving;
   c.timeValid = net::timeIsValid();
   c.use12h = settings.use12h;
   c.batteryPct = batteryPct;
@@ -230,7 +242,7 @@ FaceContext faceContext(bool withSweep) {
   c.noWifi = !net::hasSavedWifi();
   c.beamDeg = -1;
   if (withSweep && currentFace() == FACE_RADAR && motionOn()) {
-    if (sweeping) c.beamDeg = (since(sweepStart) % motion::RADAR_TURN_MS) * 360.0f / motion::RADAR_TURN_MS;
+    if (faceMoving) c.beamDeg = (since(sweepStart) % motion::RADAR_TURN_MS) * 360.0f / motion::RADAR_TURN_MS;
     else if ((lowPower() || !haveCache) && c.timeValid) c.beamDeg = c.now.tm_sec * 6;  // one step a second, with the seconds dot
   }
   return c;
@@ -521,7 +533,7 @@ void commitFace(int step) {
   shownSecond = -1;
   lastMinute = -1;
   tr = Transition{};
-  sweeping = false;  // stepFace starts the beam on the radar face
+  faceMoving = false;  // stepFace starts the beam on the radar face
 }
 
 // Mid-drag arrival on the neighbour: it becomes current and the drag continues.
@@ -532,7 +544,7 @@ void landOn(int step) {
   std::swap(cur, nb);
   tr.neighbour = faceAt(-step);  // the face just left is now the neighbour
   cacheValid = false;
-  sweeping = false;
+  faceMoving = false;
 }
 
 // Instant face change, used with reduced motion or without the spare buffer.
@@ -541,7 +553,7 @@ void cutToFace(int step) {
   markSettingsChanged();
   cacheValid = false;
   dirty = true;
-  sweeping = false;
+  faceMoving = false;
   tr = Transition{};
 }
 
@@ -669,7 +681,7 @@ void sleepScreen() {
   fading = false;
   pressed = screens::Button::None;
   tr = Transition{};
-  sweeping = false;
+  faceMoving = false;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
   if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
@@ -1384,16 +1396,18 @@ void stepBoot() {
 void stepFace() {
   FaceContext c = faceContext(false);
   lastMinute = c.now.tm_min;
-  // The radar beam turns all the time the radar face is on screen, unless motion is reduced,
-  // the battery is low, or memory is short and there is no cached dial to draw over (then it
-  // steps with the seconds, drawn once a second).
-  bool beam = currentFace() == FACE_RADAR && motionOn() && !lowPower() && haveCache;
-  if (beam != sweeping) {
-    sweeping = beam;
+  // The radar beam and Phantom's movement run all the time their face is on screen, unless
+  // motion is reduced, the battery is low, or memory is short and there is no cached dial to
+  // draw over (then they step with the seconds, drawn once a second). With the screen off or
+  // another screen up this is not called at all.
+  bool moving = faceAnimates(currentFace()) && motionOn() && !lowPower() && haveCache;
+  if (moving != faceMoving) {
+    faceMoving = moving;
     sweepStart = hal::ms();
     dirty = true;
   }
-  bool due = dirty || c.now.tm_sec != shownSecond || (sweeping && since(lastPresent) >= motion::RADAR_FRAME_MS);
+  uint32_t frameMs = currentFace() == FACE_RADAR ? motion::RADAR_FRAME_MS : motion::PHANTOM_FRAME_MS;
+  bool due = dirty || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
   if (!due) return;
   renderFace(*cur, currentFace(), true);
   present(*cur);
@@ -1596,7 +1610,7 @@ void begin() {
   wristDrop = DropDetector{};
   check = {};
   batteryLife = battery::Estimate{};
-  sweeping = false;
+  faceMoving = false;
   phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
@@ -1664,7 +1678,7 @@ void loop() {
   stepDiag();
 #endif
 
-  bool busy = tr.kind != Slide::None || fading || sweeping || mode == Mode::Boot || finger.down || boot.down;
+  bool busy = tr.kind != Slide::None || fading || faceMoving || mode == Mode::Boot || finger.down || boot.down;
   hal::idle(busy ? 1 : 10);
 }
 

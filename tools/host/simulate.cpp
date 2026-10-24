@@ -1279,7 +1279,14 @@ void scenarios() {
     settle();
   }
   CHECK(settings.face == FACE_RADAR, "still on the radar face (face %d, %s)", settings.face, screen().c_str());
-  pressBoot();  // radar is last: on to Digital
+  pressBoot();  // on to Phantom, which moves too
+  runFor(motion::FACE_MS + 300);
+  CHECK(settings.face == FACE_PHANTOM, "on Phantom (face %d)", settings.face);
+  p0 = ui::display().pixelsPushed;
+  runFor(1000);
+  frames = (ui::display().pixelsPushed - p0) / (240 * 240);
+  CHECK(frames >= 25 && frames <= 31, "Phantom is drawn at about 30 frames a second (%llu)", (unsigned long long)frames);
+  pressBoot();  // Phantom is last: on to Digital
   runFor(motion::FACE_MS + 300);
   CHECK(settings.face == FACE_DIGITAL, "on Digital (face %d)", settings.face);
   p0 = ui::display().pixelsPushed;
@@ -2331,6 +2338,104 @@ void powerScenarios() {
   settle();
 }
 
+// Phantom: the frame scheduler and the face's place in the face list.
+uint64_t framesIn(uint32_t ms) {
+  uint64_t p0 = ui::display().pixelsPushed;
+  runFor(ms);
+  return (ui::display().pixelsPushed - p0) / (240 * 240);
+}
+
+void phantomScenarios() {
+  printf("Phantom face\n");
+  sim::cold = false;
+  settings = Settings{};
+  settings.touchCheckedTurn = settings.screenTurn = DISPLAY_ROTATION;
+  settings.touchMap = orient::expectedTouchMap(DISPLAY_ROTATION);
+  settings.face = FACE_PHANTOM;
+  saveSettings();
+  ui::begin();
+  settle(2500);
+  CHECK(screen() == "face" && currentFaceForTest() == FACE_PHANTOM, "starts on the stored Phantom face (%d)", currentFaceForTest());
+  uint64_t f = framesIn(1000);
+  CHECK(f >= 25 && f <= 31, "awake: about 30 frames a second (%llu)", (unsigned long long)f);
+  snap("phantom_awake");
+
+  settings.reducedMotion = true;
+  runFor(1100);
+  f = framesIn(3000);
+  CHECK(f >= 2 && f <= 4, "reduced motion: one frame a second, the seconds step (%llu in 3 s)", (unsigned long long)f);
+  settings.reducedMotion = false;
+
+  sim::batteryMv = 3600;  // 15%
+  runFor(61000);           // the next battery reading
+  if (screen() != "face") {
+    pressBoot();
+    settle();
+  }
+  f = framesIn(3000);
+  CHECK(f >= 2 && f <= 4, "low battery: one frame a second (%llu in 3 s)", (unsigned long long)f);
+  sim::batteryMv = 3950;
+  runFor(61000);
+  if (screen() != "face") {
+    pressBoot();
+    settle();
+  }
+  f = framesIn(1000);
+  CHECK(f >= 25, "battery back up: smooth again (%llu)", (unsigned long long)f);
+
+  swipeUp();
+  settle();
+  CHECK(screen() == "panel", "settings open over Phantom, got %s", screen().c_str());
+  uint32_t pushes0 = ui::display().pushes;
+  runFor(1000);
+  CHECK(ui::display().pushes - pushes0 <= 2, "no face frames behind the settings panel (%u pushes in 1 s)",
+        ui::display().pushes - pushes0);
+  pressBoot();
+  settle();
+
+  sim::accel = HANGING;
+  runFor(16000);
+  runFor(500);
+  CHECK(screen() == "asleep", "the screen goes off, got %s", screen().c_str());
+  pushes0 = ui::display().pushes;
+  runFor(5000);
+  CHECK(ui::display().pushes == pushes0, "nothing is drawn while the screen is off (%u pushes)", ui::display().pushes - pushes0);
+  pressBoot();
+  settle();
+
+  // Six faces now: a swipe from Phantom wraps round to the first.
+  CHECK(FACE_COUNT == 6, "six faces (%d)", FACE_COUNT);
+  int seen = 0;
+  for (int i = 0; i < FACE_COUNT; i++) {
+    seen |= 1 << settings.face;
+    swipeLeft();
+    settle();
+  }
+  CHECK(seen == (1 << FACE_COUNT) - 1 && settings.face == FACE_PHANTOM, "swiping visits every face and comes back (seen %x, face %d)",
+        seen, settings.face);
+  ui::begin();  // warm restart: the stored choice comes back from flash
+  settle(2500);
+  CHECK(settings.face == FACE_PHANTOM && currentFaceForTest() == FACE_PHANTOM, "Phantom is kept across a restart (%d)",
+        settings.face);
+  for (int turn : {0, 1, 2, 3}) {
+    settings.screenTurn = turn;
+    runFor(100);
+    CHECK(framesIn(500) >= 12, "draws smoothly with the screen turned %d", turn * 90);
+  }
+  settings.screenTurn = DISPLAY_ROTATION;
+
+  spriteBudget16 = 0;  // no cached dial: stepped once a second
+  ui::begin();
+  settle(2500);
+  runFor(500);
+  f = framesIn(3000);
+  CHECK(currentFaceForTest() == FACE_PHANTOM && f <= 4, "low memory: Phantom steps once a second (%llu frames in 3 s)",
+        (unsigned long long)f);
+  spriteBudget16 = -1;
+  ui::begin();
+  settle(2500);
+}
+
 void serialScenarios() {
   using namespace serialcmd;
   printf("Serial: lines are read without waiting\n");
@@ -2423,6 +2528,7 @@ int main(int argc, char **argv) {
   timeSteps();
   scenarios();
   touchDropoutScenarios();
+  phantomScenarios();
   serialScenarios();
   powerScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit

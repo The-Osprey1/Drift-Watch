@@ -5,7 +5,9 @@
 // a report on stdout.
 #include <TFT_eSPI.h>
 #include <map>
+#include <string.h>
 #include "faces.h"
+#include "gfx.h"
 #include "theme.h"
 
 uint32_t millis() { return 0; }
@@ -104,6 +106,94 @@ int main(int argc, char **argv) {
       writePpm(path, frame);
     }
   }
+  // Phantom's seconds timeline: the pure function at each boundary, then native frames at the
+  // same moments, with the drawing given the exact time (faces never read a clock).
+  auto bad = [&](bool ok, const char *what) {
+    if (!ok) {
+      printf("  PHANTOM %s\n", what);
+      problems++;
+    }
+  };
+  using phantom::needleAt;
+  bad(needleAt(5, true).visible && needleAt(5, true).length == 100 && needleAt(54.999f, true).length == 100,
+      "full length from 5 s to 55 s");
+  bad(needleAt(55, true).length == 100 && needleAt(56.5f, true).length < 100 && needleAt(56.5f, true).length > 22,
+      "drawn in from 55 s");
+  bad(needleAt(57.999f, true).visible && needleAt(57.999f, true).alpha < 0.01f && needleAt(57.999f, true).length < 23,
+      "faded out and at the lip just before 58 s, so hiding it at 58 s shows no jump");
+  bad(!needleAt(58, true).visible && !needleAt(59.999f, true).visible && !needleAt(0, true).visible &&
+          !needleAt(1.999f, true).visible,
+      "hidden from 58 s to 2 s");
+  bad(needleAt(2, true).visible && needleAt(2, true).length == 22 && needleAt(2, true).alpha == 0, "comes back at the lip, unseen, at 2 s");
+  bad(needleAt(4.999f, true).length > 99.9f && needleAt(4.999f, true).alpha == 1, "out to full length by 5 s");
+  bad(phantom::reboundDeg(4.99f) == 0 && phantom::reboundDeg(3.5f) == 0, "no rebound before 5 s, during the re-emergence");
+  float peak = 0;
+  for (float t = 5; t < 5.4f; t += 0.001f) peak = fmaxf(peak, fabsf(phantom::reboundDeg(t)));
+  bad(peak > 0.5f && peak <= 1.8f && phantom::reboundDeg(5.35f) == 0, "a rebound of under 1.8 degrees, over by 5.35 s");
+  bad(needleAt(5.0875f, false).deg == 6 * 5.0875f, "no rebound with reduced motion");
+  // The rebound is the only time the hand moves against the clock, and only by a fraction of a degree.
+  float lead = 0, back = 0, backOutside = 0;
+  for (float t = 2; t < 57.99f; t += 0.001f) {
+    float d = needleAt(t, true).deg;
+    lead = fmaxf(lead, d);
+    back = fmaxf(back, lead - d);
+    if ((t < 5 || t > 5 + phantom::REBOUND_S) && lead - d > 0.001f) backOutside = lead - d;
+  }
+  bad(back < 1.0f && backOutside == 0, "only the rebound runs back, by under a degree");
+  bad(fabsf(phantom::balanceDeg(999) - phantom::balanceDeg(1000)) < 6 && phantom::balanceDeg(0) == 0 &&
+          fabsf(phantom::balanceDeg(62) - phantom::balanceDeg(312)) < 0.01f,
+      "the balance swings four times a second and runs on across the second boundary");
+  bad(phantom::inAperture(328) && phantom::inAperture(0) && phantom::inAperture(32) && !phantom::inAperture(327) &&
+          !phantom::inAperture(33),
+      "the opening spans 328 to 32 degrees");
+  bad(!strcmp(faceName(FACE_PHANTOM), "Phantom") && FACE_PHANTOM == 5, "Phantom is face 5, after the five stored ones");
+
+  // Native frames.
+  const uint16_t SECONDS = rgb(0xE8ECF2);
+  struct Moment {
+    const char *name;
+    int sec, ms;
+    bool animate, valid, h12;
+    int bat;
+    bool needle;  // the seconds hand should be visible
+  } moments[] = {
+      {"00s", 0, 0, true, true, false, 86, false},      {"01s999", 1, 999, true, true, false, 86, false},
+      {"02s000", 2, 0, true, true, false, 86, false},   {"02s001", 2, 1, true, true, false, 86, false},
+      {"03s500", 3, 500, true, true, false, 86, true},  {"04s999", 4, 999, true, true, false, 86, true},
+      {"05s000", 5, 0, true, true, false, 86, true},    {"05s090", 5, 90, true, true, false, 86, true},
+      {"30s000", 30, 0, true, true, false, 86, true},   {"54s999", 54, 999, true, true, false, 86, true},
+      {"55s000", 55, 0, true, true, false, 86, true},   {"56s500", 56, 500, true, true, false, 86, true},
+      {"57s999", 57, 999, true, true, false, 86, false}, {"58s000", 58, 0, true, true, false, 86, false},
+      {"59s999", 59, 999, true, true, false, 86, false}, {"reduced_57s", 57, 0, false, true, false, 86, true},
+      {"reduced_58s", 58, 0, false, true, false, 86, false}, {"12h", 30, 0, true, true, true, 86, true},
+      {"low_battery", 30, 0, false, true, false, 12, true}, {"unknown_battery", 30, 0, true, true, false, -1, true},
+      {"notime", 30, 0, true, false, false, 70, false},
+  };
+  for (const Moment &m : moments) {
+    FaceContext ctx{makeTime(10, 9, m.sec), m.valid, m.h12, m.bat, SyncView::Synced, 0, false, -1};
+    ctx.ms = m.ms;
+    ctx.animMs = 1000 + m.sec * 1000 + m.ms;
+    ctx.animate = m.animate;
+    if (!m.valid) ctx.sync = SyncView::Never;
+    frame.textLog.clear();
+    drawFaceStatic(frame, FACE_PHANTOM, ctx);
+    drawFaceLive(frame, FACE_PHANTOM, ctx);
+    // The hand's core pixels are its colour faded by its alpha, as the timeline gives it.
+    phantom::Needle n = needleAt(m.sec + (m.animate ? m.ms / 1000.0f : 0), m.animate);
+    uint16_t ink = gfx::blend(SECONDS, rgb(0x090A0D), n.alpha);
+    int needlePx = 0;
+    for (uint16_t px : frame.buf) needlePx += n.visible && n.alpha > 0.3f && px == ink;
+    char label[64], path[256];
+    snprintf(label, sizeof label, "phantom_%s", m.name);
+    problems += edgeProblems(frame, label);
+    if ((needlePx > 20) != m.needle) {
+      printf("  PHANTOM %s: %d seconds-hand pixels, expected it %s\n", label, needlePx, m.needle ? "visible" : "hidden");
+      problems++;
+    }
+    snprintf(path, sizeof path, "%s/%s.ppm", outDir, label);
+    writePpm(path, frame);
+  }
+
   printf("%d text edge or state problems\n", problems);
   return problems ? 1 : 0;
 }

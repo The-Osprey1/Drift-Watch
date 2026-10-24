@@ -14,6 +14,10 @@ class WiFiManagerParameter {
   const char *getValue() const { return value_.c_str(); }
   const char *getID() const { return id_.c_str(); }
   void setValue(const char *v) { value_ = std::string(v).substr(0, length_); }
+  void setValue(const char *v, int length) {
+    length_ = length;
+    setValue(v);
+  }
 
  private:
   std::string html_, id_, label_, value_;

@@ -39,7 +39,8 @@ constexpr const char *DEFAULT_POSIX_TZ = "PST8PDT,M3.2.0,M11.1.0";  // US Pacifi
 char posixTz[64] = "UTC0";
 
 WiFiManager *wm = nullptr;
-WiFiManagerParameter *tzParam = nullptr;
+WiFiManagerParameter *tzParam = nullptr;   // kept for the life of the program too: the library
+                                           // class has no virtual destructor, so it is never deleted
 WiFiManagerParameter *bandNote = nullptr;  // text only; kept for the life of the program
 bool portalSaved = false;
 
@@ -224,9 +225,7 @@ void closePortal(net::Portal endState) {
   if (wm) {
     wm->stopConfigPortal();
     delete wm;
-    delete tzParam;
     wm = nullptr;
-    tzParam = nullptr;
   }
   portal = endState;
   wifiOff();
@@ -404,7 +403,8 @@ void startPortal() {
         "<p><b>This watch only works with 2.4 GHz Wi-Fi.</b> Only networks it can use are listed. "
         "If yours is missing, turn on 2.4 GHz on your router (some mesh routers call it a "
         "compatibility or IoT network).</p>");
-  tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", settings.tz.c_str(), 63);
+  if (!tzParam) tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", "", 63);
+  tzParam->setValue(settings.tz.c_str(), 63);  // the setup page opens with the zone in use now
   wm->setTitle("Drift-Watch");
   wm->addParameter(bandNote);
   wm->addParameter(tzParam);

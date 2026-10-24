@@ -16,4 +16,11 @@ bool coldBoot();                     // true after power-on or reset, false afte
 uint32_t freeHeap();
 uint32_t freePsram();
 void log(const char *fmt, ...);
+void setTime(time_t t);              // sets the wall clock, for the manual time setting
+
+// What ended a wait while the screen is off.
+enum class WakeCause : uint8_t { Timer, Touch, Button };
+// Waits up to `ms` while the screen is off. With `lowPower` the chip goes into light sleep
+// and wakes early on a touch or the BOOT button; without it this is a plain wait.
+WakeCause doze(uint32_t ms, bool lowPower);
 }

@@ -3,10 +3,15 @@
 # Needs arduino-cli with the esp32 core 2.0.17, TFT_eSPI 2.5.43 and WiFiManager 2.0.17.
 # Usage: ./build.sh [extra arduino-cli args, e.g. --config-file my.yaml]
 # Set DRIFT_DIAG=1 to build a version that logs frame and memory timings.
+# Serial runs on the USB-C port at 115200 baud.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-FQBN="esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=enabled,CDCOnBoot=cdc,USBMode=hwcdc"
+# CDCOnBoot=default keeps Serial on UART0 (GPIO 43/44). The board's USB-C port goes through a
+# CH343P USB-to-serial chip wired to those pins, not to the ESP32-S3's own USB pins, so a build
+# with CDCOnBoot=cdc sends Serial to a USB port that is not connected. v0.8.0 was built that way
+# and stalled at start on the real watch with nothing on serial.
+FQBN="esp32:esp32:esp32s3:FlashSize=16M,PartitionScheme=app3M_fat9M_16MB,PSRAM=enabled,CDCOnBoot=default,USBMode=hwcdc"
 
 # TFT_eSPI screen setup for the round GC9A01 panel, passed in so no library files need editing.
 TFT_FLAGS="-DUSER_SETUP_LOADED=1 -DGC9A01_DRIVER=1 -DTFT_WIDTH=240 -DTFT_HEIGHT=240 \

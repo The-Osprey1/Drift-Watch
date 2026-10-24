@@ -1,7 +1,10 @@
 #include "hal.h"
 #include <Arduino.h>
 #include <Wire.h>
+#include <driver/gpio.h>
+#include <esp_sleep.h>
 #include <esp_system.h>
+#include <sys/time.h>
 #include <stdarg.h>
 #include "board.h"
 
@@ -50,6 +53,34 @@ void log(const char *fmt, ...) {
   vsnprintf(buf, sizeof buf, fmt, ap);
   va_end(ap);
   Serial.println(buf);
+}
+
+void setTime(time_t t) {
+  timeval tv{t, 0};
+  settimeofday(&tv, nullptr);
+}
+
+WakeCause doze(uint32_t t, bool lowPower) {
+  if (!lowPower) {
+    delay(t);
+    return WakeCause::Timer;
+  }
+  // A line that is already low (finger still down, BOOT held, or a stuck touch line) would
+  // wake the chip at once and keep it busy, so only lines that are idle (high) can wake it.
+  // The caller polls touch and BOOT after every wake anyway.
+  bool touchArmed = digitalRead(PIN_TP_INT) == HIGH, bootArmed = digitalRead(PIN_BOOT_BTN) == HIGH;
+  if (touchArmed) gpio_wakeup_enable((gpio_num_t)PIN_TP_INT, GPIO_INTR_LOW_LEVEL);
+  if (bootArmed) gpio_wakeup_enable((gpio_num_t)PIN_BOOT_BTN, GPIO_INTR_LOW_LEVEL);
+  if (touchArmed || bootArmed) esp_sleep_enable_gpio_wakeup();
+  esp_sleep_enable_timer_wakeup((uint64_t)t * 1000);
+  Serial.flush();  // the serial port stops during light sleep and would cut a line short
+  esp_light_sleep_start();
+  esp_sleep_wakeup_cause_t cause = esp_sleep_get_wakeup_cause();
+  if (touchArmed) gpio_wakeup_disable((gpio_num_t)PIN_TP_INT);
+  if (bootArmed) gpio_wakeup_disable((gpio_num_t)PIN_BOOT_BTN);
+  esp_sleep_disable_wakeup_source(ESP_SLEEP_WAKEUP_ALL);
+  if (cause != ESP_SLEEP_WAKEUP_GPIO) return WakeCause::Timer;
+  return digitalRead(PIN_BOOT_BTN) == LOW ? WakeCause::Button : WakeCause::Touch;
 }
 
 }  // namespace hal

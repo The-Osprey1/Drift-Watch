@@ -8,11 +8,13 @@
 //     swipe up, or hold      open settings (a ring grows while you hold)
 //     BOOT, short press      next face (on release)
 //     BOOT, hold 0.6 s       open settings
-//   on settings, details or setup
+//   on settings, details, setup or set time
 //     swipe left / right     next / previous page; never changes the face
-//     swipe down, or BOOT    back one level (setup or details -> settings -> face)
+//     swipe down, or BOOT    back one level (setup, details or set time -> settings -> face)
 //     tap                    a control acts on release, unless the finger moved
+//     hold - or +            on set time, repeats, faster after a while
 //   any touch or BOOT        wakes the screen; that touch or press does nothing else
+//   raising the wrist        wakes the screen (raise to wake)
 #pragma once
 #include <TFT_eSPI.h>
 #include "screens.h"
@@ -21,7 +23,7 @@ namespace ui {
 void begin();
 void loop();
 TFT_eSPI &display();     // for the computer simulation, which reads the pixels
-// "boot", "face", "panel", "details", "setup" or "asleep", plus "+slide" mid-transition
+// "boot", "face", "panel", "details", "setup", "settime" or "asleep", plus "+slide" mid-transition
 const char *screenName();
 // For the simulation: the controls on screen now, and the page of the paged screen.
 int controls(screens::Control *out, int max);

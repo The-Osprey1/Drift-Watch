@@ -101,6 +101,7 @@ void pressBoot(uint32_t holdMs = 40) {
 }
 
 void settle(uint32_t ms = 400) { runFor(ms); }
+void settle(uint32_t ms);
 
 // Finds a control on the current screen and taps the centre of its hit region.
 bool find(screens::Button b, screens::Control &out) {
@@ -118,6 +119,23 @@ bool tapButton(screens::Button b) {
   if (!find(b, c)) return false;
   tap(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
   return true;
+}
+
+void settle(uint32_t ms);
+// Swipes to the page of the current screen that holds `b`: back to the first page, then forward.
+bool goTo(screens::Button b) {
+  screens::Control c;
+  for (int i = 0; i < 12 && ui::page() > 0; i++) {
+    swipeRight();
+    settle(400);
+  }
+  for (int i = 0; i < 12 && !find(b, c); i++) {
+    int before = ui::page();
+    swipeLeft();
+    settle(400);
+    if (ui::page() == before) break;
+  }
+  return find(b, c);
 }
 
 // ---- Screen layout checks ----------------------------------------------------------
@@ -186,6 +204,9 @@ int layoutProblems(const TFT_eSprite &s, const char *label, const screens::Contr
       problem("%s touch region does not cover what is drawn", screens::buttonName(c.id));
     bool labelled = false;
     for (const auto &t : s.textLog) labelled |= t.iw && inside(t, c.visible, 0);
+    // Minus and plus on the set time screen are drawn as symbols: ink at the centre counts.
+    if (c.id == screens::Button::Minus || c.id == screens::Button::Plus)
+      labelled = s.readPixel(c.visible.x + c.visible.w / 2, c.visible.y + c.visible.h / 2) != col::BG;
     if (!labelled) problem("%s has no text (its words did not fit)", screens::buttonName(c.id));
     for (int j = i + 1; j < n; j++) {
       if (overlaps(c.hit, ctl[j].hit)) problem("%s and %s touch regions overlap", screens::buttonName(c.id), screens::buttonName(ctl[j].id));
@@ -229,7 +250,32 @@ screens::View baseView() {
   v.ssid = "HomeNet-5G";
   v.version = "v" FW_VERSION;
   v.ms = 300;
+  v.nowText = "20:48";
+  v.imuPresent = true;
+  v.raiseToWake = true;
+  v.edit.tm_year = 2026 - 1900;
+  v.edit.tm_mon = 9;
+  v.edit.tm_mday = 24;
+  v.edit.tm_hour = 20;
+  v.edit.tm_min = 48;
+  screens::stepTime(v.edit, screens::TimeField::Hour, 0);
   return v;
+}
+
+// All the words a view shows across its pages, joined with spaces, so phrases that wrap still match.
+std::string wordsOf(TFT_eSprite &s, screens::View v) {
+  std::string all;
+  for (int p = 0; p < screens::pageCount(s, v); p++) {
+    v.page = p;
+    s.textLog.clear();
+    screens::draw(s, v);
+    for (const auto &t : s.textLog) all += " " + t.text;
+  }
+  return all + " ";
+}
+bool says(const std::string &words, const char *phrase) {
+  // Lines are drawn one at a time, so a phrase may be split by line breaks (now spaces).
+  return words.find(phrase) != std::string::npos;
 }
 
 struct HitRow {
@@ -341,6 +387,49 @@ void screenVariants() {
       w.syncStep = p.step;
       bad += renderAll(s, w, std::string("setup_") + p.name);
     }
+    // v0.9.0: set time pages, in both clock formats.
+    for (bool h12 : {false, true}) {
+      screens::View w = v;
+      w.screen = screens::Screen::SetTime;
+      w.use12h = h12;
+      bad += renderAll(s, w, h12 ? "settime_12h" : "settime");
+    }
+    // Settings states added in v0.9.0.
+    {
+      screens::View w = v;
+      w.imuPresent = false;
+      w.page = screens::pageOf(s, w, screens::Button::RaiseWake);
+      s.textLog.clear();
+      screens::draw(s, w);
+      screens::Control ctl[2];
+      int n = screens::controls(s, w, ctl, 2);
+      bad += layoutProblems(s, large ? "settings_nosensor_large" : "settings_nosensor", ctl, n, screens::pageCount(s, w));
+      w = v;
+      w.timeValid = false;
+      w.ssid = "";
+      w.lastSyncText = "";
+      w.result = net::Result::Failed;
+      w.fail = net::Fail::NoNetworkSaved;
+      bad += renderAll(s, w, "settings_notime_nowifi");
+      w.timeValid = true;
+      w.clockByHand = true;
+      bad += renderAll(s, w, "settings_byhand");
+    }
+    // Every join failure reason, on the setup result and in details.
+    for (net::JoinWhy why : {net::JoinWhy::NotFound, net::JoinWhy::Password, net::JoinWhy::Refused, net::JoinWhy::NoAnswer}) {
+      static const char *names[] = {"noanswer", "notfound", "password", "refused"};
+      screens::View w = v;
+      w.screen = screens::Screen::Setup;
+      w.portal = net::Portal::Saved;
+      w.result = net::Result::Failed;
+      w.fail = net::Fail::JoinFailed;
+      w.joinWhy = why;
+      w.joinCode = why == net::JoinWhy::NotFound ? 201 : 15;
+      bad += renderAll(s, w, std::string("setup_join_") + names[(int)why]);
+      w.screen = screens::Screen::Details;
+      bad += renderAll(s, w, std::string("details_join_") + names[(int)why]);
+    }
+
     // Pressed states.
     screens::View pv = v;
     pv.pressed = screens::Button::Brightness;
@@ -357,6 +446,44 @@ void screenVariants() {
     writePpm(label, s);
   }
   CHECK(bad == 0, "%d layout problems on settings, details and setup screens", bad);
+
+  printf("Wi-Fi setup wording (v0.9.0)\n");
+  {
+    screens::View w = baseView();
+    w.screen = screens::Screen::Setup;
+    w.portal = net::Portal::Waiting;
+    std::string step1 = wordsOf(s, w);
+    w.page = 0;
+    s.textLog.clear();
+    screens::draw(s, w);
+    bool firstPageJoins = false;
+    for (const auto &t : s.textLog) firstPageJoins |= t.text == "Drift-Setup";
+    CHECK(firstPageJoins && !says(step1, "open 192.168.4.1") && says(step1, "only opens once your phone is on Drift-Setup"),
+          "step 1 says to join Drift-Setup first, and that the address only works after that");
+    w.portal = net::Portal::PhoneJoined;
+    std::string step2 = wordsOf(s, w);
+    CHECK(says(step2, "Stay on Drift-Setup") && says(step2, "192.168.4.1") && says(step2, "2.4 GHz") && says(step2, "5 GHz"),
+          "step 2 says to stay on Drift-Setup, open the address and pick a 2.4 GHz network");
+    w.portal = net::Portal::Saved;
+    w.result = net::Result::Failed;
+    w.fail = net::Fail::JoinFailed;
+    struct W { net::JoinWhy why; const char *words, *hint; };
+    W cases[] = {{net::JoinWhy::NotFound, "Network not found.", "2.4 GHz"},
+                 {net::JoinWhy::Password, "Password not accepted.", "Check the password"},
+                 {net::JoinWhy::Refused, "turned the watch away", "2.4 GHz"},
+                 {net::JoinWhy::NoAnswer, "No answer from the network.", "2.4 GHz"}};
+    for (const W &c : cases) {
+      w.joinWhy = c.why;
+      w.screen = screens::Screen::Setup;
+      std::string res = wordsOf(s, w);
+      w.screen = screens::Screen::Details;
+      std::string det = wordsOf(s, w);
+      CHECK(says(res, c.words) && says(res, c.hint) && says(det, c.words), "join failure %d is explained: \"%s\"", (int)c.why, c.words);
+    }
+    w.joinCode = 201;
+    w.joinWhy = net::JoinWhy::NotFound;
+    CHECK(says(wordsOf(s, w), "Wi-Fi reason 201"), "details show the radio's reason number");
+  }
 
   // Reduced motion: the progress symbol is still, so nothing needs redrawing.
   screens::View r = baseView();
@@ -432,6 +559,138 @@ int lastBacklight() { return sim::backlightLog.empty() ? -1 : sim::backlightLog.
 void openSettings() {
   swipeUp();
   settle();
+}
+
+// Moves the simulated wrist through a list of (duration, acceleration) steps.
+void wrist(std::initializer_list<std::pair<uint32_t, Accel>> steps) {
+  for (const auto &st : steps) {
+    sim::accel = st.second;
+    runFor(st.first);
+  }
+}
+const Accel HANGING = {0, -1, 0};           // arm down at the side: screen vertical
+const Accel LOOKING = {0, -0.45f, 0.89f};   // turned up towards the eyes, about 27 degrees from level
+const Accel FLAT = {0, 0, 1};               // on a table, screen up
+
+void raiseScenarios() {
+  printf("Raise to wake\n");
+  sim::accel = FLAT;
+  settings.raiseToWake = true;
+  runFor(16000);
+  CHECK(screen() == "asleep", "asleep, got %s", screen().c_str());
+  int lowPower = sim::lowPowerDozes;
+  runFor(5000);
+  CHECK(screen() == "asleep", "lying flat and still does not wake it");
+  CHECK(sim::lowPowerDozes > lowPower, "the screen-off wait uses light sleep");
+  wrist({{1000, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "face", "raising the wrist wakes it, got %s", screen().c_str());
+  runFor(16000);
+  CHECK(screen() == "asleep", "it sleeps again while the wrist stays up, got %s", screen().c_str());
+  runFor(3000);
+  CHECK(screen() == "asleep", "a wrist that stays up does not wake it again");
+  wrist({{800, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "face", "lowering and raising again wakes it");
+  runFor(16000);
+
+  printf("Raise to wake: what does not wake it\n");
+  wrist({{800, HANGING}, {2500, {0, -0.2f, 0.4f}}, {400, LOOKING}});
+  CHECK(screen() == "asleep", "a slow turn (over 1.5 s) does not wake it");
+  wrist({{800, HANGING}, {100, LOOKING}, {300, HANGING}});
+  CHECK(screen() == "asleep", "a brief swing through does not wake it");
+  wrist({{800, HANGING}, {400, {0, -0.9f, 1.8f}}});
+  CHECK(screen() == "asleep", "shaking (2 g) does not wake it");
+  wrist({{800, HANGING}, {400, {0, 0.45f, -0.89f}}});
+  CHECK(screen() == "asleep", "turning the screen face down does not wake it");
+  settings.raiseToWake = false;
+  wrist({{800, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "asleep", "with Raise to wake off, raising does nothing");
+  settings.raiseToWake = true;
+
+  printf("Raise to wake: the watch learns which way the screen faces\n");
+  sim::accel = {0, 0, -1};  // a board where the sensor's z points into the screen
+  for (int i = 0; i < 6; i++) {
+    touchDown(120, 120);
+    touchUp();
+    runFor(300);
+  }
+  CHECK(settings.screenFacing == -1, "touches while looking teach it the screen faces -z (got %d)", settings.screenFacing);
+  runFor(16000);
+  wrist({{800, HANGING}, {400, {0, -0.45f, -0.89f}}});
+  CHECK(screen() == "face", "raising now wakes it on that board, got %s", screen().c_str());
+  sim::accel = FLAT;
+  for (int i = 0; i < 6; i++) {
+    touchDown(120, 120);
+    touchUp();
+    runFor(300);
+  }
+  CHECK(settings.screenFacing == 1, "and it learns back (got %d)", settings.screenFacing);
+
+  printf("Raise to wake setting\n");
+  openSettings();
+  CHECK(goTo(screens::Button::RaiseWake) && tapButton(screens::Button::RaiseWake) && !settings.raiseToWake, "the setting turns it off");
+  tapButton(screens::Button::RaiseWake);
+  CHECK(settings.raiseToWake, "and on");
+  pressBoot();
+  settle();
+
+  printf("Light sleep stays off while Wi-Fi runs\n");
+  runFor(16000);
+  CHECK(screen() == "asleep", "asleep");
+  net::startSync();
+  int lp = sim::lowPowerDozes, dz = sim::dozes;
+  runFor(1000);
+  CHECK(net::syncRunning() && sim::lowPowerDozes == lp && sim::dozes == dz, "no light sleep while a sync runs");
+  settle(2000);
+  lp = sim::lowPowerDozes;
+  runFor(1000);
+  CHECK(sim::lowPowerDozes > lp, "light sleep again once the sync ends");
+
+  printf("No motion sensor\n");
+  sim::imuPresent = false;
+  ui::begin();
+  settle(2500);
+  runFor(16000);
+  wrist({{800, HANGING}, {400, LOOKING}});
+  CHECK(screen() == "asleep", "without the sensor nothing happens and nothing breaks");
+  touchDown(120, 120); touchUp(); settle();
+  openSettings();
+  goTo(screens::Button::RaiseWake);
+  snap("settings_no_sensor");
+  pressBoot();
+  sim::imuPresent = true;
+  sim::accel = FLAT;
+  ui::begin();
+  settle(2500);
+}
+
+void timeSteps() {
+  printf("Set time arithmetic\n");
+  tm t{};
+  t.tm_year = 2026 - 1900;
+  t.tm_mon = 9;
+  t.tm_mday = 24;
+  screens::stepTime(t, screens::TimeField::Hour, 0);
+  CHECK(t.tm_wday == 6, "24 Oct 2026 is a Saturday (got %d)", t.tm_wday);
+  t.tm_mon = 0;
+  t.tm_mday = 31;
+  screens::stepTime(t, screens::TimeField::Month, +1);
+  CHECK(t.tm_mon == 1 && t.tm_mday == 28, "31 Jan 2026 moved to February becomes 28 Feb (%d %d)", t.tm_mday, t.tm_mon + 1);
+  t.tm_year = 2028 - 1900;
+  t.tm_mon = 0;
+  t.tm_mday = 31;
+  screens::stepTime(t, screens::TimeField::Month, +1);
+  CHECK(t.tm_mday == 29, "and 29 Feb in a leap year (%d)", t.tm_mday);
+  screens::stepTime(t, screens::TimeField::Day, +1);
+  CHECK(t.tm_mday == 1 && t.tm_mon == 1, "days wrap inside the month without changing it");
+  t.tm_hour = 23;
+  t.tm_min = 59;
+  screens::stepTime(t, screens::TimeField::Minute, +1);
+  CHECK(t.tm_min == 0 && t.tm_hour == 23, "minutes wrap without changing the hour");
+  screens::stepTime(t, screens::TimeField::Hour, +1);
+  CHECK(t.tm_hour == 0 && t.tm_mday == 1, "hours wrap without changing the day");
+  t.tm_year = screens::YEAR_MAX - 1900;
+  screens::stepTime(t, screens::TimeField::Year, +1);
+  CHECK(t.tm_year + 1900 == screens::YEAR_MIN, "years wrap within %d-%d", screens::YEAR_MIN, screens::YEAR_MAX);
 }
 
 void scenarios() {
@@ -553,13 +812,15 @@ void scenarios() {
   CHECK(ui::page() == 2, "and page 3 (page %d)", ui::page() + 1);
   swipeLeft();
   settle();
-  CHECK(ui::page() == 2 && screen() == "panel", "no page after the last; it does not wrap or leave settings");
+  CHECK(ui::page() == 3, "and page 4 (page %d)", ui::page() + 1);
+  swipeLeft();
+  settle();
+  CHECK(ui::page() == 3 && screen() == "panel", "no page after the last; it does not wrap or leave settings");
   swipeRight();
   settle();
-  CHECK(ui::page() == 1, "swipe right goes back a page");
+  CHECK(ui::page() == 2, "swipe right goes back a page");
   CHECK(settings.face == faceP, "no settings swipe changed the face (face %d, was %d)", settings.face, faceP);
-  swipeRight();
-  settle();
+  goTo(screens::Button::Brightness);
 
   printf("Settings controls\n");
   int light = settings.brightnessLevel;
@@ -588,8 +849,8 @@ void scenarios() {
   CHECK(settings.brightnessLevel == before && settings.use12h == fmt, "a tap in the gap between controls does nothing");
 
   printf("Drags never act\n");
-  swipeLeft();
-  settle();
+  goTo(screens::Button::Motion);
+  int motionPage = ui::page();
   find(screens::Button::Motion, c);
   touchDown(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
   moveTo(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2 + 24, 100);  // slides off: a drag is never a tap
@@ -599,7 +860,7 @@ void scenarios() {
   moveTo(c.hit.x - 40, c.hit.y + c.hit.h / 2, 90);  // a page swipe that starts on a control
   touchUp();
   settle();
-  CHECK(!settings.reducedMotion && ui::page() == 2, "a swipe that starts on a control changes page only (page %d)", ui::page() + 1);
+  CHECK(!settings.reducedMotion && ui::page() == motionPage + 1, "a swipe that starts on a control changes page only (page %d)", ui::page() + 1);
   swipeRight();
   settle();
   CHECK(tapButton(screens::Button::Motion) && settings.reducedMotion, "Motion switches to Reduced");
@@ -608,6 +869,7 @@ void scenarios() {
 
   printf("Sync now: one sync at a time, and other settings keep working\n");
   int syncs = sim::syncsStarted;
+  goTo(screens::Button::SyncNow);
   tapButton(screens::Button::SyncNow);
   CHECK(sim::syncsStarted == syncs + 1 && net::syncRunning(), "Sync now starts a sync");
   runFor(300);
@@ -618,10 +880,12 @@ void scenarios() {
   uint64_t px0 = ui::display().pixelsPushed;
   runFor(400);
   CHECK(ui::display().pixelsPushed > px0, "the spinner animates while syncing");
-  bool motionBefore = settings.reducedMotion;
-  tapButton(screens::Button::Motion);
-  CHECK(settings.reducedMotion != motionBefore && net::syncRunning(), "Motion still works during a sync");
-  tapButton(screens::Button::Motion);
+  bool fmtBefore = settings.use12h;
+  goTo(screens::Button::TimeFormat);
+  tapButton(screens::Button::TimeFormat);
+  CHECK(settings.use12h != fmtBefore && net::syncRunning(), "Time format still works during a sync");
+  tapButton(screens::Button::TimeFormat);
+  goTo(screens::Button::SyncNow);
   settle(1500);
   CHECK(net::lastResult() == net::Result::Ok && !net::syncRunning(), "sync done");
   snap("settings_synced");
@@ -633,8 +897,7 @@ void scenarios() {
         (unsigned long long)(ui::display().pixelsPushed - px0));
 
   printf("Details keeps the settings page, and holds the text size control\n");
-  swipeLeft();
-  settle();
+  goTo(screens::Button::Details);
   CHECK(tapButton(screens::Button::Details) && screen() == "details", "Details opens, got %s", screen().c_str());
   snap("details_p1");
   int pagesSeen = 1;
@@ -663,15 +926,14 @@ void scenarios() {
   snap("setup_hotspot_large");
   pressBoot();
   CHECK(screen() == "panel" && net::portalState() == net::Portal::Closed, "BOOT cancels the waiting hotspot");
-  swipeLeft();
-  settle();
+  goTo(screens::Button::Details);
   tapButton(screens::Button::Details);
   while (!find(screens::Button::TextSize, c)) { swipeLeft(); settle(); }
   tapButton(screens::Button::TextSize);
   CHECK(!settings.largeText, "Text size back to Normal");
   swipeDown();
   settle();
-  CHECK(screen() == "panel" && ui::page() == 2, "swipe down from details returns to settings page 3 (page %d)", ui::page() + 1);
+  CHECK(screen() == "panel" && find(screens::Button::Details, c), "swipe down from details returns to the settings page with Details (page %d)", ui::page() + 1);
 
   printf("Swipe down closes settings\n");
   swipeDown();
@@ -682,11 +944,12 @@ void scenarios() {
 
   printf("Wi-Fi setup: failure, edit, retry, success\n");
   openSettings();
-  swipeLeft(); settle(); swipeLeft(); settle();
+  goTo(screens::Button::WifiSetup);
   CHECK(tapButton(screens::Button::WifiSetup) && screen() == "setup", "Wi-Fi setup opens setup, got %s", screen().c_str());
   runFor(200);
   snap("setup_hotspot");
-  CHECK(find(screens::Button::Cancel, c), "the hotspot screen offers Cancel");
+  CHECK(ui::page() == 0 && goTo(screens::Button::Cancel), "the hotspot screen offers Cancel after its instructions");
+  goTo(screens::Button::None);  // back to the first page
   sim::setPortal(net::Portal::PhoneJoined);
   runFor(100);
   snap("setup_phone");
@@ -700,9 +963,9 @@ void scenarios() {
   CHECK(net::lastResult() == net::Result::Failed && net::failReason() == net::Fail::JoinFailed, "join failure reported");
   runFor(20000);
   CHECK(screen() == "setup", "the failure is still on screen after 20 s, got %s", screen().c_str());
-  CHECK(tapButton(screens::Button::Retry) && net::syncRunning(), "Retry tries the saved network again");
+  CHECK(goTo(screens::Button::Retry) && tapButton(screens::Button::Retry) && net::syncRunning(), "Retry tries the saved network again");
   settle(1500);
-  CHECK(tapButton(screens::Button::EditWifi) && net::portalState() == net::Portal::Waiting, "Edit Wi-Fi reopens the hotspot");
+  CHECK(goTo(screens::Button::EditWifi) && tapButton(screens::Button::EditWifi) && net::portalState() == net::Portal::Waiting, "Edit Wi-Fi reopens the hotspot");
   sim::syncOutcome = net::Fail::None;
   sim::setPortal(net::Portal::Saved);
   settle(2500);
@@ -711,11 +974,11 @@ void scenarios() {
 
   printf("Wi-Fi setup: Back lets it finish, Cancel stops it\n");
   openSettings();
-  swipeLeft(); settle(); swipeLeft(); settle();
+  goTo(screens::Button::WifiSetup);
   tapButton(screens::Button::WifiSetup);
   sim::setPortal(net::Portal::Saved);
   runFor(200);
-  CHECK(tapButton(screens::Button::Back) && screen() == "panel" && ui::page() == 2, "Back returns to settings page 3");
+  CHECK(tapButton(screens::Button::Back) && screen() == "panel" && find(screens::Button::WifiSetup, c), "Back returns to the settings page with Wi-Fi setup");
   CHECK(net::syncRunning(), "and the sync carries on");
   settle(2000);
   CHECK(net::lastResult() == net::Result::Ok, "and finishes");
@@ -729,7 +992,7 @@ void scenarios() {
 
   printf("Wi-Fi setup: cancel, timeout, try again\n");
   tapButton(screens::Button::WifiSetup);
-  CHECK(tapButton(screens::Button::Cancel) && screen() == "panel" && net::portalState() == net::Portal::Closed,
+  CHECK(goTo(screens::Button::Cancel) && tapButton(screens::Button::Cancel) && screen() == "panel" && net::portalState() == net::Portal::Closed,
         "Cancel closes the waiting hotspot, back to settings");
   tapButton(screens::Button::WifiSetup);
   runFor(301000);
@@ -863,6 +1126,7 @@ void scenarios() {
   CHECK(screen() == "panel", "settings open at once, got %s", screen().c_str());
   swipeLeft();
   CHECK(screen() == "panel" && ui::page() == 1, "pages change with a cut");
+  goTo(screens::Button::Motion);
   bool lessMotion = settings.reducedMotion;  // as loaded from the simulated flash by begin()
   CHECK(tapButton(screens::Button::Motion) && settings.reducedMotion != lessMotion, "controls work");
   tapButton(screens::Button::Motion);
@@ -881,14 +1145,78 @@ void scenarios() {
   CHECK(screen() == "setup", "opens Wi-Fi setup after the startup sequence, got %s", screen().c_str());
   pressBoot();
   CHECK(screen() == "panel", "BOOT cancels the hotspot and shows settings, got %s", screen().c_str());
-  CHECK(find(screens::Button::WifiSetup, c), "settings open on the Wi-Fi page when the clock is not set and no Wi-Fi is saved");
+  CHECK(find(screens::Button::SetTime, c), "with no clock and no Wi-Fi, leaving setup lands on Set time");
   pressBoot();
   settle();
   runFor(1000);
   snap("face_notime");
   swipeUp();
   settle();
-  CHECK(find(screens::Button::WifiSetup, c), "with no time and no Wi-Fi, swipe up lands on Wi-Fi setup");
+  CHECK(find(screens::Button::SetTime, c), "with no time and no Wi-Fi, swipe up lands on Set time");
+
+  printf("Set time by hand, with no Wi-Fi\n");
+  CHECK(tapButton(screens::Button::SetTime) && screen() == "settime" && ui::page() == 0, "Set time opens on the hour page, got %s", screen().c_str());
+  snap("settime_hour");
+  for (int i = 0; i < 3; i++) tapButton(screens::Button::Plus);
+  tapButton(screens::Button::Minus);
+  find(screens::Button::Plus, c);
+  touchDown(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
+  runFor(450 + 120 * 3 + 30);  // the first repeat at 450 ms, then every 120 ms
+  touchUp();
+  runFor(50);
+  // Started at 12 from the build date: +3, -1, then four repeats while held and none on release.
+  swipeLeft();
+  settle();
+  CHECK(ui::page() == 1, "swipe left goes to minutes");
+  tapButton(screens::Button::Minus);  // 00 wraps to 59 without touching the hour
+  tapButton(screens::Button::Plus);
+  tapButton(screens::Button::Plus);   // 01
+  swipeLeft(); settle();               // day
+  swipeLeft(); settle();               // month
+  swipeLeft(); settle();               // year
+  swipeLeft(); settle();               // save
+  CHECK(find(screens::Button::SaveTime, c), "the last page saves");
+  snap("settime_save");
+  int faceT = settings.face;
+  CHECK(tapButton(screens::Button::SaveTime) && screen() == "face", "Save returns to the face, got %s", screen().c_str());
+  CHECK(net::timeIsValid() && net::clockSetByHand(), "the clock is now set, and marked as set by hand");
+  {
+    time_t now = hal::now();
+    tm lt;
+    localtime_r(&now, &lt);
+    CHECK(lt.tm_hour == 18 && lt.tm_min == 1, "the clock reads the time that was set (%02d:%02d, expected 18:01)", lt.tm_hour, lt.tm_min);
+  }
+  CHECK(settings.face == faceT, "no face change");
+  runFor(1100);
+  snap("face_time_by_hand");
+  {
+    TFT_eSPI parent;
+    TFT_eSprite f(&parent);
+    f.createSprite(240, 240);
+    FaceContext fc{};
+    time_t now = hal::now();
+    localtime_r(&now, &fc.now);
+    fc.timeValid = net::timeIsValid();
+    fc.sync = SyncView::Never;
+    fc.noWifi = true;
+    drawFaceStatic(f, currentFaceForTest(), fc);
+    bool warned = false;
+    for (const auto &t : f.textLog) warned |= t.text == "NO TIME";
+    CHECK(!warned, "the face shows the time set by hand");
+  }
+  int syncsNoWifi = sim::syncsStarted;
+  runFor(40UL * 60 * 1000);
+  CHECK(sim::syncsStarted == syncsNoWifi, "with no Wi-Fi saved, no resyncs are tried in the background");
+
+  printf("Set time: Back leaves without saving\n");
+  touchDown(120, 120); touchUp(); settle();  // wake
+  openSettings();
+  CHECK(goTo(screens::Button::SetTime) && tapButton(screens::Button::SetTime), "Set time opens again");
+  tapButton(screens::Button::Plus);
+  time_t before0 = hal::now();
+  pressBoot();
+  CHECK(screen() == "panel" && find(screens::Button::SetTime, c), "BOOT goes back to the settings page with Set time");
+  CHECK(llabs((long long)(hal::now() - before0)) <= 1, "and the clock was not changed");
   pressBoot();
   settle();
 
@@ -916,6 +1244,8 @@ void scenarios() {
   tapButton(screens::Button::TimeFormat);
   pressBoot();
   settle(2600);
+
+  raiseScenarios();
 }
 
 void migration() {
@@ -937,6 +1267,7 @@ void migration() {
             settings.brightnessLevel == 1 && settings.reducedMotion,
         "all v0.7.0 choices are kept");
   CHECK(!settings.largeText, "large text starts off");
+  CHECK(settings.raiseToWake && settings.screenFacing == 0, "raise to wake starts on, screen direction not yet known");
   saveSettings();
   p.begin("watch", true);
   CHECK(p.getUChar("ver", 0) == SETTINGS_VERSION && p.isKey("bigtext"), "the next save records version %d", SETTINGS_VERSION);
@@ -966,6 +1297,7 @@ int main(int argc, char **argv) {
   migration();
   settings = Settings{};
   sim::flash.clear();
+  timeSteps();
   scenarios();
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

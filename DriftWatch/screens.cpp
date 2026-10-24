@@ -359,11 +359,30 @@ const char *failText(net::Fail f) {
   }
 }
 
-// The watch only learns that joining timed out, not why, so the hint names both likely causes.
+// Why joining failed, from the radio's reason, in words a person can act on.
+const char *joinWords(net::JoinWhy w) {
+  switch (w) {
+    case net::JoinWhy::NotFound: return "Network not found.";
+    case net::JoinWhy::Password: return "Password not accepted.";
+    case net::JoinWhy::Refused: return "The router turned the watch away.";
+    default: return "No answer from the network.";
+  }
+}
+
+// What to do about it. The watch has a 2.4 GHz radio only, which is behind most failures
+// with dual-band and mesh routers, so the hints say so wherever it could be the cause.
+const char *joinHint(net::JoinWhy w) {
+  switch (w) {
+    case net::JoinWhy::NotFound: return "The watch only works with 2.4 GHz Wi-Fi. Check 2.4 GHz is on and the watch is near the router.";
+    case net::JoinWhy::Password: return "Check the password with Edit Wi-Fi. Capital letters count.";
+    case net::JoinWhy::Refused: return "Turn on 2.4 GHz and WPA2 on the router. Mesh routers may need a separate 2.4 GHz network.";
+    default: return "The watch only works with 2.4 GHz Wi-Fi. Move closer to the router, then Retry.";
+  }
+}
+
 const char *failHint(net::Fail f) {
   switch (f) {
-    case net::Fail::NoNetworkSaved: return "Run Wi-Fi setup first.";
-    case net::Fail::JoinFailed: return "Check it is in range and the password is right.";
+    case net::Fail::NoNetworkSaved: return "Run Wi-Fi setup, or set the time by hand.";
     default: return "Wi-Fi joined, but no time came back. The internet may be down.";
   }
 }
@@ -387,6 +406,21 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       it.label = "Motion";
       it.value = v.reducedMotion ? "Reduced" : "Full";
       break;
+    case Button::SetTime:
+      // Like Sync now: the label is the state, the value is what a tap does.
+      if (v.timeValid) {
+        it.label = v.clockByHand ? d.fmt("%s by hand", v.nowText) : d.fmt("Clock %s", v.nowText);
+      } else {
+        it.label = "Time not set";
+        it.labelIcon = Icon::Alert;
+        it.labelColor = col::WARN;
+      }
+      it.value = "Set time";
+      break;
+    case Button::RaiseWake:
+      it.label = v.imuPresent ? "Raise to wake" : "No sensor";
+      it.value = v.raiseToWake && v.imuPresent ? "On" : "Off";
+      break;
     case Button::SyncNow:
       // The label carries the state; the value is what a tap does.
       if (running(v)) {
@@ -395,6 +429,9 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
         it.labelColor = col::CYAN;
         it.value = "Syncing";
         it.valueColor = col::CYAN;
+      } else if (!v.ssid[0]) {
+        it.label = "No Wi-Fi saved";  // not a failure: there is nothing to sync with yet
+        it.value = "Sync now";
       } else if (v.result == net::Result::Failed) {
         it.label = "Sync failed";
         it.labelIcon = Icon::Alert;
@@ -457,6 +494,128 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
   return c.animated;
 }
 
+// ---- Set time -------------------------------------------------------------------------------
+// One field per page with - and + side by side, the whole time or date above them with the
+// field being set in cyan and underlined, then a page that shows the result and saves it.
+const char *const MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+const char *const DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+constexpr int VALUE_BASE = 98;  // baseline of the time or date being set
+
+int daysIn(int year, int month0) {
+  static const int d[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  bool leap = (year % 4 == 0 && year % 100 != 0) || year % 400 == 0;
+  return month0 == 1 && leap ? 29 : d[month0 % 12];
+}
+
+// Day of the week for a calendar date (0 = Sunday), without the time zone getting involved.
+int weekday(int y, int m0, int d) {
+  static const int t[] = {0, 3, 2, 5, 0, 3, 5, 1, 4, 6, 2, 4};
+  if (m0 < 2) y--;
+  return (y + y / 4 - y / 100 + y / 400 + t[m0] + d) % 7;
+}
+
+const char *fieldTitle(TimeField f) {
+  static const char *t[] = {"Set hour", "Set minutes", "Set day", "Set month", "Set year", "Save time"};
+  return t[(int)f];
+}
+
+// The time as "14:05" or "2:05 PM".
+const char *timeWords(const View &v, const tm &t, char *buf, size_t n) {
+  int h = t.tm_hour;
+  if (v.use12h) snprintf(buf, n, "%d:%02d %s", h % 12 ? h % 12 : 12, t.tm_min, h < 12 ? "AM" : "PM");
+  else snprintf(buf, n, "%02d:%02d", h, t.tm_min);
+  return buf;
+}
+
+// Draws the value line in pieces so the one being set stands out. Gaps are added as
+// pixels: a trailing space counts for nothing in the width of a bitmap font string.
+void timeValue(TFT_eSprite &s, const View &v, TimeField f) {
+  const GFXfont *big = gfx::font(Role::Title, true);
+  const tm &t = v.edit;
+  char p[4][12];
+  bool active[4] = {};
+  int gap[4] = {}, n = 0;  // gap before each piece
+  if (f == TimeField::Hour || f == TimeField::Minute) {
+    int h = t.tm_hour;
+    snprintf(p[n], sizeof p[0], v.use12h ? "%d" : "%02d", v.use12h ? (h % 12 ? h % 12 : 12) : h);
+    active[n++] = f == TimeField::Hour;
+    snprintf(p[n++], sizeof p[0], ":");
+    snprintf(p[n], sizeof p[0], "%02d", t.tm_min);
+    active[n++] = f == TimeField::Minute;
+    if (v.use12h) {
+      gap[n] = 10;
+      snprintf(p[n++], sizeof p[0], "%s", h < 12 ? "AM" : "PM");  // changes with the hour
+    }
+  } else {
+    snprintf(p[n], sizeof p[0], "%d", t.tm_mday);
+    active[n++] = f == TimeField::Day;
+    gap[n] = 10;
+    snprintf(p[n], sizeof p[0], "%s", MONTHS[t.tm_mon % 12]);
+    active[n++] = f == TimeField::Month;
+    gap[n] = 10;
+    snprintf(p[n], sizeof p[0], "%d", t.tm_year + 1900);
+    active[n++] = f == TimeField::Year;
+  }
+  int total = 0;
+  for (int i = 0; i < n; i++) total += gap[i] + gfx::textWidth(s, p[i], big);
+  int x = CX - total / 2;
+  for (int i = 0; i < n; i++) {
+    x += gap[i];
+    int w = gfx::textWidth(s, p[i], big);
+    gfx::text(s, p[i], x, VALUE_BASE, big, active[i] ? col::CYAN : col::TEXT_2, L_BASELINE);
+    if (active[i]) s.fillRect(x, VALUE_BASE + 6, w, 3, col::CYAN);  // marks the field without relying on colour
+    x += w;
+  }
+}
+
+// Minus and plus as solid bars, bigger and bolder than the font's signs.
+void stepSymbol(TFT_eSprite &s, const Rect &r, bool plus, uint16_t c, bool large) {
+  int len = large ? 28 : 22, w = large ? 5 : 4, cx = r.x + r.w / 2, cy = r.y + r.h / 2;
+  s.fillRect(cx - len / 2, cy - w / 2, len, w, c);
+  if (plus) s.fillRect(cx - w / 2, cy - len / 2, w, len, c);
+}
+
+int setTimeControls(const View &v, int page, Control *out, int max) {
+  if (max < 1) return 0;
+  if (page >= TIME_PAGES - 1) {
+    out[0] = {Button::SaveTime, LOWER, LOWER_HIT};
+    return 1;
+  }
+  out[0] = {Button::Minus, ROW_LEFT, ROW_LEFT};
+  if (max < 2) return 1;
+  out[1] = {Button::Plus, ROW_RIGHT, ROW_RIGHT};
+  return 2;
+}
+
+bool drawSetTime(TFT_eSprite &s, const View &v, int page) {
+  Ctx c{s, v, true, false};
+  handle(s);
+  TimeField f = (TimeField)constrain(page, 0, TIME_PAGES - 1);
+  const GFXfont *body = fontFor(Role::Body, v.large);
+  gfx::text(s, fieldTitle(f), CX, 44, body, col::TEXT_2, MC_DATUM);
+  Control ctl[2];
+  int n = setTimeControls(v, page, ctl, 2);
+  if (f == TimeField::Save) {
+    char buf[16], date[24];
+    gfx::text(s, timeWords(v, v.edit, buf, sizeof buf), CX, 78, gfx::font(Role::Title, true), col::TEXT, MC_DATUM);
+    snprintf(date, sizeof date, "%s %d %s %d", DAYS[v.edit.tm_wday % 7], v.edit.tm_mday, MONTHS[v.edit.tm_mon % 12],
+             v.edit.tm_year + 1900);
+    gfx::text(s, date, CX, 105, body, col::TEXT, MC_DATUM);
+    Item save{Button::SaveTime, nullptr, Icon::None, 0, "Save", col::CYAN, col::CYAN, 0};
+    drawItem(c, save, ctl[0].visible);
+  } else {
+    timeValue(s, v, f);
+    for (int i = 0; i < n; i++) {
+      Item it{ctl[i].id, nullptr, Icon::None, 0, "", col::TEXT, col::OUTLINE, 0};
+      drawItem(c, it, ctl[i].visible);
+      bool pressed = v.pressed == ctl[i].id;
+      stepSymbol(s, ctl[i].visible, ctl[i].id == Button::Plus, pressed ? col::WHITE : col::TEXT, v.large);
+    }
+  }
+  dots(s, page, TIME_PAGES);
+  return false;
+}
+
 // ---- Details and setup documents ----------------------------------------------------------
 void detailsDoc(const View &v, Doc &d) {
   d.add("Status", Role::Body, col::TEXT_2);
@@ -464,7 +623,12 @@ void detailsDoc(const View &v, Doc &d) {
   else d.add("Battery: no reading", Role::Body, col::TEXT_2);
   if (!v.timeValid) d.add("Time not set", Role::Body, col::WARN, Icon::Alert);
   if (running(v)) d.add(d.fmt("Syncing: %s, step %d of 3", stageText(v.stage), v.syncStep), Role::Body, col::CYAN, Icon::Busy);
-  if (v.result == net::Result::Failed) {
+  if (v.clockByHand && v.timeValid) d.add("Clock set by hand", Role::Body, col::TEXT);
+  if (v.result == net::Result::Failed && v.fail == net::Fail::JoinFailed) {
+    d.add(d.fmt("Last sync failed: %s", joinWords(v.joinWhy)), Role::Body, col::WARN, Icon::Alert);
+    d.add(joinHint(v.joinWhy), Role::Body, col::TEXT_2);
+    if (v.joinCode) d.add(d.fmt("Wi-Fi reason %d", v.joinCode), Role::Body, col::TEXT_2);
+  } else if (v.result == net::Result::Failed) {
     d.add(d.fmt("Last sync failed: %s", failText(v.fail)), Role::Body, col::WARN, Icon::Alert);
     d.add(failHint(v.fail), Role::Body, col::TEXT_2);
   } else if (v.lastSyncText[0]) {
@@ -475,6 +639,7 @@ void detailsDoc(const View &v, Doc &d) {
   if (v.zone[0]) d.add(d.fmt("Time zone %s", v.zone), Role::Body, col::TEXT);
   else d.add(v.zoneManual ? "Time zone typed in setup" : "Time zone not found yet", Role::Body, col::TEXT_2);
   d.add(v.ssid[0] ? d.fmt("Wi-Fi %s", v.ssid) : "No Wi-Fi saved", Role::Body, v.ssid[0] ? col::TEXT : col::TEXT_2);
+  d.add(v.imuPresent ? "Motion sensor found" : "Motion sensor not found", Role::Body, col::TEXT_2);
   d.add(d.fmt("Firmware %s", v.version), Role::Body, col::TEXT_2);
   if (v.diag) d.add(v.diag, Role::Body, col::TEXT_2);
   d.add("Bigger text on these screens. Faces stay the same.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
@@ -485,14 +650,18 @@ void detailsDoc(const View &v, Doc &d) {
 void setupDoc(const View &v, Doc &d) {
   switch (setupPhase(v)) {
     case SetupPhase::Hotspot: {
+      // The address only answers on the watch's own hotspot, so joining it always comes
+      // first, and step 2 only appears once a phone has joined.
       bool joined = v.portal == net::Portal::PhoneJoined;
       d.add(joined ? "Step 2 of 2" : "Step 1 of 2", Role::Body, col::TEXT_2);
       if (joined) {
-        d.add("In a browser, open", Role::Body, col::TEXT);
+        d.add("Phone joined. Stay on Drift-Setup and open", Role::Body, col::TEXT);
         d.add(net::SETUP_ADDRESS, Role::Title, col::CYAN);
+        d.add("Pick a 2.4 GHz network. 5 GHz won't work.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
       } else {
-        d.add("On your phone, join", Role::Body, col::TEXT);
+        d.add("In your phone's Wi-Fi list, join", Role::Body, col::TEXT);
         d.add(net::SETUP_AP_NAME, Role::Title, col::MAGENTA);
+        d.add("192.168.4.1 only opens once your phone is on Drift-Setup.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
       }
       // The countdown sits in the Cancel control: both are about the hotspot.
       d.action(Button::Cancel, "Cancel", col::TEXT_2);
@@ -515,9 +684,14 @@ void setupDoc(const View &v, Doc &d) {
       d.action(Button::Done, "Done", col::CYAN);
       break;
     case SetupPhase::Failed:
-      d.add(v.fail == net::Fail::ClockFailed ? "No time" : "Can't join", Role::Title, col::WARN, Icon::Cross);
-      d.add(v.fail == net::Fail::ClockFailed ? "Wi-Fi joined. No time server answered." : "Check the network and password.",
-            Role::Body, col::TEXT);
+      if (v.fail == net::Fail::ClockFailed) {
+        d.add("No time", Role::Title, col::WARN, Icon::Cross);
+        d.add("Wi-Fi joined. No time server answered.", Role::Body, col::TEXT);
+      } else {
+        d.add("Can't join", Role::Title, col::WARN, Icon::Cross);
+        d.add(joinWords(v.joinWhy), Role::Body, col::TEXT);
+        d.add(joinHint(v.joinWhy), Role::Body, col::TEXT_2);
+      }
       d.action(Button::EditWifi, "Edit Wi-Fi", col::MAGENTA);
       d.action(Button::Retry, "Retry", col::CYAN);
       break;
@@ -658,14 +832,17 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
 
 // ---- Public ------------------------------------------------------------------------------
 Button settingsItem(int i) {
-  static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::Motion,
-                                                Button::SyncNow,    Button::WifiSetup,  Button::Details};
+  // Setting the clock and syncing it share a page, so a watch with no time opens on both fixes.
+  static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::SetTime,
+                                                Button::SyncNow,    Button::RaiseWake,  Button::Motion,
+                                                Button::WifiSetup,  Button::Details};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
 }
 
 const char *buttonName(Button b) {
-  static const char *names[] = {"none",  "brightness", "time format", "motion", "sync now", "wi-fi setup", "details",
-                                "text size", "cancel", "back", "retry", "edit wi-fi", "try again", "done"};
+  static const char *names[] = {"none",     "brightness", "time format", "motion",   "sync now",   "wi-fi setup",
+                                "details",  "text size",  "cancel",      "back",     "retry",      "edit wi-fi",
+                                "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time"};
   return names[(int)b];
 }
 
@@ -680,8 +857,27 @@ SetupPhase setupPhase(const View &v) {
   return SetupPhase::Hotspot;
 }
 
+void stepTime(tm &t, TimeField f, int dir) {
+  auto wrap = [](int x, int lo, int hi) { int n = hi - lo + 1; return lo + ((x - lo) % n + n) % n; };
+  int year = t.tm_year + 1900;
+  switch (f) {
+    case TimeField::Hour: t.tm_hour = wrap(t.tm_hour + dir, 0, 23); break;
+    case TimeField::Minute: t.tm_min = wrap(t.tm_min + dir, 0, 59); break;
+    case TimeField::Day: t.tm_mday = wrap(t.tm_mday + dir, 1, daysIn(year, t.tm_mon)); break;
+    case TimeField::Month: t.tm_mon = wrap(t.tm_mon + dir, 0, 11); break;
+    case TimeField::Year: year = wrap(year + dir, YEAR_MIN, YEAR_MAX); t.tm_year = year - 1900; break;
+    default: break;
+  }
+  year = t.tm_year + 1900;
+  t.tm_mday = constrain(t.tm_mday, 1, daysIn(year, t.tm_mon));  // 31 Jan to February becomes 28 or 29 Feb
+  t.tm_sec = 0;
+  t.tm_wday = weekday(year, t.tm_mon, t.tm_mday);
+  t.tm_isdst = -1;
+}
+
 int pageCount(TFT_eSprite &s, const View &v) {
   if (v.screen == Screen::Settings) return settingsPages(v);
+  if (v.screen == Screen::SetTime) return TIME_PAGES;
   Doc d;
   buildDoc(v, d);
   return plan(s, v, d).pages;
@@ -691,12 +887,14 @@ bool draw(TFT_eSprite &s, const View &v) {
   s.fillSprite(col::BG);
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
   if (v.screen == Screen::Settings) return drawSettings(s, v, page);
+  if (v.screen == Screen::SetTime) return drawSetTime(s, v, page);
   return drawDoc(s, v, page);
 }
 
 int controls(TFT_eSprite &s, const View &v, Control *out, int max) {
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
   if (v.screen == Screen::Settings) return settingsControls(v, page, out, max);
+  if (v.screen == Screen::SetTime) return setTimeControls(v, page, out, max);
   Doc d;
   buildDoc(v, d);
   return docControls(s, v, d, plan(s, v, d), page, out, max);

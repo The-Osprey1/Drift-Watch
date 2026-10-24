@@ -16,6 +16,10 @@ enum class Sync : uint8_t { Idle, Connecting, Zone, Clock };
 enum class Result : uint8_t { None, Ok, Failed };
 enum class Fail : uint8_t { None, NoNetworkSaved, JoinFailed, ClockFailed };
 enum class Portal : uint8_t { Off, Waiting, PhoneJoined, Saved, Closed, TimedOut };
+// Why joining failed, read from the radio's own disconnect reason and grouped by what the
+// person can do about it. The watch only has a 2.4 GHz radio, so a 5 GHz-only network
+// shows up as NotFound.
+enum class JoinWhy : uint8_t { NoAnswer, NotFound, Password, Refused };
 
 void begin();               // applies the saved time zone; no radio use
 void poll();
@@ -28,6 +32,9 @@ Result lastResult();        // of the latest attempt that finished
 Fail failReason();          // why the latest attempt failed, None if it did not
 uint16_t attempts();        // counts finished attempts, so callers can see a new result
 int syncStep();             // 1..3 while syncing, for "step 2 of 3" progress
+JoinWhy joinWhy();          // for the latest JoinFailed
+int joinCode();             // the radio's reason number behind it (0 = none reported), for the log and details
+bool radioOn();             // Wi-Fi is switched on: a sync or the hotspot is running
 
 void startPortal();         // stops any sync first
 void cancelPortal();
@@ -36,6 +43,8 @@ uint32_t portalSecondsLeft();
 
 bool hasSavedWifi();
 bool timeIsValid();
+void setClockByHand(time_t t);  // the time set on the watch itself; a later sync replaces it
+bool clockSetByHand();          // true until the next successful sync
 time_t lastSync();
 const char *zoneName();     // e.g. "Europe/London" when found from the internet, else ""
 const char *ssid();         // saved network name, or ""

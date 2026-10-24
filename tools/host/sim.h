@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <time.h>
 #include <vector>
+#include "imu.h"
 #include "net.h"
 
 namespace sim {
@@ -21,4 +22,10 @@ extern bool wifiSaved;
 extern int syncsStarted, syncsCancelled;
 void setPortal(net::Portal p);
 extern char zone[64];
+extern net::JoinWhy joinWhy;      // reported with a scripted JoinFailed
+
+// Motion sensor and screen-off waits.
+extern bool imuPresent;
+extern Accel accel;               // what the sensor reads now
+extern int dozes, lowPowerDozes;  // screen-off waits, and how many could use light sleep
 }

@@ -3,6 +3,7 @@
 // hit-testing share one layout, so a control is always exactly where it is drawn.
 #pragma once
 #include <TFT_eSPI.h>
+#include <time.h>
 #include "net.h"
 
 namespace screens {
@@ -15,10 +16,20 @@ enum class Button : uint8_t {
   TextSize,
   // Wi-Fi setup
   Cancel, Back, Retry, EditWifi, TryAgain, Done,
+  // Added in v0.9.0: settings, then the set time screen
+  SetTime, RaiseWake, Minus, Plus, SaveTime,
 };
 const char *buttonName(Button b);
 
-enum class Screen : uint8_t { Settings, Details, Setup };
+enum class Screen : uint8_t { Settings, Details, Setup, SetTime };
+
+// The set time screen has one page per field, then a page to save.
+enum class TimeField : uint8_t { Hour, Minute, Day, Month, Year, Save };
+constexpr int TIME_PAGES = 6;
+constexpr int YEAR_MIN = 2024, YEAR_MAX = 2099;
+// Steps one field of `t` up or down, wrapping within its range. Only that field changes,
+// except the day, which is kept inside the month. Normalises the weekday.
+void stepTime(tm &t, TimeField f, int dir);
 
 struct Rect {
   int16_t x, y, w, h;
@@ -44,12 +55,19 @@ struct View {
   net::Sync stage;          // Idle when no sync is running
   net::Result result;       // latest finished attempt
   net::Fail fail;
+  net::JoinWhy joinWhy;     // why the latest join failed
+  int joinCode;             // the radio's reason number, 0 if none
   int syncStep;
   net::Portal portal;
   uint32_t secondsLeft;     // hotspot time left
   const char *lastSyncText; // e.g. "14:02", or "" if never synced
+  const char *nowText;      // the clock now, e.g. "20:48"
   const char *zone, *ssid;
   bool zoneManual;          // the time zone was typed in setup
+  bool clockByHand;         // the clock was set on the watch and not synced since
+  bool raiseToWake;
+  bool imuPresent;          // the motion sensor answered
+  tm edit;                  // the time being set on the set time screen
   const char *version;
   const char *diag;         // diagnostics line, or nullptr
   Button pressed;
@@ -70,7 +88,7 @@ enum class SetupPhase : uint8_t { Hotspot, Connecting, Done, Failed, TimedOut };
 SetupPhase setupPhase(const View &v);
 
 // Settings items in page order; two per page, or one with large text.
-constexpr int SETTINGS_ITEMS = 6;
+constexpr int SETTINGS_ITEMS = 8;
 Button settingsItem(int i);
 
 // Startup sequence, t from 0 to 1.

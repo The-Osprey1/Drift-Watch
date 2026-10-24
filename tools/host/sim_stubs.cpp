@@ -21,6 +21,10 @@ net::Fail syncOutcome = net::Fail::None;
 bool wifiSaved = true;
 int syncsStarted = 0, syncsCancelled = 0;
 char zone[64] = "Europe/London";
+net::JoinWhy joinWhy = net::JoinWhy::NotFound;
+bool imuPresent = true;
+Accel accel = {0, 0, 1};  // lying flat, screen up
+int dozes = 0, lowPowerDozes = 0;
 }  // namespace sim
 
 uint32_t millis() { return sim::clockMs; }
@@ -41,6 +45,18 @@ bool bootButtonDown() { return sim::bootDown; }
 bool coldBoot() { return sim::cold; }
 uint32_t freeHeap() { return 200000; }
 uint32_t freePsram() { return 1700000; }
+void setTime(time_t t) {
+  sim::clockSet = true;
+  sim::epochAtZero = t - sim::clockMs / 1000;
+}
+// Light sleep ends early on a touch or BOOT press; the scripts set those between loops,
+// so a wait that starts with nothing pressed simply runs its full time.
+WakeCause doze(uint32_t ms, bool lowPower) {
+  sim::dozes++;
+  if (lowPower) sim::lowPowerDozes++;
+  sim::clockMs += ms;
+  return WakeCause::Timer;
+}
 void log(const char *fmt, ...) {
   va_list ap;
   va_start(ap, fmt);
@@ -50,6 +66,15 @@ void log(const char *fmt, ...) {
   va_end(ap);
 }
 }  // namespace hal
+
+namespace imu {
+bool begin() { return sim::imuPresent; }
+bool present() { return sim::imuPresent; }
+bool read(Accel &out) {
+  out = sim::accel;
+  return sim::imuPresent;
+}
+}  // namespace imu
 
 namespace touch {
 bool begin() { return true; }
@@ -68,6 +93,7 @@ net::Sync syncNow = net::Sync::Idle;
 net::Result result = net::Result::None;
 uint16_t finished = 0;
 net::Fail fail = net::Fail::None;
+bool byHand = false;
 net::Portal portal = net::Portal::Off;
 uint32_t stepStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
@@ -88,7 +114,7 @@ void begin() {}
 void poll() {
   uint32_t e = sim::clockMs - stepStart;
   auto next = [&](Sync s) { syncNow = s; stepStart = sim::clockMs; };
-  auto end = [&](Fail f) { fail = f; result = f == Fail::None ? Result::Ok : Result::Failed; finished++; next(Sync::Idle); };
+  auto end = [&](Fail f) { if (f == Fail::None) byHand = false; fail = f; result = f == Fail::None ? Result::Ok : Result::Failed; finished++; next(Sync::Idle); };
   switch (syncNow) {
     case Sync::Connecting:
       if (e >= STEP_MS[1]) {
@@ -135,6 +161,11 @@ uint32_t portalSecondsLeft() {
 }
 bool hasSavedWifi() { return sim::wifiSaved; }
 bool timeIsValid() { return sim::clockSet; }
+void setClockByHand(time_t t) { hal::setTime(t); byHand = true; }
+bool clockSetByHand() { return byHand; }
+JoinWhy joinWhy() { return sim::joinWhy; }
+int joinCode() { return sim::joinWhy == JoinWhy::NotFound ? 201 : sim::joinWhy == JoinWhy::Password ? 15 : 0; }
+bool radioOn() { return syncNow != Sync::Idle || portal == Portal::Waiting || portal == Portal::PhoneJoined; }
 time_t lastSync() { return lastSyncTime; }
 const char *zoneName() { return simZone; }
 const char *ssid() { return sim::wifiSaved ? "HomeNet-5G" : ""; }

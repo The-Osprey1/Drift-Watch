@@ -17,6 +17,10 @@ constexpr uint32_t PORTAL_TIMEOUT_MS = 300000;  // 5 minutes
 net::Sync syncNow = net::Sync::Idle;
 net::Result result = net::Result::None;
 net::Fail fail = net::Fail::None;
+net::JoinWhy why = net::JoinWhy::NoAnswer;
+int whyCode = 0;
+volatile uint8_t disconnectReason = 0;  // written by the Wi-Fi event task
+bool byHand = false;
 uint16_t finished = 0;
 net::Portal portal = net::Portal::Off;
 uint32_t stateStart = 0, portalStart = 0;
@@ -27,6 +31,7 @@ char posixTz[64] = "UTC0";
 
 WiFiManager *wm = nullptr;
 WiFiManagerParameter *tzParam = nullptr;
+WiFiManagerParameter *bandNote = nullptr;  // text only; kept for the life of the program
 bool portalSaved = false;
 
 // ---- Time zone lookup ------------------------------------------------------
@@ -96,7 +101,28 @@ void setState(net::Sync s) {
   stateStart = hal::ms();
 }
 
+// Groups the radio's disconnect reasons (esp_wifi_types.h) by what the person can do.
+net::JoinWhy classify(uint8_t r) {
+  switch (r) {
+    case 0: return net::JoinWhy::NoAnswer;  // still trying when the time ran out
+    case WIFI_REASON_NO_AP_FOUND:
+    case WIFI_REASON_BEACON_TIMEOUT: return net::JoinWhy::NotFound;
+    case WIFI_REASON_AUTH_FAIL:
+    case WIFI_REASON_4WAY_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_HANDSHAKE_TIMEOUT:
+    case WIFI_REASON_MIC_FAILURE:
+    case WIFI_REASON_802_1X_AUTH_FAILED: return net::JoinWhy::Password;
+    default: return net::JoinWhy::Refused;  // includes AUTH_EXPIRE (2), common with band-steering mesh routers
+  }
+}
+
 void finish(net::Fail f) {
+  if (f == net::Fail::JoinFailed) {
+    whyCode = disconnectReason;
+    why = classify(whyCode);
+    hal::log("net: join failed, Wi-Fi reason %d (group %d)", whyCode, (int)why);
+  }
+  if (f == net::Fail::None) byHand = false;
   fail = f;
   result = f == net::Fail::None ? net::Result::Ok : net::Result::Failed;
   finished++;
@@ -132,6 +158,8 @@ void begin() {
   if (!settings.tz.isEmpty()) strlcpy(posixTz, settings.tz.c_str(), sizeof posixTz);
   setenv("TZ", posixTz, 1);
   tzset();
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason = info.wifi_sta_disconnected.reason; },
+               ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
   readSavedSsid();
   wifiOff();
@@ -146,6 +174,7 @@ void startSync() {
     finish(Fail::NoNetworkSaved);
     return;
   }
+  disconnectReason = 0;
   WiFi.mode(WIFI_STA);
   WiFi.begin();
   setState(Sync::Connecting);
@@ -228,6 +257,9 @@ Result lastResult() { return result; }
 Fail failReason() { return fail; }
 uint16_t attempts() { return finished; }
 int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
+JoinWhy joinWhy() { return why; }
+int joinCode() { return whyCode; }
+bool radioOn() { return syncRunning() || wm != nullptr; }
 
 void startPortal() {
   if (wm) return;
@@ -235,10 +267,19 @@ void startPortal() {
     wifiOff();
     setState(Sync::Idle);
   }
-  WiFi.mode(WIFI_STA);
+  // Start straight in hotspot mode. v0.8.0 switched to station mode here, and the library
+  // then switched station mode off again, which stopped and restarted the radio just before
+  // the hotspot came up and could leave it not broadcasting.
+  WiFi.mode(WIFI_AP);
   wm = new WiFiManager();
+  if (!bandNote)
+    bandNote = new WiFiManagerParameter(
+        "<p><b>This watch only works with 2.4 GHz Wi-Fi.</b> Only networks it can use are listed. "
+        "If yours is missing, turn on 2.4 GHz on your router (some mesh routers call it a "
+        "compatibility or IoT network).</p>");
   tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", settings.tz.c_str(), 63);
   wm->setTitle("Drift-Watch");
+  wm->addParameter(bandNote);
   wm->addParameter(tzParam);
   wm->setBreakAfterConfig(true);
   // Store the new network without joining it inside the library: its join waits in a
@@ -250,6 +291,8 @@ void startPortal() {
   wm->setSaveConfigCallback([] { portalSaved = true; });
   wm->setConfigPortalBlocking(false);
   wm->startConfigPortal(SETUP_AP_NAME);
+  hal::log("net: hotspot %s %s at %s", SETUP_AP_NAME, (WiFi.getMode() & WIFI_AP) ? "up" : "NOT up",
+           WiFi.softAPIP().toString().c_str());
   portal = Portal::Waiting;
   portalStart = hal::ms();
 }
@@ -267,6 +310,13 @@ uint32_t portalSecondsLeft() {
 }
 
 bool timeIsValid() { return time(nullptr) > 1700000000; }  // later than Nov 2023
+
+void setClockByHand(time_t t) {
+  hal::setTime(t);
+  byHand = true;
+  hal::log("net: clock set by hand");
+}
+bool clockSetByHand() { return byHand; }
 time_t lastSync() { return lastSyncTime; }
 const char *zoneName() { return zone; }
 const char *ssid() { return savedSsid; }

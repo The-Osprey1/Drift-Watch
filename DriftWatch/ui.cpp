@@ -4,7 +4,9 @@
 #include "faces.h"
 #include "gfx.h"
 #include "hal.h"
+#include "imu.h"
 #include "net.h"
+#include "raise.h"
 #include "screens.h"
 #include "settings.h"
 #include "theme.h"
@@ -22,10 +24,15 @@ constexpr uint32_t SPINNER_FRAME_MS = 40;
 constexpr uint32_t BOOT_HOLD_MS = 250;                 // name stays up briefly after the sequence
 constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts showing the hold ring
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
+constexpr uint32_t REPEAT_DELAY_MS = 450;               // holding - or + starts repeating after this
+constexpr uint32_t REPEAT_MS = 120, REPEAT_FAST_MS = 50;  // then this often, faster after 8 steps
+constexpr uint32_t IMU_READ_MS = 80;                   // motion samples while the screen is off
+constexpr uint32_t DOZE_RAISE_MS = 100;                // screen-off wait with raise-to-wake on
+constexpr uint32_t DOZE_MS = 500;                      // and with it off; touch and BOOT wake it early
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
 
-enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup };
+enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup, SetTime };
 
 TFT_eSPI tft;
 TFT_eSprite spriteA(&tft), spriteB(&tft), cache(&tft);
@@ -60,7 +67,11 @@ uint32_t uiKey = 0;
 bool uiAnimated = false;   // the last drawn screen has a spinner that needs frames
 screens::Button pressed = screens::Button::None;
 // Page shown on each paged screen. The settings page is kept while details or setup are open.
-int settingsPage = 0, detailsPage = 0, setupPage = 0;
+int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0;
+tm editTime{};  // what the set time screen shows; applied only by Save
+
+RaiseDetector wristRaise;
+uint32_t lastImuRead = 0;
 screens::SetupPhase seenPhase = screens::SetupPhase::Hotspot;
 
 // BOOT button: on a face a short press is next face and a long press opens settings,
@@ -78,6 +89,8 @@ struct Finger {
   bool ignore = false;    // started by waking the screen, or already used up
   Axis axis = Axis::None;
   bool longFired = false;
+  uint32_t repeatAt = 0;  // next repeat of a held - or +; 0 until repeating starts
+  int repeats = 0;
   int16_t x0 = 0, y0 = 0, x = 0, y = 0;
   uint32_t t0 = 0, lastMoveAt = 0, lastSampleAt = 0;
   float vx = 0, vy = 0;   // smoothed velocity, px per ms
@@ -213,13 +226,18 @@ void lastSyncText(char *buf, size_t n) {
   snprintf(buf, n, settings.use12h ? "%d:%02d" : "%02d:%02d", h, s.tm_min);
 }
 
-int &pageFor(Mode m) { return m == Mode::Details ? detailsPage : m == Mode::Setup ? setupPage : settingsPage; }
+int &pageFor(Mode m) {
+  return m == Mode::Details ? detailsPage : m == Mode::Setup ? setupPage : m == Mode::SetTime ? setTimePage : settingsPage;
+}
 
 screens::View view(Mode m, int page) {
   static char synced[8];
   lastSyncText(synced, sizeof synced);
   screens::View v{};
-  v.screen = m == Mode::Details ? screens::Screen::Details : m == Mode::Setup ? screens::Screen::Setup : screens::Screen::Settings;
+  v.screen = m == Mode::Details ? screens::Screen::Details
+             : m == Mode::Setup ? screens::Screen::Setup
+             : m == Mode::SetTime ? screens::Screen::SetTime
+                                  : screens::Screen::Settings;
   v.page = page;
   v.large = settings.largeText;
   v.reducedMotion = settings.reducedMotion;
@@ -238,6 +256,21 @@ screens::View view(Mode m, int page) {
   v.zone = net::zoneName();
   v.ssid = net::ssid();
   v.zoneManual = !settings.tz.isEmpty();
+  v.joinWhy = net::joinWhy();
+  v.joinCode = net::joinCode();
+  v.clockByHand = net::clockSetByHand();
+  v.raiseToWake = settings.raiseToWake;
+  v.imuPresent = imu::present();
+  v.edit = editTime;
+  static char nowBuf[8];
+  {
+    time_t t = hal::now();
+    tm n;
+    localtime_r(&t, &n);
+    int h = settings.use12h ? (n.tm_hour % 12 ? n.tm_hour % 12 : 12) : n.tm_hour;
+    snprintf(nowBuf, sizeof nowBuf, settings.use12h ? "%d:%02d" : "%02d:%02d", h, n.tm_min);
+  }
+  v.nowText = nowBuf;
   v.version = "v" FW_VERSION;
 #if DRIFT_DIAG
   v.diag = diag.line;
@@ -249,7 +282,7 @@ screens::View view(Mode m, int page) {
   return v;
 }
 screens::View view() { return view(mode, pageFor(mode)); }
-bool pagedMode() { return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup; }
+bool pagedMode() { return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup || mode == Mode::SetTime; }
 int pageCount() { return screens::pageCount(*cur, view()); }
 
 // Everything on a settings, details or setup screen except the spinner, so a
@@ -268,6 +301,11 @@ uint32_t screenKey() {
   k = k * 131 + (uint32_t)(batteryPct + 1);
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
+  k = k * 31 + (uint32_t)net::joinWhy() * 2 + net::clockSetByHand();
+  k = k * 31 + settings.raiseToWake;
+  k = k * 61 + (uint32_t)(hal::now() / 60);  // the clock shown on the Set time control
+  k = k * 31 + (uint32_t)(editTime.tm_year * 400 + editTime.tm_mon * 32 + editTime.tm_mday);
+  k = k * 31 + (uint32_t)(editTime.tm_hour * 60 + editTime.tm_min);
   return k;
 }
 
@@ -282,11 +320,11 @@ void refreshScreen(bool force) {
   present(*cur);
 }
 
-// Settings open on the first page, except when the clock is not set: then they
-// open on the page with the fix (Wi-Fi setup if nothing is saved, else sync).
+// Settings open on the first page, except when the clock is not set: then they open on
+// the page with the fixes, Set time and Sync now (one or the other with large text).
 int firstSettingsPage() {
   if (net::timeIsValid()) return 0;
-  screens::Button fix = net::hasSavedWifi() ? screens::Button::SyncNow : screens::Button::WifiSetup;
+  screens::Button fix = net::hasSavedWifi() ? screens::Button::SyncNow : screens::Button::SetTime;
   return screens::pageOf(*cur, view(Mode::Panel, 0), fix);
 }
 
@@ -473,8 +511,9 @@ void sleepScreen() {
   tr = Transition{};
   sweeping = false;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
-  // Setup stays, so its progress or result is still there on wake.
-  if (mode == Mode::Panel || mode == Mode::Details) mode = Mode::Face;
+  // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
+  if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime) mode = Mode::Face;
+  wristRaise.reset();  // a wrist that is still up must come down and rise again
   if (settingsDirty) {
     saveSettings();
     settingsDirty = false;
@@ -527,10 +566,48 @@ void showMode(Mode m) {
   else refreshScreen(true);
 }
 
-// Setup is reached from the Wi-Fi control (or at first start), so leaving it lands there.
+// Setup is reached from the Wi-Fi control (or at first start), so leaving it lands there,
+// unless the clock is still not set: then it lands on Set time and Sync now.
 void showSettingsAtWifi() {
-  settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::WifiSetup);
+  settingsPage = net::timeIsValid() ? screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::WifiSetup)
+                                    : firstSettingsPage();
   showMode(Mode::Panel);
+}
+
+// The build date, as a starting point when the clock has never been set.
+tm buildDate() {
+  tm t{};
+  char mon[4] = "";
+  int day = 1, year = screens::YEAR_MIN;
+  sscanf(__DATE__, "%3s %d %d", mon, &day, &year);
+  const char *names = "JanFebMarAprMayJunJulAugSepOctNovDec", *at = strstr(names, mon);
+  t.tm_mon = at && mon[0] ? (at - names) / 3 : 0;
+  t.tm_mday = day;
+  t.tm_year = constrain(year, screens::YEAR_MIN, screens::YEAR_MAX) - 1900;
+  t.tm_hour = 12;
+  screens::stepTime(t, screens::TimeField::Hour, 0);  // works out the weekday
+  return t;
+}
+
+void openSetTime() {
+  if (net::timeIsValid()) {
+    time_t now = hal::now();
+    localtime_r(&now, &editTime);
+    screens::stepTime(editTime, screens::TimeField::Hour, 0);  // seconds to zero
+  } else {
+    editTime = buildDate();
+  }
+  setTimePage = 0;
+  showMode(Mode::SetTime);
+}
+
+void saveTime() {
+  tm t = editTime;
+  t.tm_isdst = -1;  // let the time zone rules decide
+  net::setClockByHand(mktime(&t));
+  cacheValid = false;
+  lastMinute = -1;
+  showMode(Mode::Face);
 }
 
 void openSetup() {
@@ -548,6 +625,11 @@ void goBack() {
     case Mode::Setup:
       if (setupPhase() == screens::SetupPhase::Hotspot) net::cancelPortal();
       showSettingsAtWifi();
+      break;
+    case Mode::SetTime:
+      // Leaves without saving.
+      settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::SetTime);
+      showMode(Mode::Panel);
       break;
     case Mode::Details:
       // Back to the settings page that holds Details, in the current text size.
@@ -579,6 +661,20 @@ void activate(screens::Button b) {
     case Button::SyncNow:
       net::startSync();  // ignored while one is already running, so taps never stack up
       break;
+    case Button::SetTime:
+      openSetTime();
+      return;
+    case Button::RaiseWake:
+      settings.raiseToWake = !settings.raiseToWake;
+      markSettingsChanged();
+      break;
+    case Button::Minus:
+    case Button::Plus:
+      screens::stepTime(editTime, (screens::TimeField)setTimePage, b == Button::Plus ? +1 : -1);
+      break;
+    case Button::SaveTime:
+      saveTime();
+      return;
     case Button::WifiSetup:
     case Button::EditWifi:
     case Button::TryAgain:
@@ -620,6 +716,32 @@ screens::Button hitTest(int x, int y) {
   return screens::hit(*cur, view(), x, y);
 }
 
+// ---- Motion -----------------------------------------------------------------------------
+// Someone pressing the screen or BOOT is looking at it, which shows which way the screen
+// faces relative to the motion sensor. The answer is kept so raise-to-wake works either way up.
+void noteLooking() {
+  Accel a;
+  if (!imu::present() || !imu::read(a)) return;
+  wristRaise.learnFacing(a);
+  if (wristRaise.facing() != settings.screenFacing) {
+    settings.screenFacing = wristRaise.facing();
+    markSettingsChanged();
+    hal::log("ui: screen faces %s z", wristRaise.facing() > 0 ? "+" : "-");
+  }
+}
+
+// While the screen is off, watches for the wrist being raised.
+void stepRaise() {
+  if (!settings.raiseToWake || !imu::present() || since(lastImuRead) < IMU_READ_MS) return;
+  lastImuRead = hal::ms();
+  Accel a;
+  if (!imu::read(a)) return;
+  if (wristRaise.update(hal::ms(), a)) {
+    hal::log("ui: raise to wake");
+    wakeScreen();
+  }
+}
+
 // ---- Touch ------------------------------------------------------------------------------
 void onFingerDown(const TouchSample &s) {
   finger = Finger{};
@@ -628,6 +750,7 @@ void onFingerDown(const TouchSample &s) {
   finger.y0 = finger.y = s.y;
   finger.t0 = finger.lastMoveAt = finger.lastSampleAt = hal::ms();
   lastActivity = hal::ms();
+  noteLooking();
 
   if (!awake) {
     wakeScreen();
@@ -742,9 +865,24 @@ void onFingerUp() {
   if (finger.axis == Axis::None && pressed != screens::Button::None) {
     screens::Button b = pressed;
     pressed = screens::Button::None;
-    if (hitTest(finger.x, finger.y) == b) activate(b);
+    if (finger.repeats) refreshScreen(true);  // a held - or + already stepped; release adds nothing
+    else if (hitTest(finger.x, finger.y) == b) activate(b);
     else refreshScreen(true);
   }
+}
+
+// Holding - or + on the set time screen steps again and again, faster after a while.
+void stepRepeat() {
+  using screens::Button;
+  if (mode != Mode::SetTime || !finger.down || finger.ignore || finger.axis != Axis::None) return;
+  if (pressed != Button::Minus && pressed != Button::Plus) return;
+  uint32_t now = hal::ms();
+  if (!finger.repeatAt) finger.repeatAt = finger.t0 + REPEAT_DELAY_MS;
+  if ((int32_t)(now - finger.repeatAt) < 0) return;
+  screens::stepTime(editTime, (screens::TimeField)setTimePage, pressed == Button::Plus ? +1 : -1);
+  finger.repeats++;
+  finger.repeatAt = now + (finger.repeats > 8 ? REPEAT_FAST_MS : REPEAT_MS);
+  refreshScreen(true);
 }
 
 // Returns true while the hold ring is on screen, so the face does not paint over it.
@@ -785,6 +923,7 @@ void pollBoot() {
   if (down) {
     boot.downAt = hal::ms();
     boot.used = true;
+    noteLooking();
     if (!awake) wakeScreen();  // the waking press does nothing else
     else if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
     else if (mode == Mode::Face) boot.used = tr.kind != Slide::None;  // decided on release or at the hold time
@@ -857,7 +996,8 @@ void stepNetwork() {
   net::poll();
   if (net::attempts() != seenAttempts) {
     seenAttempts = net::attempts();
-    nextSyncAt = hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    // With no network saved there is nothing to retry; the clock may have been set by hand.
+    nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
     dirty = true;
   }
   net::Sync s = net::syncState();
@@ -924,8 +1064,8 @@ int controls(screens::Control *out, int max) { return pagedMode() ? screens::con
 int page() { return pageFor(mode); }
 
 const char *screenName() {
-  static const char *names[] = {"boot", "face", "panel", "details", "setup"};
-  static const char *sliding[] = {"boot+slide", "face+slide", "panel+slide", "details+slide", "setup+slide"};
+  static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime"};
+  static const char *sliding[] = {"boot+slide", "face+slide", "panel+slide", "details+slide", "setup+slide", "settime+slide"};
   if (!awake) return "asleep";
   return (tr.kind != Slide::None ? sliding : names)[(int)mode];
 }
@@ -939,7 +1079,7 @@ void begin() {
   finger = Finger{};
   pressed = screens::Button::None;
   awake = true;
-  settingsPage = detailsPage = setupPage = 0;
+  settingsPage = detailsPage = setupPage = setTimePage = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
@@ -963,6 +1103,9 @@ void begin() {
            haveCache ? "yes" : "no", (unsigned long)hal::freePsram());
 
   touch::begin();
+  imu::begin();
+  wristRaise = RaiseDetector{};
+  wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
   net::begin();
   if (net::hasSavedWifi()) net::startSync();  // runs alongside the startup sequence
@@ -993,7 +1136,21 @@ void loop() {
   }
 
   if (!awake) {
-    hal::idle(50);  // the panel is asleep; only touch, BOOT and Wi-Fi need attention
+    // The panel is asleep; only touch, BOOT, motion, Wi-Fi and the clock need attention.
+    stepRaise();
+    if (awake) return;
+    if (net::radioOn()) {
+      hal::idle(50);  // Wi-Fi needs the processor awake
+      return;
+    }
+    // Light sleep wakes early on touch or BOOT, so it can wait longer; a plain wait has to poll.
+    bool raising = settings.raiseToWake && imu::present();
+    uint32_t wait = !DRIFT_LIGHT_SLEEP ? 50 : raising ? DOZE_RAISE_MS : DOZE_MS;
+    hal::WakeCause why = hal::doze(wait, DRIFT_LIGHT_SLEEP);
+    if (why != hal::WakeCause::Timer) {
+      pollInput();             // a touch or press still down wakes the screen and does nothing else
+      if (!awake) wakeScreen();  // it was over before it could be read: wake anyway
+    }
     return;
   }
 
@@ -1009,7 +1166,10 @@ void loop() {
   else if (mode == Mode::Boot) stepBoot();
   else if (mode == Mode::Face) {
     if (!stepHold()) stepFace();
-  } else refreshScreen(false);
+  } else {
+    stepRepeat();
+    refreshScreen(false);
+  }
 #if DRIFT_DIAG
   stepDiag();
 #endif

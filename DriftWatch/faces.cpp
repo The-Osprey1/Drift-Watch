@@ -26,7 +26,7 @@ const char *noTimeHint(const FaceContext &c) {
     static const char *stages[] = {"Syncing", "Joining Wi-Fi  1/3", "Finding zone  2/3", "Setting time  3/3"};
     return stages[c.syncStage <= 3 ? c.syncStage : 0];
   }
-  return c.noWifi ? "Swipe up: Wi-Fi setup" : "Swipe up to sync";
+  return c.noWifi ? "Swipe up: set time" : "Swipe up: sync or set";
 }
 
 void dateText(const FaceContext &c, char *buf, size_t n) {

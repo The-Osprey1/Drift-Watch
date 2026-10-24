@@ -118,15 +118,16 @@ Time zone format, if you type one: `GMT0BST,M3.5.0/1,M10.5.0` (UK), `EST5EDT,M3.
 | `DriftWatch/battery.*` | Battery percentage and the measured time left |
 | `DriftWatch/phone.*`, `ble.h`, `ble_esp32.cpp` | Phone sync: the messages a phone may send, and the Bluetooth service that carries them |
 | `companion/index.html` | The Drift sync web page |
-| `tools/host/` | Computer stand-ins and tests. `render_faces` draws every face at test times and checks text stays inside the round screen; `simulate` drives the real interface and settings code with scripted touches and BOOT presses, checks every screen's layout and touch regions, and writes `report.md` (touch sizes and contrast); `Preferences.h` is an in-memory stand-in for saved settings; `sheet.py` makes preview sheets |
+| `tools/host/` | Computer stand-ins and tests. `render_faces` draws every face at test times and checks text stays inside the round screen; `simulate` drives the real interface and settings code with scripted touches and BOOT presses, checks every screen's layout and touch regions, and writes `report.md` (touch sizes and contrast); `net_test` runs the real `net.cpp` (sync, time zone lookup, time server, setup hotspot) against the Wi-Fi, web and time-server stand-ins in `tools/host/net/`; `Preferences.h` is an in-memory stand-in for saved settings; `sheet.py` makes preview sheets |
 
-Host tests, from the project folder (needs g++ and the TFT_eSPI library source for its fonts):
+Host tests, from the project folder (needs g++ and the TFT_eSPI 2.5.43 source for its fonts):
 
 ```
-g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/render_faces.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp -o render_faces
-g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/simulate.cpp DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp DriftWatch/serial_cmd.cpp -o simulate
-mkdir -p out && ./render_faces out/ && ./simulate out/
+git clone --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git ../TFT_eSPI
+tools/host/run_tests.sh ../TFT_eSPI
 ```
+
+This builds and runs all three: `render_faces`, `simulate` (frames and `report.md` go to `tools/host/out`) and `net_test`. GitHub Actions (`.github/workflows/ci.yml`) runs the same script and builds both firmware images on every push and pull request; the images are kept as a download on each run.
 
 ## Ideas for later
 

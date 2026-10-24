@@ -1,0 +1,57 @@
+# Builds and runs the computer tests and builds both firmware images on every push and pull request.
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  host-tests:
+    name: Computer tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Get the TFT_eSPI source (fonts for the screen stand-in)
+        run: git clone --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git "$RUNNER_TEMP/TFT_eSPI"
+      - name: Faces, interface simulation and network code
+        run: tools/host/run_tests.sh "$RUNNER_TEMP/TFT_eSPI" tools/host/out
+      - name: Keep the simulation's frames and report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simulation-output
+          path: |
+            tools/host/out/*.ppm
+            tools/host/out/report.md
+          if-no-files-found: ignore
+
+  firmware:
+    name: Firmware
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: arduino/setup-arduino-cli@v2
+        with:
+          version: 1.1.1
+      - name: Install the ESP32 core 2.0.17 and libraries
+        run: |
+          arduino-cli config init --overwrite
+          arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
+          arduino-cli core update-index
+          arduino-cli core install esp32:esp32@2.0.17
+          arduino-cli lib install "TFT_eSPI@2.5.43" "WiFiManager@2.0.17"
+          pip install pyserial
+          ESPTOOL=$(find "$(arduino-cli config get directories.data)" -path '*esptool_py/*/esptool.py' | head -1)
+          chmod +x "$ESPTOOL"
+          dirname "$ESPTOOL" >> "$GITHUB_PATH"
+      - name: Build the firmware
+        run: bash build.sh
+      - name: Build the timing-log firmware
+        run: DRIFT_DIAG=1 bash build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: firmware
+          path: out/*.bin

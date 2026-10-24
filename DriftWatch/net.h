@@ -41,6 +41,7 @@ void cancelPortal();
 Portal portalState();
 uint32_t portalSecondsLeft();
 
+void saveWifi(const char *ssid, const char *password);
 bool hasSavedWifi();
 bool timeIsValid();
 void setClockByHand(time_t t);  // the time set on the watch itself; a later sync replaces it

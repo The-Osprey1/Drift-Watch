@@ -1,0 +1,859 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Vanishing Second Hand - Master Prototype V2</title>
+  <script src="https://www.gstatic.com/antigravity/web/dev/tailwindcss.min.js"></script>
+  <style>
+    body {
+      margin: 0;
+      user-select: none;
+      -webkit-user-select: none;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    .watch-case {
+      box-shadow: 0 30px 60px -15px rgba(0, 0, 0, 0.8), 0 0 0 8px #181d24, 0 0 0 12px #2d3748, 0 0 40px rgba(0, 229, 255, 0.2);
+    }
+    input[type=range]::-webkit-slider-thumb {
+      appearance: none;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #38bdf8;
+      cursor: pointer;
+      box-shadow: 0 0 8px rgba(56, 189, 248, 0.8);
+    }
+  </style>
+</head>
+<body class="bg-transparent text-[var(--foreground)] antialiased p-4 flex flex-col items-center">
+
+  <div class="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-2xl p-6 shadow-2xl max-w-4xl w-full flex flex-col items-center">
+    
+    <!-- Header -->
+    <div class="w-full text-center mb-4">
+      <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-violet-950/60 border border-violet-500/30 text-violet-400 text-xs font-semibold tracking-wider uppercase mb-2">
+        <span class="w-2 h-2 rounded-full bg-violet-400 animate-pulse"></span>
+        Haute Horlogerie V2  EPhysical Depth & Micro-Mechanics
+      </div>
+      <h2 class="text-2xl font-bold tracking-tight text-[var(--foreground)]">The Vanishing Second Hand: Master V2</h2>
+      <p class="text-[var(--muted-foreground)] text-xs max-w-xl mx-auto mt-1">
+        Upgraded with an exposed oscillating tourbillon balance spring, physical retrograde banking micro-rebound, specular beveled aperture drop-shadows, and luxury complications.
+      </p>
+    </div>
+
+    <!-- Main Workspace: Watch Viewport + Side Controls -->
+    <div class="w-full flex flex-col lg:flex-row items-center justify-center gap-8 my-2">
+      
+      <!-- Watch Viewport -->
+      <div class="relative flex flex-col items-center">
+        <div class="watch-case w-[280px] h-[280px] rounded-full bg-neutral-950 flex items-center justify-center relative overflow-hidden">
+          <!-- 240x240 Native Round Canvas -->
+          <canvas id="watchCanvas" width="240" height="240" class="w-[240px] h-[240px] rounded-full"></canvas>
+          <!-- Sapphire Crystal Specular Reflection -->
+          <div class="absolute inset-0 pointer-events-none rounded-full bg-gradient-to-tr from-transparent via-white/4 to-white/12 opacity-70"></div>
+        </div>
+
+        <!-- Live State Banner -->
+        <div id="stateIndicator" class="mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium transition-colors duration-200">
+          Loading state...
+        </div>
+      </div>
+
+      <!-- Live Diagnostics & Physics Telemetry -->
+      <div class="flex-1 w-full flex flex-col gap-3 max-w-md">
+        
+        <!-- Telemetry Card -->
+        <div class="bg-[var(--background)]/80 border border-[var(--border)] rounded-xl p-3.5 text-xs flex flex-col gap-2">
+          <div class="flex justify-between items-center font-mono pb-2 border-b border-[var(--border)]">
+            <span class="text-[var(--muted-foreground)]">TIME TELEMETRY</span>
+            <span id="timeDisplay" class="font-bold text-cyan-400 text-sm">10:09:56.40</span>
+          </div>
+          
+          <div class="grid grid-cols-2 gap-2 text-[11px] font-mono">
+            <div class="bg-neutral-900/50 p-2 rounded border border-neutral-800">
+              <span class="text-neutral-400 block">Needle Radius:</span>
+              <span id="needleLenVal" class="text-cyan-300 font-semibold text-xs">100.0 px</span>
+            </div>
+            <div class="bg-neutral-900/50 p-2 rounded border border-neutral-800">
+              <span class="text-neutral-400 block">Z-Plane Depth:</span>
+              <span id="needleDepthVal" class="text-emerald-300 font-semibold text-xs">Surface (Z: 0)</span>
+            </div>
+            <div class="bg-neutral-900/50 p-2 rounded border border-neutral-800">
+              <span class="text-neutral-400 block">Aperture Ingestion:</span>
+              <span id="apertureStateVal" class="text-amber-300 font-semibold text-xs">0% Hidden</span>
+            </div>
+            <div class="bg-neutral-900/50 p-2 rounded border border-neutral-800">
+              <span class="text-neutral-400 block">Balance Frequency:</span>
+              <span class="text-purple-300 font-semibold text-xs">4.0 Hz (28,800 vph)</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Design Selectors -->
+        <div class="grid grid-cols-3 gap-2">
+          <button id="protoBtn1" onclick="switchProto(0)" class="px-2.5 py-2 rounded-xl border text-xs font-semibold flex flex-col items-center gap-0.5 transition-all">
+            <span class="font-bold text-xs">Haute Royal</span>
+            <span class="text-[10px] opacity-75">Obsidian/Gold</span>
+          </button>
+          <button id="protoBtn2" onclick="switchProto(1)" class="px-2.5 py-2 rounded-xl border text-xs font-semibold flex flex-col items-center gap-0.5 transition-all">
+            <span class="font-bold text-xs">Cyber Void</span>
+            <span class="text-[10px] opacity-75">Neon Quantum</span>
+          </button>
+          <button id="protoBtn3" onclick="switchProto(2)" class="px-2.5 py-2 rounded-xl border text-xs font-semibold flex flex-col items-center gap-0.5 transition-all">
+            <span class="font-bold text-xs">Ghost Eclipse</span>
+            <span class="text-[10px] opacity-75">Titanium Stealth</span>
+          </button>
+        </div>
+
+        <!-- Theme Color Accents -->
+        <div class="flex items-center justify-between bg-[var(--background)]/60 border border-[var(--border)] rounded-xl px-3 py-2 text-xs">
+          <span class="text-[var(--muted-foreground)] font-medium">Palette Accent:</span>
+          <div class="flex items-center gap-2">
+            <button onclick="setThemeAccent('#c084fc')" class="w-5 h-5 rounded-full bg-purple-500 border-2 border-white/20 hover:scale-110 transition"></button>
+            <button onclick="setThemeAccent('#38bdf8')" class="w-5 h-5 rounded-full bg-sky-400 border-2 border-white/20 hover:scale-110 transition"></button>
+            <button onclick="setThemeAccent('#f59e0b')" class="w-5 h-5 rounded-full bg-amber-500 border-2 border-white/20 hover:scale-110 transition"></button>
+            <button onclick="setThemeAccent('#10b981')" class="w-5 h-5 rounded-full bg-emerald-500 border-2 border-white/20 hover:scale-110 transition"></button>
+            <button onclick="setThemeAccent('#f43f5e')" class="w-5 h-5 rounded-full bg-rose-500 border-2 border-white/20 hover:scale-110 transition"></button>
+          </div>
+        </div>
+
+      </div>
+
+    </div>
+
+    <!-- Scrubber & Controls Panel -->
+    <div class="w-full mt-2 bg-[var(--background)]/60 border border-[var(--border)] rounded-xl p-4 flex flex-col gap-3.5">
+      
+      <!-- Time Scrubber -->
+      <div class="flex flex-col gap-1.5">
+        <div class="flex justify-between items-center text-xs">
+          <span class="font-semibold text-[var(--muted-foreground)] flex items-center gap-1.5">
+            <span>⏱️</span> Interactive Scrubber (Study the 53s ➔ 07s Vanishing Transition)
+          </span>
+          <span class="font-mono text-cyan-400 text-xs">Drag slider to scrub</span>
+        </div>
+        <input id="secSlider" type="range" min="0" max="59.99" step="0.02" value="55.0" 
+               class="w-full h-2 bg-neutral-800 rounded-lg appearance-none cursor-pointer accent-cyan-400">
+        <div class="flex justify-between text-[10px] font-mono text-[var(--muted-foreground)]">
+          <span>0s</span>
+          <span>15s</span>
+          <span>30s</span>
+          <span>45s</span>
+          <span class="text-amber-400 font-bold">55s Ingestion</span>
+          <span class="text-purple-400 font-bold">60s Eclipse</span>
+          <span class="text-cyan-400 font-bold">05s Rebound</span>
+        </div>
+      </div>
+
+      <!-- Playback Buttons & Feature Toggles -->
+      <div class="flex flex-wrap items-center justify-between gap-3 pt-2 border-t border-[var(--border)]">
+        <div class="flex items-center gap-2">
+          <button id="playPauseBtn" onclick="togglePlay()" class="px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition">
+            <span id="playIcon">⏸</span> <span id="playText">Live Play</span>
+          </button>
+          <button onclick="jumpToZone(54.0)" class="px-2.5 py-1.5 bg-[var(--card)] hover:bg-[var(--border)] text-[var(--foreground)] border border-[var(--border)] rounded-lg text-xs font-medium transition">
+            Approach (54s)
+          </button>
+          <button onclick="jumpToZone(59.5)" class="px-2.5 py-1.5 bg-[var(--card)] hover:bg-[var(--border)] text-[var(--foreground)] border border-[var(--border)] rounded-lg text-xs font-medium transition">
+            Vanished (59.5s)
+          </button>
+          <button onclick="jumpToZone(4.8)" class="px-2.5 py-1.5 bg-[var(--card)] hover:bg-[var(--border)] text-[var(--foreground)] border border-[var(--border)] rounded-lg text-xs font-medium transition">
+            Re-emerge (05s)
+          </button>
+        </div>
+
+        <!-- Mode Toggles -->
+        <div class="flex items-center gap-3 text-xs">
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input id="reboundCheck" type="checkbox" checked onchange="toggleRebound()" class="accent-cyan-400 rounded">
+            <span>Spring Rebound</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input id="smoothCheck" type="checkbox" checked onchange="toggleSmooth()" class="accent-cyan-400 rounded">
+            <span>Smooth 60 FPS</span>
+          </label>
+          <label class="flex items-center gap-1.5 cursor-pointer">
+            <input id="rotateCheck" type="checkbox" onchange="toggleRotate()" class="accent-cyan-400 rounded">
+            <span>90° CW Shift</span>
+          </label>
+        </div>
+      </div>
+
+    </div>
+
+    <!-- Architectural Deep Dive -->
+    <div class="w-full mt-4 p-4 rounded-xl bg-neutral-900/60 border border-neutral-800 text-xs text-neutral-300 flex flex-col gap-2">
+      <div class="font-semibold text-cyan-400 flex items-center gap-1.5">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z"></path></svg>
+        <span id="protoTitle">Design 1: Haute Royal (Mechanical Tourbillon Aperture)</span>
+      </div>
+      <p id="protoDesc" class="leading-relaxed text-neutral-400">
+        Features an active 4 Hz oscillating balance wheel inside the exposed aperture. When the hand hits 55s, the overhanging dial casts a realistic drop shadow across the needle as it slides underneath into the chamber. At 05s, it springs out with authentic mechanical damped oscillation.
+      </p>
+    </div>
+
+  </div>
+
+  <script>
+    const canvas = document.getElementById('watchCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let currentProto = 0;
+    let isLive = true;
+    let smoothSweep = true;
+    let isRotated = false;
+    let enableRebound = true;
+    let scrubbedSec = 55.0;
+    let lastTimestamp = performance.now();
+    let themeAccent = '#c084fc'; // Default royal violet
+
+    const CX = 120;
+    const CY = 120;
+    const RADIUS = 118;
+
+    const PROTO_INFO = [
+      {
+        title: "Design 1: Haute Royal (Mechanical Tourbillon Aperture)",
+        desc: "Exposes a working balance wheel with breathing hairspring inside a deep beveled aperture. The needle contracts under a realistic drop-shadow at 55s, disappears entirely, and springs out at 05s with a mechanical damped rebound.",
+        dialBg: "#0c0b12",
+        secColor: "#c084fc"
+      },
+      {
+        title: "Design 2: Cyber Void (Event Horizon Singularity)",
+        desc: "A futuristic quantum portal with pulsing laser grids. As the cyan needle reaches 55s, it disintegrates into floating energy particles, traverses the singularity unseen, and fires an energetic flare upon re-ignition at 05s.",
+        dialBg: "#050811",
+        secColor: "#06b6d4"
+      },
+      {
+        title: "Design 3: Ghost Eclipse (Titanium Monolith Minimalist)",
+        desc: "Inspired by Ressence and Moser & Cie. Ultra-clean negative space with smoked sapphire gradient masking. The second hand slides under a smoked glass barrier, creating an eerie, perfectly fluid vanishing transition.",
+        dialBg: "#0a0a0a",
+        secColor: "#f59e0b"
+      }
+    ];
+
+    function updateProtoUI() {
+      for (let i = 0; i < 3; i++) {
+        const btn = document.getElementById(`protoBtn${i+1}`);
+        if (i === currentProto) {
+          btn.className = "px-2.5 py-2 rounded-xl border border-cyan-400 bg-cyan-950/40 text-cyan-300 text-xs font-semibold flex flex-col items-center gap-0.5 shadow-sm shadow-cyan-500/20";
+        } else {
+          btn.className = "px-2.5 py-2 rounded-xl border border-[var(--border)] bg-[var(--card)] hover:bg-[var(--border)]/50 text-[var(--muted-foreground)] text-xs font-semibold flex flex-col items-center gap-0.5";
+        }
+      }
+      document.getElementById('protoTitle').innerText = PROTO_INFO[currentProto].title;
+      document.getElementById('protoDesc').innerText = PROTO_INFO[currentProto].desc;
+      themeAccent = PROTO_INFO[currentProto].secColor;
+    }
+
+    function switchProto(idx) {
+      currentProto = idx;
+      updateProtoUI();
+    }
+
+    function setThemeAccent(hex) {
+      themeAccent = hex;
+    }
+
+    function togglePlay() {
+      isLive = !isLive;
+      document.getElementById('playIcon').innerText = isLive ? "⏸" : "▶";
+      document.getElementById('playText').innerText = isLive ? "Live Play" : "Paused";
+      document.getElementById('playPauseBtn').className = isLive 
+        ? "px-3.5 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition"
+        : "px-3.5 py-1.5 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition";
+    }
+
+    function jumpToZone(sec) {
+      isLive = false;
+      scrubbedSec = sec;
+      document.getElementById('secSlider').value = sec;
+      document.getElementById('playIcon').innerText = "▶";
+      document.getElementById('playText').innerText = "Paused";
+      document.getElementById('playPauseBtn').className = "px-3.5 py-1.5 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition";
+    }
+
+    function toggleSmooth() {
+      smoothSweep = document.getElementById('smoothCheck').checked;
+    }
+
+    function toggleRotate() {
+      isRotated = document.getElementById('rotateCheck').checked;
+    }
+
+    function toggleRebound() {
+      enableRebound = document.getElementById('reboundCheck').checked;
+    }
+
+    document.getElementById('secSlider').addEventListener('input', (e) => {
+      isLive = false;
+      scrubbedSec = parseFloat(e.target.value);
+      document.getElementById('playIcon').innerText = "▶";
+      document.getElementById('playText').innerText = "Paused";
+      document.getElementById('playPauseBtn').className = "px-3.5 py-1.5 bg-neutral-700 hover:bg-neutral-600 text-white rounded-lg text-xs font-semibold flex items-center gap-1.5 transition";
+    });
+
+    // Polar coordinates helper
+    function polar(angleDeg, dist) {
+      let a = (angleDeg - 90) * Math.PI / 180;
+      if (isRotated) a += Math.PI / 2;
+      return {
+        x: CX + Math.cos(a) * dist,
+        y: CY + Math.sin(a) * dist
+      };
+    }
+
+    // Main animation loop
+    function animate(now) {
+      const dt = (now - lastTimestamp) / 1000;
+      lastTimestamp = now;
+
+      let currentSeconds;
+      let d = new Date();
+
+      if (isLive) {
+        if (smoothSweep) {
+          currentSeconds = d.getSeconds() + d.getMilliseconds() / 1000;
+        } else {
+          currentSeconds = d.getSeconds();
+        }
+        scrubbedSec = currentSeconds;
+        document.getElementById('secSlider').value = currentSeconds;
+      } else {
+        currentSeconds = scrubbedSec;
+      }
+
+      // Update time string
+      const hrs = String(d.getHours()).padStart(2, '0');
+      const mins = String(d.getMinutes()).padStart(2, '0');
+      const secs = String(Math.floor(currentSeconds)).padStart(2, '0');
+      const ms = String(Math.floor((currentSeconds % 1) * 100)).padStart(2, '0');
+      document.getElementById('timeDisplay').innerText = `${hrs}:${mins}:${secs}.${ms}`;
+
+      // Clear Canvas
+      ctx.clearRect(0, 0, 240, 240);
+
+      if (currentProto === 0) {
+        renderHauteMechanicalV2(currentSeconds, now);
+      } else if (currentProto === 1) {
+        renderQuantumHorizonV2(currentSeconds, now);
+      } else {
+        renderGhostEclipseV2(currentSeconds, now);
+      }
+
+      requestAnimationFrame(animate);
+    }
+
+    // -------------------------------------------------------------
+    // PROTOTYPE 1: Haute Mechanical V2 (Tourbillon + Spring Rebound)
+    // -------------------------------------------------------------
+    function renderHauteMechanicalV2(sec, timeMs) {
+      const statusEl = document.getElementById('stateIndicator');
+      const lenEl = document.getElementById('needleLenVal');
+      const depthEl = document.getElementById('needleDepthVal');
+      const hiddenEl = document.getElementById('apertureStateVal');
+
+      // 1. Dial Base (Sunburst Texture effect)
+      const grad = ctx.createRadialGradient(CX, CY, 15, CX, CY, RADIUS);
+      grad.addColorStop(0, '#151322');
+      grad.addColorStop(0.7, '#0c0a14');
+      grad.addColorStop(1, '#050409');
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Sunburst lines
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.02)';
+      ctx.lineWidth = 1;
+      for (let a = 0; a < 360; a += 15) {
+        let p1 = polar(a, 35);
+        let p2 = polar(a, RADIUS - 4);
+        ctx.beginPath();
+        ctx.moveTo(p1.x, p1.y);
+        ctx.lineTo(p2.x, p2.y);
+        ctx.stroke();
+      }
+
+      // 2. The Recessed Tourbillon Aperture (Sector 328° to 32°)
+      ctx.save();
+      ctx.beginPath();
+      let pA = polar(328, RADIUS - 4);
+      let pB = polar(32, RADIUS - 4);
+      let pC = polar(0, 26);
+      ctx.moveTo(pC.x, pC.y);
+      ctx.lineTo(pA.x, pA.y);
+      let startA = (328 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      let endA = (32 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      ctx.arc(CX, CY, RADIUS - 4, startA, endA);
+      ctx.closePath();
+      
+      // Deep inner mechanical well
+      ctx.fillStyle = '#040306';
+      ctx.fill();
+      ctx.clip();
+
+      // Exposed Tourbillon: 4Hz Balance wheel oscillation
+      let oscAngle = Math.sin(timeMs / 125 * Math.PI) * 1.4; // 4 beats per second
+      let balanceCenter = polar(0, 78);
+      
+      // Balance rim
+      ctx.strokeStyle = '#d4af37'; // Horological gold
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.arc(balanceCenter.x, balanceCenter.y, 22, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Balance arms & adjusting screws
+      for (let i = 0; i < 3; i++) {
+        let armA = oscAngle + (i * Math.PI * 2 / 3);
+        ctx.strokeStyle = '#ecd68a';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(balanceCenter.x, balanceCenter.y);
+        ctx.lineTo(balanceCenter.x + Math.cos(armA) * 22, balanceCenter.y + Math.sin(armA) * 22);
+        ctx.stroke();
+        // Screw dot
+        ctx.fillStyle = '#fef08a';
+        ctx.beginPath();
+        ctx.arc(balanceCenter.x + Math.cos(armA) * 20, balanceCenter.y + Math.sin(armA) * 20, 1.5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Breathing Hairspring spiral
+      ctx.strokeStyle = '#60a5fa'; // Blued steel hairspring
+      ctx.lineWidth = 0.9;
+      ctx.beginPath();
+      let breath = 1.0 + Math.sin(timeMs / 125 * Math.PI) * 0.12;
+      for (let theta = 0; theta < Math.PI * 6; theta += 0.3) {
+        let r = (2 + theta * 1.5) * breath;
+        let sx = balanceCenter.x + Math.cos(oscAngle + theta) * r;
+        let sy = balanceCenter.y + Math.sin(oscAngle + theta) * r;
+        if (theta === 0) ctx.moveTo(sx, sy);
+        else ctx.lineTo(sx, sy);
+      }
+      ctx.stroke();
+
+      // Escapement ruby jewel
+      ctx.fillStyle = '#f43f5e';
+      ctx.beginPath();
+      ctx.arc(balanceCenter.x, balanceCenter.y, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+
+      // 3. Specular Metallic Bevels on Aperture Edges
+      ctx.strokeStyle = '#8b5cf6'; // Violet metallic bevel
+      ctx.lineWidth = 2.0;
+      ctx.beginPath();
+      ctx.moveTo(pA.x, pA.y);
+      ctx.lineTo(pC.x, pC.y);
+      ctx.lineTo(pB.x, pB.y);
+      ctx.stroke();
+
+      // Realistic deep drop-shadow cast by the dial plate into the well
+      let shadowGrad = ctx.createLinearGradient(pA.x, pA.y, pA.x + 8, pA.y + 12);
+      shadowGrad.addColorStop(0, 'rgba(0,0,0,0.9)');
+      shadowGrad.addColorStop(1, 'rgba(0,0,0,0.0)');
+      ctx.strokeStyle = shadowGrad;
+      ctx.lineWidth = 5;
+      ctx.beginPath();
+      ctx.moveTo(pA.x, pA.y);
+      ctx.lineTo(pC.x, pC.y);
+      ctx.stroke();
+
+      // 4. Dial Complications: Power Reserve & Date Window
+      // Power Reserve Arc at 6 o'clock
+      let prStart = (135 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      let prEnd = (225 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      ctx.strokeStyle = '#27203a';
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS - 18, prStart, prEnd);
+      ctx.stroke();
+      // Power level (78% charged)
+      let prFill = (135 + 90 * 0.78 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      ctx.strokeStyle = '#a855f7';
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS - 18, prStart, prFill);
+      ctx.stroke();
+
+      // Date window at 3 o'clock
+      let dPt = polar(90, 68);
+      ctx.fillStyle = '#0a0812';
+      ctx.strokeStyle = '#4c3f66';
+      ctx.lineWidth = 1.2;
+      ctx.fillRect(dPt.x - 14, dPt.y - 8, 28, 16);
+      ctx.strokeRect(dPt.x - 14, dPt.y - 8, 28, 16);
+      ctx.fillStyle = '#e2e8f0';
+      ctx.font = 'bold 9px system-ui';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      ctx.fillText('24', dPt.x, dPt.y + 0.5);
+
+      // Hour markers (Faceted silver batons)
+      for (let h = 1; h <= 12; h++) {
+        let deg = h * 30;
+        if (deg >= 330 || deg <= 30) continue; // Cut out in aperture
+        let t1 = polar(deg, RADIUS - 16);
+        let t2 = polar(deg, RADIUS - 6);
+        ctx.strokeStyle = h % 3 === 0 ? '#f1f5f9' : '#645680';
+        ctx.lineWidth = h % 3 === 0 ? 3.0 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(t1.x, t1.y);
+        ctx.lineTo(t2.x, t2.y);
+        ctx.stroke();
+      }
+
+      // Hour & Minute Hands (Dauphine Faceted Hands)
+      drawFacetedHand(10 * 30 + 9 * 0.5, 52, 4.8, '#f8fafc', '#94a3b8');
+      drawFacetedHand(9 * 6 + sec * 0.1, 86, 3.2, '#e2e8f0', '#64748b');
+
+      // 5. The Master Vanishing Second Hand (with Spring Rebound)
+      let secDeg = sec * 6;
+      let state = "Visible Sweep";
+      let statusBg = "bg-emerald-950/70 border border-emerald-500/40 text-emerald-400";
+      let maxLen = 101;
+      let len = maxLen;
+      let depthText = "Surface (Z: 0)";
+      let hiddenPct = 0;
+      let drawAngle = secDeg;
+
+      if (secDeg >= 30 && secDeg <= 330) {
+        len = maxLen;
+        hiddenPct = 0;
+      } else if (secDeg > 330 && secDeg <= 352) {
+        // INGESTION: Sinking under the guillotine bevel lip
+        let f = (352 - secDeg) / 22; // 1.0 down to 0.0
+        hiddenPct = Math.round((1 - f) * 100);
+        len = 22 + (maxLen - 22) * f;
+        depthText = `Descending Sub-Dial (-${Math.round((1-f)*5)}mm)`;
+        state = `Ingestion: Diving under Lip (${hiddenPct}% inside)`;
+        statusBg = "bg-amber-950/70 border border-amber-500/40 text-amber-400";
+      } else if (secDeg > 352 || secDeg < 8) {
+        // TOTAL ECLIPSE: Inside the void
+        len = 0;
+        hiddenPct = 100;
+        depthText = "Subterranean Void (Z: -5mm)";
+        state = "Total Eclipse (Hand Completely Invisible)";
+        statusBg = "bg-purple-950/80 border border-purple-500/60 text-purple-300 shadow-sm shadow-purple-500/20";
+      } else { // 8° to 30°
+        // RE-EMERGENCE with Mechanical Rebound
+        let f = (secDeg - 8) / 22; // 0.0 up to 1.0
+        hiddenPct = Math.round((1 - f) * 100);
+        len = 22 + (maxLen - 22) * f;
+        depthText = "Emerging to Surface";
+        
+        // Damped harmonic oscillation simulating needle striking the banking pin
+        if (enableRebound && f < 0.6) {
+          let reboundDamp = Math.exp(-f * 8.0) * Math.sin(f * Math.PI * 4.0);
+          drawAngle += reboundDamp * 1.8; // micro-vibration in degrees
+        }
+
+        state = `Re-emergence & Spring Settling (${Math.round(f * 100)}%)`;
+        statusBg = "bg-cyan-950/70 border border-cyan-500/40 text-cyan-400";
+      }
+
+      // Update telemetry
+      statusEl.innerText = `Status: ${state}`;
+      statusEl.className = `mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium transition-colors duration-200 ${statusBg}`;
+      lenEl.innerText = `${len.toFixed(1)} px`;
+      depthEl.innerText = depthText;
+      hiddenEl.innerText = `${hiddenPct}% Hidden`;
+
+      // Draw Second Hand
+      if (len > 0) {
+        let tip = polar(drawAngle, len);
+        let tail = polar(drawAngle + 180, 18);
+        ctx.strokeStyle = themeAccent;
+        ctx.lineWidth = 1.9;
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        ctx.moveTo(tail.x, tail.y);
+        ctx.lineTo(tip.x, tip.y);
+        ctx.stroke();
+
+        // Counterbalance disc
+        let disc = polar(drawAngle + 180, 13);
+        ctx.fillStyle = themeAccent;
+        ctx.beginPath();
+        ctx.arc(disc.x, disc.y, 3.2, 0, Math.PI * 2);
+        ctx.fill();
+      }
+
+      // Center Cannon Pinion Cap
+      ctx.fillStyle = '#1e1b2e';
+      ctx.beginPath();
+      ctx.arc(CX, CY, 5.5, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = themeAccent;
+      ctx.beginPath();
+      ctx.arc(CX, CY, 2.2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // -------------------------------------------------------------
+    // PROTOTYPE 2: Quantum Void V2 (Particle Singularity)
+    // -------------------------------------------------------------
+    function renderQuantumHorizonV2(sec, timeMs) {
+      const statusEl = document.getElementById('stateIndicator');
+      const lenEl = document.getElementById('needleLenVal');
+      const depthEl = document.getElementById('needleDepthVal');
+      const hiddenEl = document.getElementById('apertureStateVal');
+
+      // Dial Base
+      ctx.fillStyle = '#030712';
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Cybernetic circuit traces
+      ctx.strokeStyle = '#0f172a';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS - 6, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Quantum Portal Aperture
+      ctx.save();
+      let pA = polar(328, RADIUS - 4);
+      let pB = polar(32, RADIUS - 4);
+      let pC = polar(0, 24);
+      ctx.beginPath();
+      ctx.moveTo(pC.x, pC.y);
+      ctx.lineTo(pA.x, pA.y);
+      let startA = (328 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      let endA = (32 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      ctx.arc(CX, CY, RADIUS - 4, startA, endA);
+      ctx.closePath();
+      ctx.fillStyle = '#010409';
+      ctx.fill();
+      ctx.clip();
+
+      // Singularity Vortex in chamber
+      let vortexPulse = (Math.sin(timeMs / 180) + 1) * 0.5;
+      let vGrad = ctx.createRadialGradient(CX, CY - 40, 5, CX, CY - 40, 50);
+      vGrad.addColorStop(0, `rgba(6, 182, 212, ${0.4 * vortexPulse})`);
+      vGrad.addColorStop(1, 'rgba(2, 6, 23, 0)');
+      ctx.fillStyle = vGrad;
+      ctx.fillRect(CX - 50, CY - 90, 100, 100);
+      ctx.restore();
+
+      // Neon Portal Boundary
+      ctx.strokeStyle = '#06b6d4';
+      ctx.shadowColor = '#06b6d4';
+      ctx.shadowBlur = 10;
+      ctx.lineWidth = 1.8;
+      ctx.beginPath();
+      ctx.moveTo(pA.x, pA.y);
+      ctx.lineTo(pC.x, pC.y);
+      ctx.lineTo(pB.x, pB.y);
+      ctx.stroke();
+      ctx.shadowBlur = 0;
+
+      // Digital hour notches
+      for (let h = 0; h < 12; h++) {
+        let deg = h * 30;
+        if (deg >= 330 || deg <= 30) continue;
+        let t1 = polar(deg, RADIUS - 14);
+        let t2 = polar(deg, RADIUS - 6);
+        ctx.strokeStyle = h % 3 === 0 ? '#38bdf8' : '#1e293b';
+        ctx.lineWidth = h % 3 === 0 ? 3.0 : 1.5;
+        ctx.beginPath();
+        ctx.moveTo(t1.x, t1.y);
+        ctx.lineTo(t2.x, t2.y);
+        ctx.stroke();
+      }
+
+      // Hands
+      drawFacetedHand(10 * 30 + 9 * 0.5, 50, 4.5, '#f8fafc', '#0284c7');
+      drawFacetedHand(9 * 6 + sec * 0.1, 84, 3.0, '#38bdf8', '#0369a1');
+
+      // Needle Dissolve Logic
+      let secDeg = sec * 6;
+      let maxLen = 98;
+      let len = maxLen;
+      let hiddenPct = 0;
+
+      if (secDeg >= 30 && secDeg <= 330) {
+        len = maxLen;
+        drawLaserNeedle(secDeg, len, '#06b6d4', 2.0);
+        statusEl.innerText = "Status: Stable Quantum Trajectory";
+        statusEl.className = "mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium bg-emerald-950/70 border border-emerald-500/40 text-emerald-400";
+        depthEl.innerText = "Coherent Beam";
+      } else if (secDeg > 330 && secDeg <= 350) {
+        let f = (350 - secDeg) / 20;
+        hiddenPct = Math.round((1 - f) * 100);
+        len = 24 + (maxLen - 24) * f;
+        drawLaserNeedle(secDeg, len, '#06b6d4', 2.0 * f);
+        
+        // Dissolving sparks
+        for (let i = 0; i < 5; i++) {
+          let sparkPt = polar(secDeg + (Math.sin(timeMs / 40 + i) * 8), len + (i + 1) * 6 * (1 - f));
+          ctx.fillStyle = `rgba(34, 211, 238, ${f * 0.9})`;
+          ctx.beginPath();
+          ctx.arc(sparkPt.x, sparkPt.y, 2.0, 0, Math.PI * 2);
+          ctx.fill();
+        }
+        statusEl.innerText = `Status: Singularity Dissolution (${hiddenPct}% scattered)`;
+        statusEl.className = "mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium bg-cyan-950/70 border border-cyan-500/40 text-cyan-400";
+        depthEl.innerText = "Scattering Particles";
+      } else if (secDeg > 350 || secDeg < 10) {
+        len = 0;
+        hiddenPct = 100;
+        statusEl.innerText = "Status: Zero Signal (Tachyon Transit)";
+        statusEl.className = "mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium bg-blue-950/80 border border-blue-500/60 text-blue-300 shadow-sm shadow-blue-500/20";
+        depthEl.innerText = "Trans-Dimensional";
+      } else {
+        let f = (secDeg - 10) / 20;
+        hiddenPct = Math.round((1 - f) * 100);
+        len = 24 + (maxLen - 24) * f;
+        drawLaserNeedle(secDeg, len, '#06b6d4', 1.0 + f * 1.2);
+        statusEl.innerText = `Status: Materialization Ignition (${Math.round(f * 100)}%)`;
+        statusEl.className = "mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium bg-sky-950/70 border border-sky-500/40 text-sky-400";
+        depthEl.innerText = "Coalescing Beam";
+      }
+
+      lenEl.innerText = `${len.toFixed(1)} px`;
+      hiddenEl.innerText = `${hiddenPct}% Hidden`;
+
+      // Pivot
+      ctx.fillStyle = '#020617';
+      ctx.beginPath();
+      ctx.arc(CX, CY, 6, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = '#22d3ee';
+      ctx.beginPath();
+      ctx.arc(CX, CY, 2.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // -------------------------------------------------------------
+    // PROTOTYPE 3: Ghost Eclipse V2 (Titanium Minimalist)
+    // -------------------------------------------------------------
+    function renderGhostEclipseV2(sec, timeMs) {
+      const statusEl = document.getElementById('stateIndicator');
+      const lenEl = document.getElementById('needleLenVal');
+      const depthEl = document.getElementById('needleDepthVal');
+      const hiddenEl = document.getElementById('apertureStateVal');
+
+      // Monolithic Titanium Matte
+      ctx.fillStyle = '#0f1115';
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Ultra-clean hour markers
+      for (let h = 1; h <= 12; h++) {
+        let deg = h * 30;
+        let t1 = polar(deg, RADIUS - 12);
+        let t2 = polar(deg, RADIUS - 4);
+        ctx.strokeStyle = h === 12 ? '#f59e0b' : '#334155';
+        ctx.lineWidth = h === 12 ? 2.5 : 1.2;
+        ctx.beginPath();
+        ctx.moveTo(t1.x, t1.y);
+        ctx.lineTo(t2.x, t2.y);
+        ctx.stroke();
+      }
+
+      // Smoked Glass Arch across 11h -> 1h
+      ctx.save();
+      let startA = (330 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      let endA = (30 - 90 + (isRotated ? 90 : 0)) * Math.PI / 180;
+      ctx.strokeStyle = '#f59e0b';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.arc(CX, CY, RADIUS - 8, startA, endA);
+      ctx.stroke();
+      ctx.restore();
+
+      // Minimalist Hands
+      drawFacetedHand(10 * 30 + 9 * 0.5, 52, 3.5, '#e2e8f0', '#475569');
+      drawFacetedHand(9 * 6 + sec * 0.1, 84, 2.5, '#cbd5e1', '#334155');
+
+      let secDeg = sec * 6;
+      let maxLen = 98;
+      let len = maxLen;
+      let hiddenPct = 0;
+
+      if (secDeg >= 30 && secDeg <= 330) {
+        len = maxLen;
+      } else if (secDeg > 330 && secDeg <= 350) {
+        let f = (350 - secDeg) / 20;
+        len = 20 + (maxLen - 20) * f;
+        hiddenPct = Math.round((1 - f) * 100);
+      } else if (secDeg > 350 || secDeg < 10) {
+        len = 0;
+        hiddenPct = 100;
+      } else {
+        let f = (secDeg - 10) / 20;
+        len = 20 + (maxLen - 20) * f;
+        hiddenPct = Math.round((1 - f) * 100);
+      }
+
+      if (len > 0) {
+        let tip = polar(secDeg, len);
+        let tail = polar(secDeg + 180, 16);
+        ctx.strokeStyle = '#f59e0b';
+        ctx.lineWidth = 1.6;
+        ctx.beginPath();
+        ctx.moveTo(tail.x, tail.y);
+        ctx.lineTo(tip.x, tip.y);
+        ctx.stroke();
+      }
+
+      statusEl.innerText = `Status: ${len === 0 ? "Smoked Glass Concealment" : "Fluid Sweep"}`;
+      statusEl.className = `mt-3 px-3 py-1 rounded-full text-xs font-mono font-medium ${len === 0 ? "bg-amber-950/80 border border-amber-500/50 text-amber-300" : "bg-neutral-800 text-neutral-300"}`;
+      lenEl.innerText = `${len.toFixed(1)} px`;
+      depthEl.innerText = len === 0 ? "Masked Behind Tint" : "Front Layer";
+      hiddenEl.innerText = `${hiddenPct}% Hidden`;
+
+      // Pivot
+      ctx.fillStyle = '#000';
+      ctx.beginPath();
+      ctx.arc(CX, CY, 4, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // Faceted 3D Watch Hand Helper
+    function drawFacetedHand(deg, len, width, lightSide, darkSide) {
+      let tip = polar(deg, len);
+      let tail = polar(deg + 180, 12);
+      let leftFlank = polar(deg - 90, width);
+      let rightFlank = polar(deg + 90, width);
+
+      // Light side polygon
+      ctx.fillStyle = lightSide;
+      ctx.beginPath();
+      ctx.moveTo(tail.x, tail.y);
+      ctx.lineTo(leftFlank.x, leftFlank.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.closePath();
+      ctx.fill();
+
+      // Dark side polygon
+      ctx.fillStyle = darkSide;
+      ctx.beginPath();
+      ctx.moveTo(tail.x, tail.y);
+      ctx.lineTo(rightFlank.x, rightFlank.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.closePath();
+      ctx.fill();
+    }
+
+    function drawLaserNeedle(deg, len, color, width) {
+      let tip = polar(deg, len);
+      let tail = polar(deg + 180, 16);
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.moveTo(tail.x, tail.y);
+      ctx.lineTo(tip.x, tip.y);
+      ctx.stroke();
+    }
+
+    // Initialize
+    updateProtoUI();
+    requestAnimationFrame(animate);
+  </script>
+</body>
+</html>

@@ -173,8 +173,27 @@ void closePortal(net::Portal endState) {
 
 namespace net {
 
+void saveWifi(const char *ssid, const char *password) {
+  closePortal(Portal::Saved);
+  WiFi.disconnect(true);
+  delay(50);
+  WiFi.mode(WIFI_STA);
+  wifi_config_t conf = {};
+  strlcpy((char *)conf.sta.ssid, ssid, sizeof conf.sta.ssid);
+  strlcpy((char *)conf.sta.password, password, sizeof conf.sta.password);
+  esp_wifi_set_config(WIFI_IF_STA, &conf);
+  WiFi.begin(ssid, password);
+  strlcpy(savedSsid, ssid, sizeof savedSsid);
+  setState(Sync::Connecting);
+  hal::log("net: configured Wi-Fi for %s", ssid);
+}
+
 void begin() {
   trim.setPpb(settings.driftPpb);
+  if (settings.tz.isEmpty()) {
+    settings.tz = "PST8PDT,M3.2.0,M11.1.0";
+    saveSettings();
+  }
   if (!settings.tz.isEmpty()) strlcpy(posixTz, settings.tz.c_str(), sizeof posixTz);
   setenv("TZ", posixTz, 1);
   tzset();

@@ -44,6 +44,7 @@ void rawTouch(int x, int y, int &rx, int &ry) {
 }
 }  // namespace sim
 
+HostSerial Serial;
 uint32_t millis() { return sim::clockMs; }
 uint32_t micros() { return sim::clockMs * 1000; }
 void delay(uint32_t ms) { sim::clockMs += ms; }
@@ -212,6 +213,10 @@ void setZone(const char *posix, const char *name) {
     saveSettings();
   }
   if (name) snprintf(simZone, sizeof simZone, "%s", name);
+}
+void saveWifi(const char *s, const char *p) {
+  saveNetwork(s, p);
+  startSync();
 }
 void saveNetwork(const char *s, const char *) {
   snprintf(savedSsid, sizeof savedSsid, "%s", s);

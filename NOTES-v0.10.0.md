@@ -138,7 +138,11 @@ Simulation result: **290 of 290 checks pass**, and `render_faces` finds no text 
 | **Gyroscope** | Not needed: the turn rate from the accelerometer covers the flick check, and the gyroscope draws much more power |
 | **Removing the old archived files from before the rename from the project folder** | Still an open question from v0.9.0, not part of this brief |
 
-## 10. Notes on the brief
+## 10. Merged from main
+
+The commit on main with the v0.10.0 proposals (`NOTES-v0.10.0-PROPOSALS.md`, the second-hand prototypes) was merged in unchanged: the USB serial commands `TIME:<seconds since 1970>` and `WIFI:<name>,<password>`, the Pacific time default when no zone is saved, and the COM6 port in `platformio.ini`. The simulation's stand-ins gained `Serial` and the `String` methods those commands use, so the host tests build again.
+
+## 11. Notes on the brief
 
 - The touch formula in the brief (map 1) and the usual TFT_eSPI meaning of `setRotation(1)` (map 3) disagree. The touch check settles it on the real watch.
 - The motion sensor's two interrupt lines are on GPIO 4 and GPIO 3, not both on GPIO 4.

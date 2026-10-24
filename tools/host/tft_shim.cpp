@@ -311,12 +311,16 @@ int16_t TFT_eSPI::drawString(const char *s, int32_t x, int32_t y) {
 }
 
 // ---- Sprites -------------------------------------------------------------------
-int spriteBudget16 = -1;
+int spriteBudget16 = -1, spriteBudget8 = -1;
 
 void *TFT_eSprite::createSprite(int16_t w, int16_t h) {
   if (depth_ == 16 && spriteBudget16 >= 0) {
     if (spriteBudget16 == 0) return nullptr;
     spriteBudget16--;
+  }
+  if (depth_ == 8 && spriteBudget8 >= 0) {
+    if (spriteBudget8 == 0) return nullptr;
+    spriteBudget8--;
   }
   w_ = w;
   h_ = h;

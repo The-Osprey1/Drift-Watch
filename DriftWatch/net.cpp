@@ -34,6 +34,7 @@ int64_t clockStartWall = 0;  // wall clock (ms) when the time server was asked, 
 uint32_t clockStartMs = 0;
 char zone[40] = "";
 char savedSsid[33] = "";
+constexpr const char *DEFAULT_POSIX_TZ = "PST8PDT,M3.2.0,M11.1.0";  // US Pacific, until Auto finds the zone
 char posixTz[64] = "UTC0";
 
 WiFiManager *wm = nullptr;
@@ -190,11 +191,10 @@ void saveWifi(const char *ssid, const char *password) {
 
 void begin() {
   trim.setPpb(settings.driftPpb);
-  if (settings.tz.isEmpty()) {
-    settings.tz = "PST8PDT,M3.2.0,M11.1.0";
-    saveSettings();
-  }
-  if (!settings.tz.isEmpty()) strlcpy(posixTz, settings.tz.c_str(), sizeof posixTz);
+  // An empty settings.tz means Auto (look the zone up on each sync), so the Pacific default
+  // is only the zone in use until a lookup answers. It is never saved: saving it would turn
+  // Auto into a fixed zone on the first start.
+  strlcpy(posixTz, settings.tz.isEmpty() ? DEFAULT_POSIX_TZ : settings.tz.c_str(), sizeof posixTz);
   setenv("TZ", posixTz, 1);
   tzset();
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason = info.wifi_sta_disconnected.reason; },
@@ -251,7 +251,7 @@ void poll() {
           strlcpy(posixTz, zoneResultPosix, sizeof posixTz);
           hal::log("net: zone %s -> %s", zone, posixTz);
         }
-        startClock();  // falls back to the last known zone, or UTC
+        startClock();  // falls back to the last known zone, or the Pacific default
       }
       break;
     case Sync::Clock:

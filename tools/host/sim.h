@@ -11,6 +11,7 @@
 namespace sim {
 extern uint32_t clockMs;          // advanced by hal::idle()
 extern bool fingerDown, bootDown, cold, clockSet;
+extern bool touchFails;           // the touch chip stops answering (a dropped I2C read)
 extern int16_t fingerX, fingerY;
 extern int batteryMv;
 extern time_t epochAtZero;        // wall-clock time when clockMs was 0

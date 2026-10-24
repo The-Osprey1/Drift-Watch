@@ -42,10 +42,17 @@ class String {
   std::string s_;
 };
 
-// Serial: the simulation sends nothing in, and what the watch prints is dropped.
+// Serial: the simulation types into `in` (bytes not yet read), and what the watch prints is
+// dropped.
 struct HostSerial {
-  int available() { return 0; }
-  String readStringUntil(char) { return String(); }
+  std::string in;
+  int available() { return (int)in.size(); }
+  int read() {
+    if (in.empty()) return -1;
+    int c = (unsigned char)in[0];
+    in.erase(0, 1);
+    return c;
+  }
   template <class... A> void printf(const char *, A...) {}
 };
 extern HostSerial Serial;

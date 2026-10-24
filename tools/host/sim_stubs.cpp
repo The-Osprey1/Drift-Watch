@@ -14,6 +14,7 @@
 namespace sim {
 uint32_t clockMs = 0;
 bool fingerDown = false, bootDown = false, cold = true, clockSet = false;
+bool touchFails = false;
 int16_t fingerX = 120, fingerY = 120;
 int batteryMv = 3950;
 time_t epochAtZero = 1792788510;  // 2026-10-23 20:48:30 UTC
@@ -103,6 +104,8 @@ uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? sim::imuLineEdges[
 namespace touch {
 bool begin() { return true; }
 bool read(TouchSample &out) {
+  out.down = false;
+  if (sim::touchFails) return false;
   out.down = sim::fingerDown;
   int rx, ry;
   sim::rawTouch(sim::fingerX, sim::fingerY, rx, ry);

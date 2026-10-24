@@ -11,5 +11,5 @@ struct TouchSample {
 
 namespace touch {
 bool begin();                // true if the touch chip answered
-bool read(TouchSample &out); // false if the chip did not answer (treat as no finger)
+bool read(TouchSample &out); // false if the chip did not answer: says nothing about the finger
 }

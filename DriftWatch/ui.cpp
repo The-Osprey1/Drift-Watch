@@ -12,6 +12,7 @@
 #include "phone.h"
 #include "raise.h"
 #include "screens.h"
+#include "serial_cmd.h"
 #include "settings.h"
 #include "theme.h"
 #include "touch.h"
@@ -38,6 +39,8 @@ constexpr uint32_t CHECK_RESULT_MS = 1400;             // touch check result sta
 constexpr uint32_t BOOT_CHECK_MS = 4000;               // holding BOOT this long opens the touch check anywhere
 constexpr uint32_t KNOWN_TIME_SAVE_S = 3600;           // remember the clock in flash at most hourly
 constexpr uint32_t SPRING_MAX_MS = 450;                // a spring slide always ends by then
+constexpr uint32_t TOUCH_DROPOUT_MS = 50;              // failed touch reads this long end a touch, without acting
+constexpr int SERIAL_BYTES_PER_POLL = 256;             // bounds the time one poll spends on serial input
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
 
@@ -49,6 +52,7 @@ TFT_eSprite spriteA(&tft), spriteB(&tft), cache(&tft);
 // They swap when a transition finishes, so nothing is redrawn twice.
 TFT_eSprite *cur = &spriteA, *nb = &spriteB;
 bool haveSpare = false, haveCache = false;
+bool haveFrame = true;  // false if not even an 8-bit frame fitted: only the memory notice shows
 
 Mode mode = Mode::Boot;
 bool awake = true;
@@ -121,6 +125,7 @@ struct Finger {
   uint32_t t0 = 0, lastMoveAt = 0, lastSampleAt = 0;
   float vx = 0, vy = 0;   // smoothed velocity, px per ms
 } finger;
+bool touchFailing = false;  // the last touch read got no answer from the chip
 
 // The one transition that can be running. A new touch takes over a face
 // slide where it is, so swipes never queue up.
@@ -1182,6 +1187,20 @@ void onFingerUp() {
   }
 }
 
+// The touch chip stopped answering in the middle of a touch. Its last report was a finger
+// still down, so this is not a release: nothing under the finger acts, and a face being
+// dragged springs back to where it started.
+void cancelFinger() {
+  finger.down = false;
+  if (finger.ignore) return;
+  if (tr.kind == Slide::Face && tr.dragging) springTo(0, 0);
+  if (pressed != screens::Button::None) {
+    pressed = screens::Button::None;
+    refreshScreen(true);
+  }
+  dirty = true;  // clears a started hold ring
+}
+
 // Holding - or + on the set time screen steps again and again, faster after a while.
 void stepRepeat() {
   using screens::Button;
@@ -1265,30 +1284,43 @@ void stepBootCheck() {
   openTouchCheck(Mode::Face, screens::Button::None);
 }
 
-void pollInput() {
-  if (Serial.available()) {
-    String line = Serial.readStringUntil('\n');
-    line.trim();
-    if (line.startsWith("TIME:")) {
-      time_t t = (time_t)line.substring(5).toInt();
-      if (t > 100000) {
-        net::setClockByHand(t);
-        dirty = true;
-        cacheValid = false;
-        Serial.printf("Time set to %ld\n", (long)t);
-      }
-    } else if (line.startsWith("WIFI:")) {
-      int comma = line.indexOf(',');
-      if (comma > 5) {
-        String s = line.substring(5, comma);
-        String p = line.substring(comma + 1);
-        net::saveWifi(s.c_str(), p.c_str());
-        Serial.printf("Configuring Wi-Fi for SSID: %s\n", s.c_str());
-      }
-    }
+void runSerialCommand(const char *line) {
+  serialcmd::Command cmd = serialcmd::parse(line);
+  if (cmd.kind == serialcmd::Kind::Time) {
+    net::setClockByHand(cmd.time);
+    dirty = true;
+    cacheValid = false;
+    Serial.printf("Time set to %ld\n", (long)cmd.time);
+  } else if (cmd.kind == serialcmd::Kind::Wifi) {
+    net::saveWifi(cmd.ssid, cmd.password);
+    Serial.printf("Configuring Wi-Fi for SSID: %s\n", cmd.ssid);
   }
+}
+
+// Takes only the bytes already waiting, so a line sent in pieces never stalls the interface.
+void pollSerial() {
+  static serialcmd::LineBuffer lineIn;
+  for (int n = 0; n < SERIAL_BYTES_PER_POLL && Serial.available() > 0; n++) {
+    int c = Serial.read();
+    if (c < 0) break;
+    if (lineIn.push((char)c)) runSerialCommand(lineIn.line());
+  }
+}
+
+void pollInput() {
+  pollSerial();
   TouchSample s{};
-  touch::read(s);
+  if (!touch::read(s)) {
+    // The shared I2C bus can drop a read. That says nothing about the finger, so the touch
+    // carries on as it was; only a run of failures ends it, and then without acting.
+    static uint32_t failingSince = 0;
+    if (!touchFailing) failingSince = hal::ms();
+    touchFailing = true;
+    if (finger.down && since(failingSince) >= TOUCH_DROPOUT_MS) cancelFinger();
+    pollBoot();
+    return;
+  }
+  touchFailing = false;
   // The chip reports positions in the panel's own frame; turn them to match the screen.
   rawX = s.x;
   rawY = s.y;
@@ -1406,6 +1438,21 @@ void stepDiag() {
   diag.lastLog = hal::ms();
 }
 #endif
+
+// Not even an 8-bit frame fitted in memory, so nothing can be drawn the usual way. This
+// writes straight to the panel, which needs no frame, so the screen says why it is blank.
+void showNoMemory() {
+  tft.fillScreen(TFT_BLACK);
+  tft.setTextDatum(MC_DATUM);
+  tft.setTextColor(col::CYAN, TFT_BLACK);
+  tft.setTextFont(4);
+  tft.drawString("DRIFT", W / 2, 90);
+  tft.setTextColor(col::TEXT_2, TFT_BLACK);
+  tft.setTextFont(2);
+  tft.drawString("Out of memory", W / 2, 130);
+  tft.drawString("Restart the watch", W / 2, 152);
+  hal::backlight(backlightLevel());
+}
 }  // namespace
 
 namespace ui {
@@ -1446,15 +1493,20 @@ void begin() {
   // PSRAM the watch still works, with cuts instead of slides.
   haveSpare = haveCache = false;
   bool a = spriteA.createSprite(W, H) != nullptr;
+  haveFrame = true;
   if (!a) {
     spriteA.setColorDepth(8);
-    spriteA.createSprite(W, H);
+    haveFrame = spriteA.createSprite(W, H) != nullptr;
   } else {
     haveSpare = spriteB.createSprite(W, H) != nullptr;
     haveCache = cache.createSprite(W, H) != nullptr;
   }
-  hal::log("ui: frame %s, spare %s, cache %s, free psram %lu", a ? "16-bit" : "8-bit", haveSpare ? "yes" : "no",
+  hal::log("ui: frame %s, spare %s, cache %s, free psram %lu", a ? "16-bit" : haveFrame ? "8-bit" : "none", haveSpare ? "yes" : "no",
            haveCache ? "yes" : "no", (unsigned long)hal::freePsram());
+  if (!haveFrame) {
+    showNoMemory();
+    return;
+  }
 
   touch::begin();
   imu::begin();
@@ -1486,6 +1538,10 @@ void begin() {
 }
 
 void loop() {
+  if (!haveFrame) {
+    hal::idle(100);  // nothing can be drawn; the notice from begin() stays up
+    return;
+  }
   pollInput();
   stepNetwork();
   if (ble::on() || ble::state() != ble::State::Off) stepPhone();

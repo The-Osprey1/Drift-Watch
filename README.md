@@ -1,8 +1,8 @@
-# Drift-Watch firmware (v0.10.0)
+# Drift-Watch firmware (v0.10.1)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
-**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
+**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. v0.10.1 fixes four bugs in it: a dropped touch read no longer counts as lifting the finger, serial commands no longer pause the watch for up to a second, the Auto time zone is no longer replaced by Pacific time on the first start, and a screen notice shows if memory for the picture runs out. It passes 336 simulation checks; see `NOTES-v0.10.1.md`. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
 
 ## The board (checked against the Waveshare wiki)
 
@@ -61,12 +61,12 @@ The screen turns off after 15 seconds (30 seconds on a setup result). While it i
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
-3. Choose `firmware/drift_watch_v0.10.0.bin` at address **0x0**, then Program.
+3. Choose `firmware/drift_watch_v0.10.1.bin` at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
 If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
 
-`firmware/drift_watch_v0.10.0_diag.bin` is the same firmware with timing logs: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
+`firmware/drift_watch_v0.10.1_diag.bin` is the same firmware with timing logs: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
 **The v0.7.0 and v0.8.0 files in `firmware/` stall at start on this board**: they were built with "USB CDC on boot" turned on, which sends serial output to the ESP32-S3's own USB pins, and on this board those are not connected to the USB-C port. Use v0.9.0 or later, or rebuild an older version with the current `build.sh`.
 
@@ -124,7 +124,7 @@ Host tests, from the project folder (needs g++ and the TFT_eSPI library source f
 
 ```
 g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/render_faces.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp -o render_faces
-g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/simulate.cpp DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp -o simulate
+g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/simulate.cpp DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp DriftWatch/serial_cmd.cpp -o simulate
 mkdir -p out && ./render_faces out/ && ./simulate out/
 ```
 
@@ -134,4 +134,4 @@ Step counter (the motion sensor can do it), the motion sensor's own wake-on-moti
 
 ## Ready-made firmware files
 
-The `firmware/` folder holds the ready-to-flash v0.10.0 image, `drift_watch_v0.10.0.bin`, and the timing-log build, `drift_watch_v0.10.0_diag.bin`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.
+The `firmware/` folder holds the ready-to-flash v0.10.1 image, `drift_watch_v0.10.1.bin`, and the timing-log build, `drift_watch_v0.10.1_diag.bin`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.

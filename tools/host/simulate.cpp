@@ -20,6 +20,7 @@
 #include <math.h>
 #include "screens.h"
 #include "settings.h"
+#include "serial_cmd.h"
 #include "sim.h"
 #include "theme.h"
 #include "ui.h"
@@ -1963,6 +1964,162 @@ void logicChecks() {
 
 Face currentFaceForTest() { return (Face)(settings.face % FACE_COUNT); }
 
+
+// ---- Touch read errors, serial commands and a failed frame allocation -----------------------
+void touchDropoutScenarios() {
+  printf("Touch: a dropped touch read is not a finger lift\n");
+  sim::cold = false;
+  ui::begin();
+  settings.reducedMotion = false;  // slides, so a drag can be caught mid-way
+  settle(2500);
+  CHECK(screen() == "face", "starts on the face, got %s", screen().c_str());
+
+  // Mid-swipe, the chip misses 30 ms of reads, then the swipe carries on.
+  int face0 = settings.face;
+  touchDown(190, 120);
+  moveTo(150, 120, 50);
+  sim::touchFails = true;
+  runFor(30);
+  sim::touchFails = false;
+  CHECK(screen() == "face+slide", "a short dropout keeps the drag going, got %s", screen().c_str());
+  moveTo(80, 120, 50);
+  touchUp();
+  settle();
+  CHECK(settings.face == (face0 + 1) % FACE_COUNT, "and the swipe still lands on the next face (%d)", settings.face);
+
+  // The chip stops answering for good mid-drag, with the face dragged past the commit point.
+  face0 = settings.face;
+  touchDown(190, 120);
+  moveTo(90, 120, 60);
+  sim::touchFails = true;
+  runFor(200);
+  settle();
+  sim::fingerDown = false;
+  sim::touchFails = false;
+  settle();
+  CHECK(screen() == "face" && settings.face == face0,
+        "a long dropout springs the face back instead of finishing the swipe (face %d, was %d)", settings.face, face0);
+
+  // A button held when reads fail must not act; the same press with a short blip still does.
+  openSettings();
+  screens::Control c;
+  bool found = goTo(screens::Button::TimeFormat) && find(screens::Button::TimeFormat, c);
+  CHECK(found, "Time format control found");
+  if (found) {
+    int cx = c.hit.x + c.hit.w / 2, cy = c.hit.y + c.hit.h / 2;
+    bool was = settings.use12h;
+    touchDown(cx, cy);
+    runFor(40);
+    sim::touchFails = true;
+    runFor(120);
+    sim::fingerDown = false;
+    sim::touchFails = false;
+    runFor(40);
+    CHECK(settings.use12h == was, "a press cut off by failed reads does not toggle the setting");
+    touchDown(cx, cy);
+    runFor(40);
+    sim::touchFails = true;
+    runFor(20);
+    sim::touchFails = false;
+    runFor(20);
+    touchUp();
+    runFor(40);
+    CHECK(settings.use12h != was, "a press with a 20 ms blip still toggles it on release");
+    touchDown(cx, cy);
+    runFor(40);
+    touchUp();
+    runFor(40);
+    CHECK(settings.use12h == was, "and an ordinary tap toggles it back");
+  }
+  pressBoot();
+  settle();
+
+  printf("Touch: a chip that never answers does nothing\n");
+  sim::touchFails = true;
+  sim::fingerDown = false;
+  int f = settings.face;
+  runFor(500);
+  CHECK(screen() == "face" && settings.face == f, "no touches are made up, got %s", screen().c_str());
+  sim::touchFails = false;
+}
+
+void serialScenarios() {
+  using namespace serialcmd;
+  printf("Serial: lines are read without waiting\n");
+  {
+    LineBuffer b;
+    bool any = false;
+    for (const char *p = "TIME:12"; *p; p++) any |= b.push(*p);
+    CHECK(!any, "half a line is not a line");
+    for (const char *p = "34567\r\n"; *p; p++)
+      if (b.push(*p)) {
+        any = true;
+        CHECK(strcmp(b.line(), "TIME:1234567") == 0, "the line comes out whole (%s)", b.line());
+      }
+    CHECK(any, "the newline ends it");
+    CHECK(!b.push('\n'), "the \\n after \\r is not an extra empty line");
+    std::string longLine(200, 'x');
+    longLine += '\n';
+    any = false;
+    for (char ch : longLine) any |= b.push(ch);
+    CHECK(!any, "a line longer than the buffer is dropped, not cut short");
+    any = false;
+    for (const char *p = "TIME:1800000000\n"; *p; p++) any |= b.push(*p);
+    CHECK(any && strcmp(b.line(), "TIME:1800000000") == 0, "and the next line reads normally");
+  }
+  {
+    Command t = parse("  TIME:1800000000  ");
+    CHECK(t.kind == Kind::Time && t.time == 1800000000, "TIME: with spaces around it is read");
+    CHECK(parse("TIME:99").kind == Kind::None, "a TIME: too small to be a date is refused");
+    CHECK(parse("TIME:").kind == Kind::None && parse("time:1800000000").kind == Kind::None, "empty or lower case is refused");
+    Command w = parse("WIFI:Home Net,pa,ss");
+    CHECK(w.kind == Kind::Wifi && strcmp(w.ssid, "Home Net") == 0 && strcmp(w.password, "pa,ss") == 0,
+          "WIFI: splits at the first comma (%s / %s)", w.ssid, w.password);
+    Command open = parse("WIFI:Cafe,");
+    CHECK(open.kind == Kind::Wifi && open.password[0] == 0, "an open network has an empty password");
+    CHECK(parse("WIFI:,secret").kind == Kind::None && parse("WIFI:nocomma").kind == Kind::None,
+          "a WIFI: line without a network name or comma is refused");
+    std::string longSsid = "WIFI:" + std::string(33, 'n') + ",pw";
+    CHECK(parse(longSsid.c_str()).kind == Kind::None, "a network name over 32 bytes is refused");
+  }
+
+  printf("Serial: a command sent in pieces sets the clock once it is complete\n");
+  sim::cold = false;
+  ui::begin();
+  settle(2500);
+  Serial.in = "TIME:18000";
+  runFor(50);
+  CHECK(!net::clockSetByHand(), "nothing happens before the newline");
+  CHECK(Serial.in.empty(), "but the bytes are taken as they arrive");
+  CHECK(screen() == "face", "and the watch keeps running, got %s", screen().c_str());
+  Serial.in = "00000\n";
+  runFor(50);
+  CHECK(net::clockSetByHand() && hal::now() >= 1800000000 && hal::now() < 1800000010,
+        "the clock is set from the finished line (%ld)", (long)hal::now());
+  sim::wifiSaved = false;
+  Serial.in = "WIFI:Home,secret\r\n";
+  runFor(50);
+  CHECK(sim::wifiSaved && strcmp(net::ssid(), "Home") == 0, "WIFI: saves the network (%s)", net::ssid());
+  settle(2500);
+}
+
+void noMemoryScenario() {
+  printf("Low memory: not even an 8-bit frame fits\n");
+  spriteBudget16 = 0;
+  spriteBudget8 = 0;
+  sim::cold = false;
+  ui::begin();
+  TFT_eSPI &d = ui::display();
+  int lit = 0;
+  for (uint16_t px : d.buf) lit += px != 0;
+  CHECK(lit > 200, "a notice is drawn straight to the screen (%d pixels lit)", lit);
+  runFor(500);
+  tap(120, 120);
+  swipeLeft();
+  CHECK(true, "the loop keeps running without a frame");
+  spriteBudget16 = spriteBudget8 = -1;
+}
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -1977,6 +2134,9 @@ int main(int argc, char **argv) {
   sim::flash.clear();
   timeSteps();
   scenarios();
+  touchDropoutScenarios();
+  serialScenarios();
+  noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);
   return failures ? 1 : 0;

@@ -76,7 +76,7 @@ class TFT_eSPI {
 
 // Number of 16-bit full frames the simulated PSRAM can still hold; -1 = no limit.
 // Tests lower it to exercise the low-memory fallback.
-extern int spriteBudget16;
+extern int spriteBudget16, spriteBudget8;
 
 class TFT_eSprite : public TFT_eSPI {
  public:

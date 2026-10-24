@@ -17,19 +17,27 @@ bool fingerDown = false, bootDown = false, cold = true, clockSet = false;
 bool touchFails = false;
 int16_t fingerX = 120, fingerY = 120;
 int batteryMv = 3950;
-time_t epochAtZero = 1792788510;  // 2026-10-23 20:48:30 UTC
+int64_t wallAtZeroMs = 1792788510000LL;  // 2026-10-23 20:48:30 UTC
+uint32_t runUntil = 0;
 std::vector<std::pair<uint32_t, uint8_t>> backlightLog;
 int settingsSaves = 0;
 std::map<std::string, FlashValue> flash;
-net::Fail syncOutcome = net::Fail::None;
-bool wifiSaved = true;
-int syncsStarted = 0, syncsCancelled = 0;
-char zone[64] = "Europe/London";
-net::JoinWhy joinWhy = net::JoinWhy::NotFound;
 bool imuPresent = true;
 Accel accel = {0, 0, 1};  // lying flat, screen up
-int dozes = 0, lowPowerDozes = 0;
+int dozes = 0, lowPowerDozes = 0, motionDozes = 0;
+uint64_t dozedMs = 0;
 uint32_t imuLineEdges[2] = {0, 0};
+bool womArmed = false, womEvent = false;
+Accel womRef = {0, 0, 1};
+float womThresholdG = 0.08f;
+uint32_t womLatencyMs = 13;  // 8 ms (one sample at 128 Hz) + 5 ms to wake and leave light sleep
+int womArms = 0, womExits = 0, womClears = 0, imuReads = 0;
+bool womArmFails = false, womClearFails = false, womLineStuck = false;
+int womSpurious = 0;
+uint32_t firstImuReadAfterWake = 0;
+bool touchStandby = false, touchStandbyOk = true;
+int touchStandbyWrites = 0, touchReads = 0, touchRestarts = 0, touchResumeFailures = 0;
+bool touchPulse = false, sleepFails = false;
 bool panelTurnsClockwise = true;
 uint8_t touchMount = 0;
 std::vector<std::string> bleLines;
@@ -53,7 +61,8 @@ void delay(uint32_t ms) { sim::clockMs += ms; }
 namespace hal {
 void begin() {}
 uint32_t ms() { return sim::clockMs; }
-time_t now() { return sim::clockSet ? sim::epochAtZero + sim::clockMs / 1000 : 5 + sim::clockMs / 1000; }
+int64_t nowMs() { return sim::clockSet ? sim::wallAtZeroMs + sim::clockMs : 5000 + (int64_t)sim::clockMs; }
+time_t now() { return (time_t)(nowMs() / 1000); }
 void idle(uint32_t ms) { sim::clockMs += ms; }
 void backlight(uint8_t level) {
   if (sim::backlightLog.empty() || sim::backlightLog.back().second != level)
@@ -64,22 +73,66 @@ bool bootButtonDown() { return sim::bootDown; }
 bool coldBoot() { return sim::cold; }
 uint32_t freeHeap() { return 200000; }
 uint32_t freePsram() { return 1700000; }
-void setTime(time_t t) {
+void setTimeMs(int64_t ms) {
   sim::clockSet = true;
-  sim::epochAtZero = t - sim::clockMs / 1000;
+  sim::wallAtZeroMs = ms - sim::clockMs;
 }
-int64_t nowMs() { return (int64_t)now() * 1000 + sim::clockMs % 1000; }
-void setTimeMs(int64_t ms) { setTime((time_t)(ms / 1000)); }
+void setTime(time_t t) { setTimeMs((int64_t)t * 1000); }
 void adjustMs(int64_t ms) {
-  if (sim::clockSet) sim::epochAtZero += ms / 1000;
+  if (sim::clockSet) sim::wallAtZeroMs += ms;
 }
-// Light sleep ends early on a touch or BOOT press; the scripts set those between loops,
-// so a wait that starts with nothing pressed simply runs its full time.
-WakeCause doze(uint32_t ms, bool lowPower) {
+
+namespace {
+bool womFires() {
+  if (!sim::womArmed) return false;
+  const Accel &a = sim::accel, &r = sim::womRef;
+  return fabsf(a.x - r.x) > sim::womThresholdG || fabsf(a.y - r.y) > sim::womThresholdG ||
+         fabsf(a.z - r.z) > sim::womThresholdG;
+}
+}  // namespace
+
+// Screen-off waits. The scripts change the finger, BOOT and the wrist between script steps, so
+// a wait never runs past the end of the step (sim::runUntil): on the watch the change itself
+// would end it. Lines already at their wake level when the wait starts are not armed, as on
+// the watch (BOOT held, a stuck motion line); touch counts as its line pulsing.
+uint8_t doze(uint32_t ms, const DozeArm &arm) {
   sim::dozes++;
-  if (lowPower) sim::lowPowerDozes++;
-  sim::clockMs += ms;
-  return WakeCause::Timer;
+  uint32_t left = (int32_t)(sim::runUntil - sim::clockMs) > 0 ? sim::runUntil - sim::clockMs : 10;
+  uint32_t t = ms < left ? ms : left;
+  uint32_t start = sim::clockMs;
+  auto done = [&](uint8_t bits) {
+    sim::dozedMs += sim::clockMs - start;
+    return bits;
+  };
+  if (!arm.lowPower) {
+    sim::clockMs += t;
+    return done(WAKE_TIMER);
+  }
+  if (sim::sleepFails) {
+    sim::clockMs += t;
+    return done(WAKE_FAULT | WAKE_TIMER);
+  }
+  sim::lowPowerDozes++;
+  bool motionLineHigh = sim::womLineStuck || sim::womEvent;
+  bool motionArmed = arm.motion && !motionLineHigh;
+  if (motionArmed) sim::motionDozes++;
+  uint8_t bits = 0;
+  if (sim::fingerDown || sim::touchPulse) bits |= WAKE_TOUCH;
+  sim::touchPulse = false;
+  if (motionArmed && sim::womSpurious > 0) {
+    sim::womSpurious--;
+    bits |= WAKE_MOTION;
+  }
+  if (motionArmed && womFires()) {
+    sim::womEvent = true;
+    bits |= WAKE_MOTION;
+  }
+  if (bits) {
+    sim::clockMs += (bits & WAKE_MOTION) && !(bits & WAKE_TOUCH) ? (sim::womLatencyMs < t ? sim::womLatencyMs : t) : 1;
+    return done(bits);
+  }
+  sim::clockMs += t;
+  return done(WAKE_TIMER);
 }
 void log(const char *fmt, ...) {
   va_list ap;
@@ -92,19 +145,61 @@ void log(const char *fmt, ...) {
 }  // namespace hal
 
 namespace imu {
-bool begin() { return sim::imuPresent; }
-bool present() { return sim::imuPresent; }
-bool read(Accel &out) {
-  out = sim::accel;
+const char *statusName(Status s) {
+  static const char *names[] = {"ok", "no sensor", "no answer on I2C", "command not done", "command not acknowledged"};
+  return names[(int)s];
+}
+bool begin() {
+  sim::womArmed = sim::womEvent = false;
   return sim::imuPresent;
 }
+bool present() { return sim::imuPresent; }
+bool read(Accel &out) {
+  if (!sim::imuPresent || sim::womArmed) return false;  // no samples while wake on motion is armed
+  sim::imuReads++;
+  if (!sim::firstImuReadAfterWake) sim::firstImuReadAfterWake = sim::clockMs;
+  out = sim::accel;
+  return true;
+}
 uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? sim::imuLineEdges[line] : 0; }
+Status enterWakeOnMotion(const WomConfig &cfg) {
+  if (!sim::imuPresent) return Status::NotPresent;
+  if (sim::womArmFails) return Status::CommandTimeout;
+  sim::womArms++;
+  sim::womArmed = true;
+  sim::womEvent = false;
+  sim::womRef = sim::accel;
+  sim::womThresholdG = cfg.thresholdMg / 1000.0f;
+  return Status::Ok;
+}
+Status readAndClearWakeEvent(bool &motion) {
+  motion = false;
+  if (!sim::imuPresent) return Status::NotPresent;
+  if (sim::womClearFails) return Status::BusError;
+  sim::womClears++;
+  motion = sim::womEvent;
+  sim::womEvent = false;
+  return Status::Ok;
+}
+Status exitWakeOnMotion() {
+  if (!sim::imuPresent) return Status::NotPresent;
+  sim::womExits++;
+  sim::womArmed = sim::womEvent = false;
+  sim::firstImuReadAfterWake = 0;
+  return Status::Ok;
+}
+bool wakeOnMotionArmed() { return sim::womArmed; }
+bool motionLineHigh() { return sim::womLineStuck || sim::womEvent; }
 }  // namespace imu
 
 namespace touch {
-bool begin() { return true; }
+bool begin() {
+  sim::touchStandby = false;
+  return true;
+}
 bool read(TouchSample &out) {
   out.down = false;
+  sim::touchReads++;
   if (sim::touchFails) return false;
   out.down = sim::fingerDown;
   int rx, ry;
@@ -113,120 +208,22 @@ bool read(TouchSample &out) {
   out.y = ry;
   return true;
 }
+bool standbySupported() { return sim::touchStandbyOk; }
+bool setAutoStandby(bool enabled) {
+  sim::touchStandbyWrites++;
+  if (enabled && !sim::touchStandbyOk) return false;
+  if (!enabled && sim::touchResumeFailures > 0) {
+    sim::touchResumeFailures--;
+    return false;
+  }
+  sim::touchStandby = enabled;
+  return true;
+}
+bool restart() {
+  sim::touchRestarts++;
+  return begin();
+}
 }  // namespace touch
-
-// Wi-Fi: each sync step takes a fixed time, then the scripted outcome happens.
-// Same rules as net.cpp: the running stage, the last result and the clock are separate.
-namespace {
-net::Sync syncNow = net::Sync::Idle;
-net::Result result = net::Result::None;
-uint16_t finished = 0;
-net::Fail fail = net::Fail::None;
-bool byHand = false;
-net::Portal portal = net::Portal::Off;
-uint32_t stepStart = 0, portalStart = 0;
-time_t lastSyncTime = 0;
-char simZone[64] = "";
-net::Source source = net::Source::None;
-char savedSsid[33] = "";
-constexpr uint32_t STEP_MS[] = {0, 1200, 400, 400};
-}  // namespace
-
-void sim::setPortal(net::Portal p) {
-  portal = p;
-  if (p == net::Portal::Saved) {
-    sim::wifiSaved = true;
-    net::startSync();
-  }
-}
-
-namespace net {
-void begin() {}
-void poll() {
-  uint32_t e = sim::clockMs - stepStart;
-  auto next = [&](Sync s) { syncNow = s; stepStart = sim::clockMs; };
-  auto end = [&](Fail f) { if (f == Fail::None) byHand = false; fail = f; result = f == Fail::None ? Result::Ok : Result::Failed; finished++; next(Sync::Idle); };
-  switch (syncNow) {
-    case Sync::Connecting:
-      if (e >= STEP_MS[1]) {
-        if (sim::syncOutcome == Fail::JoinFailed) end(Fail::JoinFailed);
-        else next(Sync::Zone);
-      }
-      break;
-    case Sync::Zone:
-      if (e >= STEP_MS[2]) { strcpy(simZone, sim::zone); next(Sync::Clock); }
-      break;
-    case Sync::Clock:
-      if (e >= STEP_MS[3]) {
-        if (sim::syncOutcome == Fail::ClockFailed) end(Fail::ClockFailed);
-        else { sim::clockSet = true; lastSyncTime = hal::now(); source = Source::Wifi; end(Fail::None); }
-      }
-      break;
-    default: break;
-  }
-  if ((portal == Portal::Waiting || portal == Portal::PhoneJoined) && sim::clockMs - portalStart > 300000)
-    portal = Portal::TimedOut;
-}
-void startSync() {
-  if (portal == Portal::Waiting || portal == Portal::PhoneJoined) return;
-  if (syncNow != Sync::Idle) return;
-  sim::syncsStarted++;
-  if (!sim::wifiSaved) { fail = Fail::NoNetworkSaved; result = Result::Failed; finished++; return; }
-  syncNow = Sync::Connecting;
-  stepStart = sim::clockMs;
-}
-void cancelSync() { if (syncNow != Sync::Idle) { syncNow = Sync::Idle; sim::syncsCancelled++; } }
-Sync syncState() { return syncNow; }
-bool syncRunning() { return syncNow != Sync::Idle; }
-Result lastResult() { return result; }
-uint16_t attempts() { return finished; }
-Fail failReason() { return fail; }
-int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
-void startPortal() { portal = Portal::Waiting; portalStart = sim::clockMs; syncNow = Sync::Idle; }
-void cancelPortal() { if (portal == Portal::Waiting || portal == Portal::PhoneJoined) portal = Portal::Closed; }
-Portal portalState() { return portal; }
-uint32_t portalSecondsLeft() {
-  if (portal != Portal::Waiting && portal != Portal::PhoneJoined) return 0;
-  uint32_t used = sim::clockMs - portalStart;
-  return used >= 300000 ? 0 : (300000 - used + 999) / 1000;
-}
-bool hasSavedWifi() { return sim::wifiSaved; }
-bool timeIsValid() { return sim::clockSet; }
-void setClockByHand(time_t t) { hal::setTime(t); byHand = true; }
-bool clockSetByHand() { return byHand; }
-JoinWhy joinWhy() { return sim::joinWhy; }
-int joinCode() { return sim::joinWhy == JoinWhy::NotFound ? 201 : sim::joinWhy == JoinWhy::Password ? 15 : 0; }
-bool radioOn() { return syncNow != Sync::Idle || portal == Portal::Waiting || portal == Portal::PhoneJoined; }
-time_t lastSync() { return lastSyncTime; }
-const char *zoneName() { return simZone; }
-const char *ssid() { return !sim::wifiSaved ? "" : savedSsid[0] ? savedSsid : "HomeNet-5G"; }
-void setClockFromPhone(time_t utc, int) {
-  hal::setTime(utc);
-  lastSyncTime = utc;
-  source = Source::Phone;
-  byHand = false;
-  fail = Fail::None;
-  result = Result::Ok;
-  finished++;
-}
-Source lastSource() { return source; }
-void setZone(const char *posix, const char *name) {
-  if (posix) {
-    settings.tz = posix;
-    saveSettings();
-  }
-  if (name) snprintf(simZone, sizeof simZone, "%s", name);
-}
-void saveWifi(const char *s, const char *p) {
-  saveNetwork(s, p);
-  startSync();
-}
-void saveNetwork(const char *s, const char *) {
-  snprintf(savedSsid, sizeof savedSsid, "%s", s);
-  sim::wifiSaved = true;
-}
-int32_t driftPpb() { return settings.driftPpb; }
-}  // namespace net
 
 // Bluetooth: open and close only change state; scripts push lines into sim::bleLines.
 namespace {

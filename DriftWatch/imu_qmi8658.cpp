@@ -2,56 +2,68 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include "board.h"
+#include "qmi8658.h"
 
 namespace {
 // The address depends on how the board wires the SA0 pin, so both are tried.
 constexpr uint8_t ADDRS[] = {0x6B, 0x6A};
-constexpr uint8_t REG_WHO_AM_I = 0x00;  // reads 0x05
-constexpr uint8_t REG_CTRL1 = 0x02;     // serial interface
-constexpr uint8_t REG_CTRL2 = 0x03;     // accelerometer range and rate
-constexpr uint8_t REG_CTRL7 = 0x08;     // which sensors run
-constexpr uint8_t REG_AX_L = 0x35;      // x, y, z, low byte first
-constexpr uint8_t REG_RESET = 0x60;
-
-constexpr uint8_t CTRL1_AUTO_INCREMENT = 0x40;  // little-endian, internal clock on
-constexpr uint8_t CTRL1_INT2_ENABLE = 0x10;     // INT2 pin driven (data ready goes there)
-// INT1 is left undriven, as before: on this board GPIO 4 also switches the MOSFET1 solder pads,
-// so driving it could switch on whatever a build has fitted there (a vibration motor, say).
-constexpr uint8_t CTRL2_4G_21HZ_LOW_POWER = 0x10 | 0x0D;
-constexpr uint8_t CTRL7_ACCEL_ON = 0x01;        // gyroscope stays off
-constexpr float LSB_PER_G = 8192.0f;            // at +/-4 g
 
 uint8_t addr = 0;
-bool found = false;
+bool found = false, armed = false;
 volatile uint32_t edges[2] = {0, 0};
+// Only counts: no bus traffic from an interrupt, the loop does all of that.
 void IRAM_ATTR edge1() { edges[0]++; }
 void IRAM_ATTR edge2() { edges[1]++; }
 
-bool readRegs(uint8_t reg, uint8_t *buf, size_t len) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  if (Wire.endTransmission(false) != 0) return false;
-  if (Wire.requestFrom(addr, (uint8_t)len) != len) return false;
-  for (size_t i = 0; i < len; i++) buf[i] = Wire.read();
-  return true;
-}
+class WireBus : public qmi8658::Bus {
+ public:
+  bool read(uint8_t reg, uint8_t *buf, size_t len) override {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    if (Wire.endTransmission(false) != 0) return false;
+    if (Wire.requestFrom(addr, (uint8_t)len) != len) return false;
+    for (size_t i = 0; i < len; i++) buf[i] = Wire.read();
+    return true;
+  }
+  bool write(uint8_t reg, uint8_t val) override {
+    Wire.beginTransmission(addr);
+    Wire.write(reg);
+    Wire.write(val);
+    return Wire.endTransmission() == 0;
+  }
+  void waitMs(uint32_t ms) override { delay(ms); }
+} bus;
 
-bool writeReg(uint8_t reg, uint8_t val) {
-  Wire.beginTransmission(addr);
-  Wire.write(reg);
-  Wire.write(val);
-  return Wire.endTransmission() == 0;
+imu::Status toStatus(qmi8658::Result r) {
+  switch (r) {
+    case qmi8658::Result::Ok: return imu::Status::Ok;
+    case qmi8658::Result::BusError: return imu::Status::BusError;
+    case qmi8658::Result::CommandTimeout: return imu::Status::CommandTimeout;
+    case qmi8658::Result::AckTimeout: return imu::Status::AckTimeout;
+  }
+  return imu::Status::BusError;
 }
 }  // namespace
 
 namespace imu {
 
+const char *statusName(Status s) {
+  switch (s) {
+    case Status::Ok: return "ok";
+    case Status::NotPresent: return "no sensor";
+    case Status::BusError: return "no answer on I2C";
+    case Status::CommandTimeout: return "command not done";
+    case Status::AckTimeout: return "command not acknowledged";
+  }
+  return "?";
+}
+
 bool begin() {
-  found = false;
-  uint8_t id = 0;
+  found = armed = false;
+  uint8_t id = 0, rev = 0;
   for (uint8_t a : ADDRS) {
     addr = a;
-    if (readRegs(REG_WHO_AM_I, &id, 1) && id == 0x05) {
+    if (bus.read(qmi8658::REG_WHO_AM_I, &id, 1) && id == qmi8658::WHO_AM_I_VALUE) {
       found = true;
       break;
     }
@@ -60,15 +72,16 @@ bool begin() {
     Serial.println("imu: QMI8658 not found");
     return false;
   }
-  writeReg(REG_RESET, 0xB0);
+  bus.write(qmi8658::REG_RESET, 0xB0);
   delay(15);
-  found = writeReg(REG_CTRL1, CTRL1_AUTO_INCREMENT | CTRL1_INT2_ENABLE) &&
-          writeReg(REG_CTRL2, CTRL2_4G_21HZ_LOW_POWER) && writeReg(REG_CTRL7, CTRL7_ACCEL_ON);
+  bus.read(qmi8658::REG_REVISION, &rev, 1);
+  found = bus.write(qmi8658::REG_CTRL1, qmi8658::CTRL1_AUTO_INCREMENT | qmi8658::CTRL1_INT2_ENABLE) &&
+          qmi8658::startNormal(bus) == qmi8658::Result::Ok;
   pinMode(PIN_IMU_INT1, INPUT);
   pinMode(PIN_IMU_INT2, INPUT);
   attachInterrupt(digitalPinToInterrupt(PIN_IMU_INT1), edge1, CHANGE);
   attachInterrupt(digitalPinToInterrupt(PIN_IMU_INT2), edge2, CHANGE);
-  Serial.printf("imu: QMI8658 at 0x%02X (%s)\n", addr, found ? "ok" : "setup failed");
+  Serial.printf("imu: QMI8658 at 0x%02X, revision 0x%02X (%s)\n", addr, rev, found ? "ok" : "setup failed");
   return found;
 }
 
@@ -76,13 +89,38 @@ bool present() { return found; }
 
 bool read(Accel &out) {
   uint8_t d[6];
-  if (!found || !readRegs(REG_AX_L, d, sizeof d)) return false;
-  out.x = (int16_t)(d[0] | d[1] << 8) / LSB_PER_G;
-  out.y = (int16_t)(d[2] | d[3] << 8) / LSB_PER_G;
-  out.z = (int16_t)(d[4] | d[5] << 8) / LSB_PER_G;
+  if (!found || armed || !bus.read(qmi8658::REG_AX_L, d, sizeof d)) return false;
+  out.x = (int16_t)(d[0] | d[1] << 8) / qmi8658::LSB_PER_G;
+  out.y = (int16_t)(d[2] | d[3] << 8) / qmi8658::LSB_PER_G;
+  out.z = (int16_t)(d[4] | d[5] << 8) / qmi8658::LSB_PER_G;
   return true;
 }
 
 uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? edges[line] : 0; }
+
+Status enterWakeOnMotion(const WomConfig &cfg) {
+  if (!found) return Status::NotPresent;
+  qmi8658::WomConfig c;
+  c.thresholdMg = cfg.thresholdMg;
+  c.blankingSamples = cfg.blankingSamples;
+  Status s = toStatus(qmi8658::enterWakeOnMotion(bus, c));
+  armed = s == Status::Ok;
+  return s;
+}
+
+Status readAndClearWakeEvent(bool &motion) {
+  motion = false;
+  if (!found) return Status::NotPresent;
+  return toStatus(qmi8658::readAndClearWakeEvent(bus, motion));
+}
+
+Status exitWakeOnMotion() {
+  if (!found) return Status::NotPresent;
+  armed = false;  // even on failure: the sequence ends by asking for normal sampling
+  return toStatus(qmi8658::exitWakeOnMotion(bus));
+}
+
+bool wakeOnMotionArmed() { return armed; }
+bool motionLineHigh() { return digitalRead(PIN_IMU_INT2) == HIGH; }
 
 }  // namespace imu

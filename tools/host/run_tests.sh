@@ -12,16 +12,20 @@ CXX="g++ -std=c++17 -O1 -Wall"
 
 $CXX -I tools/host -I DriftWatch -I "$TFT" tools/host/tft_shim.cpp tools/host/render_faces.cpp \
   DriftWatch/faces.cpp DriftWatch/gfx.cpp -o "$BIN/render_faces"
-$CXX -I tools/host -I DriftWatch -I "$TFT" tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/simulate.cpp \
-  DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp \
-  DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp \
-  DriftWatch/serial_cmd.cpp -o "$BIN/simulate"
+$CXX -I tools/host -I DriftWatch -I "$TFT" tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/sim_net_fake.cpp \
+  tools/host/simulate.cpp DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp \
+  DriftWatch/settings.cpp DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp \
+  DriftWatch/battery.cpp DriftWatch/serial_cmd.cpp DriftWatch/power.cpp -o "$BIN/simulate"
 # The real net.cpp, against the Wi-Fi, web and time-server stand-ins in tools/host/net.
 $CXX -I tools/host/net -I tools/host -I DriftWatch tools/host/net_test.cpp tools/host/net/netsim.cpp \
   DriftWatch/net.cpp DriftWatch/settings.cpp DriftWatch/timekeep.cpp DriftWatch/orient.cpp -o "$BIN/net_test"
+
+# The motion sensor's register sequences and the screen-off power controller.
+$CXX -I tools/host -I DriftWatch tools/host/power_test.cpp DriftWatch/power.cpp DriftWatch/qmi8658.cpp -o "$BIN/power_test"
 
 status=0
 echo "== Faces";      "$BIN/render_faces" "$OUT"      || status=1
 echo "== Interface";  "$BIN/simulate" "$OUT" 2>/dev/null | grep -E "FAIL|checks passed" || status=1
 echo "== Network";    "$BIN/net_test"                 || status=1
+echo "== Power";      "$BIN/power_test"               || status=1
 exit $status

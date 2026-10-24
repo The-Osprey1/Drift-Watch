@@ -13,6 +13,7 @@
 #include "hal.h"
 #include "orient.h"
 #include "phone.h"
+#include "power.h"
 #include "ble.h"
 #include "battery.h"
 #include "raise.h"
@@ -60,6 +61,7 @@ std::string screen() { return ui::screenName(); }
 
 void runFor(uint32_t ms) {
   uint32_t end = sim::clockMs + ms;
+  sim::runUntil = end;  // a screen-off sleep ends here, where the script changes something
   while ((int32_t)(sim::clockMs - end) < 0) ui::loop();
 }
 
@@ -2043,6 +2045,292 @@ void touchDropoutScenarios() {
   sim::touchFails = false;
 }
 
+// ---- Screen-off power: wake on motion, touch standby, sleep deadlines ------------------------
+// A raise the way a wrist makes it: from hanging to looking over `ms`, eased in and out, with
+// the sensor changing every 10 ms of script time, then held.
+void smoothRaise(uint32_t ms, float toDeg = 63) {
+  for (uint32_t t = 10; t <= ms; t += 10) {
+    float u = t / (float)ms, e = u * u * (3 - 2 * u), a = e * toDeg * 3.14159265f / 180;
+    sim::accel = {0, -cosf(a), sinf(a)};
+    runFor(10);
+  }
+  runFor(400);
+}
+
+int lit() { return sim::backlightLog.empty() ? 0 : sim::backlightLog.back().second; }
+const power::Controller &pc() { return ui::standbyController(); }
+std::string pstate() { return power::stateName(pc().state()); }
+
+// Back to sleep on a resting wrist: wait out the screen timeout and let the screen-off loop arm.
+void sleepHanging() {
+  sim::accel = HANGING;
+  runFor(16000);
+  runFor(500);
+}
+
+void powerScenarios() {
+  printf("Power: wake on motion with raise only\n");
+  power::options.wom = true;
+  power::options.touchStandby = true;
+  sim::cold = false;
+  sim::imuPresent = true;
+  settings = Settings{};
+  settings.twistToWake = false;  // raise only: the mode wake on motion is used for
+  settings.touchCheckedTurn = settings.screenTurn = DISPLAY_ROTATION;
+  settings.touchMap = orient::expectedTouchMap(DISPLAY_ROTATION);
+  saveSettings();
+  ui::begin();
+  settle(2500);
+  CHECK(screen() == "face", "starts on the face, got %s", screen().c_str());
+  sleepHanging();
+  CHECK(screen() == "asleep" && pstate() == "wake on motion" && sim::womArmed, "asleep with the sensor armed (state %s)",
+        pstate().c_str());
+  CHECK(sim::touchStandby, "the touch chip is allowed its standby");
+
+  int reads = sim::imuReads, touches = sim::touchReads, dz = sim::dozes;
+  uint32_t t0 = sim::clockMs;
+  uint64_t slept0 = sim::dozedMs;
+  runFor(10UL * 60 * 1000);  // ten minutes on a still wrist
+  int wakes = sim::dozes - dz;
+  CHECK(screen() == "asleep" && sim::imuReads == reads, "ten still minutes: no wake and not one sample read (%d)",
+        sim::imuReads - reads);
+  CHECK(sim::touchReads == touches, "the resting touch chip is never read (%d reads)", sim::touchReads - touches);
+  CHECK(wakes <= 25, "%d wakes in ten minutes (30 s sleeps, a battery reading each minute)", wakes);
+  double asleepShare = (double)(sim::dozedMs - slept0) / (sim::clockMs - t0);
+  CHECK(asleepShare > 0.99, "and %.2f%% of the time in light sleep", asleepShare * 100);
+  fprintf(report, "\n## Screen-off power (simulated)\n\n- Ten still minutes, raise only, wake on motion: %d wakes, "
+                  "%.2f%% of the time asleep, %d motion samples, %d touch reads.\n",
+          wakes, asleepShare * 100, sim::imuReads - reads, sim::touchReads - touches);
+
+  printf("Power: a motion interrupt never lights the screen by itself\n");
+  uint32_t q0 = pc().stats().qualifications, r0 = pc().stats().rejected;
+  sim::accel = {0.15f, -0.99f, 0.05f};  // bumped, then still again
+  runFor(30);
+  CHECK(pstate() == "qualifying" && screen() == "asleep" && lit() == 0, "a bump starts sampling, screen dark (state %s, light %d)",
+        pstate().c_str(), lit());
+  sim::accel = HANGING;
+  runFor(1600);
+  CHECK(screen() == "asleep" && lit() == 0 && pc().stats().qualifications == q0 + 1 && pc().stats().rejected == r0 + 1,
+        "1.5 s of fresh samples show no raise: rejected, still dark");
+  CHECK(pstate() == "wake on motion" && sim::womArmed && !sim::womEvent, "and the sensor is armed again, its event cleared");
+
+  printf("Power: the first raise after a long rest\n");
+  struct RaiseCase {
+    const char *what;
+    uint32_t ms;
+    bool wakes;
+  } raises[] = {{"an ordinary raise (0.5 s)", 500, true}, {"a brisk raise (0.4 s)", 400, true},
+                {"a slow raise (2.5 s)", 2500, false}};
+  for (const RaiseCase &rc : raises) {
+    sleepHanging();
+    runFor(5UL * 60 * 1000);
+    uint32_t start = sim::clockMs;
+    sim::firstImuReadAfterWake = 0;
+    uint32_t a0 = pc().stats().accepted;
+    smoothRaise(rc.ms);
+    bool woke = screen() == "face";
+    CHECK(woke == rc.wakes, "%s after 5 still minutes: %s (state %s)", rc.what, woke ? "wakes" : "stays dark", pstate().c_str());
+    if (woke) {
+      uint32_t lightAt = 0;
+      for (auto &e : sim::backlightLog)
+        if (e.first >= start && e.second > 0 && !lightAt) lightAt = e.first;
+      fprintf(report, "- %s after 5 still minutes: wakes, first fresh sample %u ms and light %u ms after the raise began.\n",
+              rc.what, sim::firstImuReadAfterWake ? sim::firstImuReadAfterWake - start : 0, lightAt ? lightAt - start : 0);
+      CHECK(pc().stats().accepted == a0 + 1, "counted as an accepted gesture");
+    }
+  }
+  sleepHanging();
+  wrist({{300, {0, -0.9f, 1.8f}}, {300, {0.3f, -1.6f, 0.4f}}, {300, {-0.4f, -0.7f, 1.2f}}, {1600, HANGING}});
+  CHECK(screen() == "asleep", "shaking does not wake it");
+
+  printf("Power: repeated motion (walking) switches to polling for a while\n");
+  sleepHanging();
+  for (int i = 0; i < 5; i++) {
+    sim::accel = {0.2f, -0.98f, 0.0f};
+    runFor(200);
+    sim::accel = HANGING;
+    runFor(1500);
+  }
+  CHECK(screen() == "asleep" && pc().fallback() == power::Fallback::Quiet && pstate() == "polling",
+        "after 4 rejected motions: polling, still dark (%s, %s)", pstate().c_str(), power::fallbackName(pc().fallback()));
+  smoothRaise(500);
+  CHECK(screen() == "face", "a raise still wakes it while polling, got %s", screen().c_str());
+
+  printf("Power: touch and BOOT wake at once and do nothing else\n");
+  sleepHanging();
+  runFor(15000);  // the 30 s of polling after the walking above runs out
+  sim::accel = {0.15f, -0.99f, 0.05f};
+  runFor(30);
+  CHECK(pstate() == "qualifying", "qualifying a bump (%s)", pstate().c_str());
+  int faceBefore = settings.face;
+  touchDown(120, 120);
+  CHECK(screen() == "face", "a touch while qualifying wakes the screen, got %s", screen().c_str());
+  runFor(900);  // held past the long-press time: the waking touch must not open settings
+  touchUp();
+  settle();
+  CHECK(screen() == "face" && settings.face == faceBefore, "the waking touch does nothing else, got %s", screen().c_str());
+  CHECK(!sim::touchStandby && !sim::womArmed, "touch tracking is back on and the sensor sampling");
+  sim::accel = HANGING;
+  sleepHanging();
+  pressBoot();
+  settle();
+  CHECK(screen() == "face" && settings.face == faceBefore, "BOOT wakes it and does not change the face");
+
+  printf("Power: a short touch pulse wakes the screen even with its report gone\n");
+  sleepHanging();
+  sim::touchPulse = true;
+  runFor(50);
+  CHECK(screen() == "face", "woken by the pulse alone, got %s", screen().c_str());
+
+  printf("Power: a touch spanning standby and the wake cannot act\n");
+  sleepHanging();
+  sim::fingerX = sim::fingerY = 120;
+  sim::fingerDown = true;
+  sim::touchFails = true;  // the chip is still waking: the first reads get no answer
+  runFor(40);
+  CHECK(screen() == "face", "the touch line woke the screen, got %s", screen().c_str());
+  sim::touchFails = false;
+  runFor(1200);  // now answering, finger still down, past the long-press time
+  CHECK(screen() == "face", "the finger that woke it never opens settings, got %s", screen().c_str());
+  sim::fingerDown = false;
+  runFor(60);
+  swipeUp();
+  settle();
+  CHECK(screen() == "panel", "after lifting, the next swipe works normally, got %s", screen().c_str());
+  pressBoot();
+  settle();
+
+  printf("Power: the touch chip does not answer after standby\n");
+  sleepHanging();
+  int restarts = sim::touchRestarts;
+  sim::touchResumeFailures = 1;
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  CHECK(screen() == "face" && sim::touchRestarts == restarts + 1 && !sim::touchStandby,
+        "it is reset and set up again (%d restarts)", sim::touchRestarts - restarts);
+  sim::touchStandbyOk = false;
+  sleepHanging();
+  touches = sim::touchReads;
+  runFor(3000);
+  CHECK(!sim::touchStandby && sim::touchReads > touches, "a chip without standby is left fully on and read as before");
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  CHECK(screen() == "face", "and a touch still wakes the screen");
+  sim::touchStandbyOk = true;
+
+  printf("Power: night mode, no sensor, a radio on\n");
+  settings.night = 1;  // 22:00 to 07:00
+  hal::setTime(1792792800);  // 2026-10-23 22:00 UTC (the simulation runs in UTC)
+  sleepHanging();
+  int arms = sim::womArms;
+  reads = sim::imuReads;
+  CHECK(pstate() == "idle" && !sim::womArmed, "night mode: no gestures, so idle with the sensor not armed (%s)", pstate().c_str());
+  smoothRaise(500);
+  runFor(3000);
+  CHECK(screen() == "asleep" && sim::womArms == arms && sim::imuReads == reads, "a raise does nothing and starts no sampling");
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  CHECK(screen() == "face", "touch still wakes it at night");
+  settings.night = 0;
+  sim::imuPresent = false;
+  sleepHanging();
+  CHECK(pstate() == "idle", "no sensor: idle (%s)", pstate().c_str());
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  sim::imuPresent = true;
+  sleepHanging();
+  net::startSync();
+  runFor(300);
+  CHECK(!sim::womArmed && pstate() == "polling", "a sync running: no light sleep, the sensor polled (%s)", pstate().c_str());
+  settle(2500);
+  runFor(500);
+  CHECK(pstate() == "wake on motion", "armed again once the radio is off (%s)", pstate().c_str());
+
+  printf("Power: sensor failures fall back to polling, and raise still works\n");
+  sim::womArmFails = true;
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  sleepHanging();
+  CHECK(pstate() == "polling" && pc().fallback() == power::Fallback::ArmFailed, "arming fails: polling (%s)",
+        power::fallbackName(pc().fallback()));
+  smoothRaise(500);
+  CHECK(screen() == "face", "a raise wakes it by polling, got %s", screen().c_str());
+  sim::womArmFails = false;
+  sleepHanging();
+  sim::womSpurious = 20;
+  runFor(500);
+  CHECK(pc().fallback() == power::Fallback::Storm && pstate() == "polling" && screen() == "asleep",
+        "INT2 chattering with no motion: polling (%s)", power::fallbackName(pc().fallback()));
+  sim::womSpurious = 0;
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  sleepHanging();
+  sim::womLineStuck = true;
+  runFor(200);
+  CHECK(pc().fallback() == power::Fallback::StuckLine && pstate() == "polling", "INT2 stuck high: polling (%s)",
+        power::fallbackName(pc().fallback()));
+  sim::womLineStuck = false;
+  touchDown(120, 120);
+  touchUp();
+  settle();
+
+  printf("Power: twist modes keep polling\n");
+  settings.twistToWake = true;
+  settings.raiseToWake = false;
+  sleepHanging();
+  sim::accel = FLAT;
+  runFor(2000);
+  CHECK(pstate() == "polling" && pc().fallback() == power::Fallback::TwistNeedsHistory && !sim::womArmed,
+        "twist only: polling (%s)", power::fallbackName(pc().fallback()));
+  runFor(5UL * 60 * 1000);
+  twist(60);
+  CHECK(screen() == "face", "the first twist after 5 still minutes wakes it, got %s", screen().c_str());
+  {
+    // Why: the twist detector needs the still moment just before the twist and the turn out.
+    // Fed only what a wake on motion interrupt would give it (samples from about 60 ms into
+    // the twist, after a long gap), it misses the same twist.
+    TwistDetector td;
+    uint32_t t = 1000;
+    for (int i = 0; i < 10; i++, t += 80) td.update(t, FLAT, 1);  // before the long sleep
+    t += 300000;
+    bool fired = false;
+    Accel path[] = {rolled(45), rolled(60), rolled(30), FLAT, FLAT, FLAT};
+    for (const Accel &a : path) fired |= td.update(t += 80, a, 1);
+    CHECK(!fired, "the twist detector misses a twist seen only after a motion interrupt: polling is kept for twist");
+  }
+  settings.raiseToWake = true;
+  settings.twistToWake = true;
+  runFor(16000);
+
+  printf("Power: sleeps wake for the next resync\n");
+  touchDown(120, 120);
+  touchUp();
+  settle();
+  sim::syncOutcome = net::Fail::ClockFailed;
+  net::startSync();
+  settle(2500);
+  sim::syncOutcome = net::Fail::None;
+  settings.raiseToWake = settings.twistToWake = false;  // idle: the longest sleeps
+  sleepHanging();
+  int started = sim::syncsStarted;
+  runFor(29UL * 60 * 1000 - 20000);
+  CHECK(sim::syncsStarted == started, "no resync before its time");
+  runFor(120000);
+  CHECK(sim::syncsStarted == started + 1, "the 30 minute retry after a failed sync still happens on time");
+  settings.raiseToWake = settings.twistToWake = true;
+  power::options = power::Options{};
+  sim::accel = FLAT;
+  touchDown(120, 120);
+  touchUp();
+  settle();
+}
+
 void serialScenarios() {
   using namespace serialcmd;
   printf("Serial: lines are read without waiting\n");
@@ -2136,6 +2424,7 @@ int main(int argc, char **argv) {
   scenarios();
   touchDropoutScenarios();
   serialScenarios();
+  powerScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

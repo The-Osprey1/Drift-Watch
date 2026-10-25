@@ -8,6 +8,13 @@ constexpr uint16_t rgb(uint32_t hex) {
   return ((hex >> 8) & 0xF800) | ((hex >> 5) & 0x07E0) | ((hex >> 3) & 0x001F);
 }
 
+struct FaceTheme {
+  uint16_t primary;
+  uint16_t secondary;
+  uint16_t pressed;
+  uint16_t outline;
+};
+
 namespace col {
 // Identity colours. Each face picks one as primary and uses the others sparingly.
 constexpr uint16_t YELLOW = rgb(0xFCEE0A);
@@ -85,8 +92,9 @@ constexpr uint32_t RELEASE_MS = 100;    // a tapped control keeps its accent thi
 constexpr uint32_t STATE_MS = 140;      // small state changes
 constexpr uint32_t FACE_MS = 220;       // face-to-face slide started by BOOT
 constexpr uint32_t PANEL_MS = 220;      // status panel slide
-constexpr uint32_t WAKE_MS = 160;       // backlight fade-in after the time is already drawn
-constexpr uint32_t BOOT_MS = 900;       // cold-boot sequence
+constexpr uint32_t WAKE_MS = 300;       // smooth iris bloom and perceptual backlight fade-in
+constexpr uint32_t SLEEP_MS = 280;      // smooth iris collapse and perceptual backlight fade-out
+constexpr uint32_t BOOT_MS = 1750;      // cold-boot chronometer ignition sequence
 // Radar: one turn of the beam every 3.6 s (16.7 turns a minute), like a real plan position
 // indicator, with a phosphor trail that fades exponentially behind it.
 constexpr uint32_t RADAR_TURN_MS = 3600;
@@ -96,6 +104,7 @@ constexpr uint32_t RADAR_FRAME_MS = 33; // about 30 frames a second: 3.3 degrees
 constexpr int LOW_BATTERY_PCT = 20;     // below this the beam only moves with the seconds
 // Phantom: the balance wheel and seconds hand at about 30 frames a second while it is on screen.
 constexpr uint32_t PHANTOM_FRAME_MS = 33;
+constexpr uint32_t AMBIENT_FRAME_MS = 50;  // 20 fps ambient animation for lively faces
 // Entrances and Orbit's minute marker run at the slide frame rate, then the face drops back to
 // one frame a second.
 constexpr uint32_t ENTRANCE_FRAME_MS = 33;
@@ -131,5 +140,12 @@ inline float easeOut(float t) {
   if (t >= 1) return 1;
   float u = 1 - t;
   return 1 - u * u * u;
+}
+
+// Smooth S-curve for gentle start and gentle landing.
+inline float easeInOut(float t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3.0f - 2.0f * t);
 }
 }  // namespace motion

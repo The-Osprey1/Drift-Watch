@@ -4,6 +4,7 @@
 #pragma once
 #include <TFT_eSPI.h>
 #include <time.h>
+#include "theme.h"
 
 // Swipe order. The numbers are stored in the settings, so new faces only ever go at the end.
 // v0.12.0 adds three pairs of themed faces, a digital and an analog one each: Space (Orbit,
@@ -49,6 +50,7 @@ void drawFaceLive(TFT_eSprite &s, Face f, const FaceContext &c);
 // Changes whenever the static layer needs redrawing.
 uint32_t faceStaticKey(Face f, const FaceContext &c);
 const char *faceName(Face f);
+FaceTheme faceTheme(Face f);
 // Faces that need frames between seconds while `animate` is on.
 bool faceAnimates(Face f);
 // Length of the face's entrance, played once after the face is chosen (never on wake), or 0 if

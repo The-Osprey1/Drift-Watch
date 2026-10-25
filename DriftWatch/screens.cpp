@@ -261,8 +261,11 @@ int flow(Ctx &c, const Doc &d, const int *idx, int n, int top, int bottom, bool 
 bool drawItem(Ctx &c, const Item &it, const Rect &r) {
   bool pressed = c.v.pressed == it.id && it.id != Button::None;
   if (c.draw) {
-    if (pressed) gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, col::CYAN_DEEP, true);
-    uint16_t edge = pressed ? col::CYAN : it.edge;
+    uint16_t pressedBg = c.v.theme.pressed ? c.v.theme.pressed : col::CYAN_DEEP;
+    if (pressed) gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, pressedBg, true);
+    uint16_t activeEdge = c.v.theme.primary ? c.v.theme.primary : col::CYAN;
+    uint16_t subtleEdge = c.v.theme.outline ? c.v.theme.outline : col::OUTLINE;
+    uint16_t edge = pressed ? activeEdge : (it.edge == col::CYAN ? activeEdge : it.edge == col::OUTLINE ? subtleEdge : it.edge);
     gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, edge, false);
     gfx::cutBox(c.s, r.x + 1, r.y + 1, r.w - 2, r.h - 2, CUT - 1, edge, false);
   }
@@ -331,14 +334,15 @@ bool drawItem(Ctx &c, const Item &it, const Rect &r) {
   return true;
 }
 
-void dots(TFT_eSprite &s, int page, int pages) {
+void dots(TFT_eSprite &s, int page, int pages, uint16_t activeCol, uint16_t outlineCol) {
   if (pages < 2) return;
   int gap = 12, x0 = CX - (pages - 1) * gap / 2;
   for (int i = 0; i < pages; i++) {
-    if (i == page) s.fillSmoothCircle(x0 + i * gap, DOTS_Y, 3, col::TEXT, col::BG);
-    else s.drawCircle(x0 + i * gap, DOTS_Y, 3, col::OUTLINE);
+    if (i == page) s.fillSmoothCircle(x0 + i * gap, DOTS_Y, 3, activeCol, col::BG);
+    else s.drawCircle(x0 + i * gap, DOTS_Y, 3, outlineCol);
   }
 }
+void dots(TFT_eSprite &s, int page, int pages) { dots(s, page, pages, col::TEXT, col::OUTLINE); }
 
 // Swipe-down handle at the top edge, the hint that this screen closes downwards.
 void handle(TFT_eSprite &s) { s.fillRect(CX - 12, 13, 24, 3, col::N600); }
@@ -406,6 +410,31 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       it.label = "Time format";
       it.value = v.use12h ? "12-hour" : "24-hour";
       break;
+    case Button::HotSwap: {
+      it.label = "Hot swap";
+      uint16_t mask = v.activeFaces & 0x0FFF;
+      int count = 0;
+      for (int i = 0; i < FACE_COUNT; i++) {
+        if (mask & (1 << i)) count++;
+      }
+      if (count >= FACE_COUNT || count == 0) {
+        it.value = "All (12)";
+      } else if (count == 2) {
+        int other = -1;
+        for (int i = 0; i < FACE_COUNT; i++) {
+          if (mask & (1 << i)) {
+            if (other == -1) other = i;
+            else if (i != (int)(settings.face % FACE_COUNT)) other = i;
+          }
+        }
+        it.value = d.fmt("2: %s", faceName((Face)other));
+        it.valueColor = it.edge = v.theme.primary ? v.theme.primary : col::CYAN;
+      } else {
+        it.value = d.fmt("%d active", count);
+        it.valueColor = it.edge = v.theme.primary ? v.theme.primary : col::CYAN;
+      }
+      break;
+    }
     case Button::Motion:
       it.label = "Motion";
       it.value = v.motion == MOTION_OFF ? "Off" : v.motion == MOTION_EXPRESSIVE ? "Expressive" : "Subtle";
@@ -501,7 +530,10 @@ int settingsPages(const View &v) { return SETTINGS_ITEMS / settingsPerPage(v); }
 int settingsControls(const View &v, int page, Control *out, int max) {
   int per = settingsPerPage(v), n = 0;
   for (int i = 0; i < per && n < max; i++) {
-    Button b = settingsItem(page * per + i);
+    int idx = page * per + i;
+    if (idx >= SETTINGS_ITEMS) break;
+    Button b = settingsItem(idx);
+    if (b == Button::None) continue;
     if (v.large) out[n++] = {b, TALL, TALL};
     else out[n++] = {b, i == 0 ? UPPER : LOWER, i == 0 ? UPPER_HIT : LOWER_HIT};
   }
@@ -514,7 +546,7 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
   if (!v.large) {
     // Compact header; with large text the space goes to the control instead.
     const GFXfont *f = fontFor(Role::Body, false);
-    gfx::text(s, "Settings", CX, 27, f, col::TEXT_2, MC_DATUM);
+    gfx::text(s, "Settings", CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
   }
   Control ctl[2];
   int n = settingsControls(v, page, ctl, 2);
@@ -522,7 +554,7 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
     Doc d;
     drawItem(c, settingsItemFor(v, ctl[i].id, d), ctl[i].visible);
   }
-  dots(s, page, settingsPages(v));
+  dots(s, page, settingsPages(v), v.theme.primary ? v.theme.primary : col::TEXT, v.theme.outline ? v.theme.outline : col::OUTLINE);
   return c.animated;
 }
 
@@ -1012,7 +1044,8 @@ Button settingsItem(int i) {
   static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::SetTime,
                                                 Button::PhoneSync,  Button::SyncNow,    Button::WifiSetup,
                                                 Button::RaiseWake,  Button::Night,      Button::Motion,
-                                                Button::ScreenTurn, Button::TouchCheck, Button::Details};
+                                                Button::HotSwap,    Button::ScreenTurn, Button::TouchCheck,
+                                                Button::Details,    Button::None};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
 }
 
@@ -1020,7 +1053,7 @@ const char *buttonName(Button b) {
   static const char *names[] = {"none",     "brightness", "time format", "motion",   "sync now",   "wi-fi setup",
                                 "details",  "text size",  "cancel",      "back",     "retry",      "edit wi-fi",
                                 "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time",
-                                "phone sync", "night mode", "screen turn", "touch check"};
+                                "phone sync", "night mode", "screen turn", "touch check", "hot swap"};
   return names[(int)b];
 }
 
@@ -1136,26 +1169,196 @@ void drawLowBattery(TFT_eSprite &s, int pct, bool urgent) {
 }
 
 // ---- Startup ------------------------------------------------------------------
-// A line draws out from the centre, splits into two rails, and the name is
-// revealed between them, left to right. Shown on power-on only.
+// Cyberpunk chronometer core ignition: singularity shockwaves, cascading 12-hour
+// bezel shutter, counter-rotating telemetry rings, split chamfered cyber-rails,
+// and a laser-scanned geometric vector wordmark. Shown on cold power-on.
+namespace {
+void drawDriftWordmark(TFT_eSprite &s, float cy, uint16_t c, float dx = 0.0f, float dy = 0.0f) {
+  constexpr float H = 26.0f, SKEW = 0.16f, W_STROKE = 3.5f;
+  auto seg = [&](float ox, float x0, float y0, float x1, float y1) {
+    float ax = ox + x0 + (H - y0) * SKEW + dx, ay = cy - H * 0.5f + y0 + dy;
+    float bx = ox + x1 + (H - y1) * SKEW + dx, by = cy - H * 0.5f + y1 + dy;
+    s.drawWideLine(ax, ay, bx, by, W_STROKE, c);
+  };
+  // D (chamfered sci-fi)
+  seg(56.4f, 0, 0, 0, 26);   seg(56.4f, 0, 0, 15, 0);   seg(56.4f, 15, 0, 20, 5);
+  seg(56.4f, 20, 5, 20, 21); seg(56.4f, 20, 21, 15, 26); seg(56.4f, 15, 26, 0, 26);
+  // R
+  seg(85.4f, 0, 0, 0, 26);   seg(85.4f, 0, 0, 15, 0);   seg(85.4f, 15, 0, 20, 5);
+  seg(85.4f, 20, 5, 20, 9);  seg(85.4f, 20, 9, 15, 13); seg(85.4f, 15, 13, 0, 13);
+  seg(85.4f, 11, 13, 20, 26);
+  // I
+  seg(114.4f, 1, 0, 9, 0);   seg(114.4f, 5, 0, 5, 26);  seg(114.4f, 1, 26, 9, 26);
+  // F
+  seg(133.4f, 0, 0, 0, 26);  seg(133.4f, 0, 0, 18, 0);  seg(133.4f, 0, 13, 14, 13);
+  // T
+  seg(159.4f, 0, 0, 20, 0);  seg(159.4f, 10, 0, 10, 26);
+}
+}  // namespace
+
 void drawBoot(TFT_eSprite &s, float t, const char *version) {
   s.fillSprite(col::BG);
-  auto phaseT = [&](float start, float len) { return motion::easeOut((t - start) / len); };
-  float grow = phaseT(0.0f, 0.35f), split = phaseT(0.30f, 0.35f), reveal = phaseT(0.55f, 0.35f);
+  auto clamp01 = [](float v) { return v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v; };
+  auto phaseOut = [&](float start, float len) { return motion::easeOut((t - start) / len); };
+  auto phaseIO = [&](float start, float len) { return motion::easeInOut((t - start) / len); };
 
-  int half = (int)(80 * grow), gap = (int)(24 * split);
-  if (half > 0) {
-    s.fillRect(CX - half, CY - gap - 1, 2 * half, 2, col::CYAN);
-    if (gap > 0) s.fillRect(CX - half, CY + gap - 1, 2 * half, 2, col::MAGENTA);
-  }
-  if (reveal > 0) {
-    gfx::text(s, "DRIFT", CX, CY + 1, type::MEDIUM, col::YELLOW);
-    int edge = CX - 80 + (int)(160 * reveal);
-    if (reveal < 1) {
-      s.fillRect(edge, CY - gap + 1, CX + 81 - edge, 2 * gap - 2, col::BG);
-      s.fillRect(edge, CY - gap + 2, 2, 2 * gap - 4, col::CYAN);  // scan edge
+  // 1. Subtle nocturnal skyline along the lower dial chord (inside r <= 108).
+  float skyP = phaseOut(0.22f, 0.45f);
+  if (skyP > 0.0f) {
+    constexpr int HORIZON = 194;
+    uint16_t bldCol = gfx::blend(col::N800, col::BG, skyP);
+    uint16_t roofCol = gfx::blend(col::N700, col::BG, skyP);
+    uint16_t winCol = gfx::blend(col::WINDOW, col::BG, skyP);
+    static const uint8_t widths[] = {10, 13, 9, 14, 11, 15, 10, 12, 11};
+    static const uint8_t heights[] = {7, 13, 9, 17, 11, 15, 8, 12, 6};
+    int bx = 62;
+    for (int i = 0; i < 9; i++) {
+      int bw = widths[i], bh = (int)lroundf(heights[i] * skyP);
+      if (bh > 1) {
+        int top = HORIZON - bh;
+        s.fillRect(bx, top, bw, bh, bldCol);
+        s.drawFastHLine(bx, top, bw, roofCol);
+        if (skyP > 0.55f && (i & 1) == 0 && bh >= 8) {
+          s.fillRect(bx + 3, top + 3, 2, 2, winCol);
+          if (bw >= 12) s.fillRect(bx + bw - 5, top + 6, 2, 2, winCol);
+        }
+      }
+      bx += bw + 2;
     }
-    if (reveal >= 1) gfx::text(s, version, CX, CY + gap + 16, type::SMALL, col::N400);
+    s.drawFastHLine(58, HORIZON, 124, gfx::blend(col::MAGENTA_DIM, col::BG, skyP));
+  }
+
+  // 2. Singularity spark & dual expanding shockwave rings.
+  float w1 = phaseOut(0.00f, 0.34f);
+  if (w1 > 0.0f) {
+    int r1 = (int)lroundf(4.0f + 111.0f * w1);
+    float settle = clamp01((t - 0.18f) / 0.22f);
+    uint16_t c1 = gfx::blend(col::N600, col::CYAN, settle);
+    if (t < 0.12f) c1 = gfx::blend(col::WHITE, col::CYAN, 1.0f - t / 0.12f);
+    gfx::arc(s, r1, max(1, r1 - 2), 0.0f, 360.0f, c1);
+  }
+  float w2 = phaseOut(0.07f, 0.32f);
+  float w2Fade = 1.0f - clamp01((t - 0.25f) / 0.17f);
+  if (w2 > 0.0f && w2Fade > 0.02f) {
+    int r2 = (int)lroundf(2.0f + 104.0f * w2);
+    gfx::arc(s, r2, max(1, r2 - 2), 0.0f, 360.0f, gfx::blend(col::MAGENTA, col::BG, w2Fade * 0.85f));
+  }
+  if (t < 0.22f) {
+    float flare = 1.0f - clamp01(t / 0.22f);
+    int cr = max(2, (int)lroundf(15.0f * flare));
+    s.fillSmoothCircle(CX, CY - 4, cr, gfx::blend(col::CYAN, col::BG, flare * 0.55f), col::BG);
+    s.fillSmoothCircle(CX, CY - 4, max(1, cr / 2), gfx::blend(col::WHITE, col::BG, flare), col::BG);
+  }
+
+  // 3. Cascading 12-point chronometer bezel shutter.
+  for (int i = 0; i < 12; i++) {
+    float tp = phaseOut(0.06f + i * 0.022f, 0.14f);
+    if (tp <= 0.0f) continue;
+    bool cardinal = (i % 3) == 0;
+    float rOut = 115.0f;
+    float rIn = rOut - (cardinal ? 9.5f : 5.5f) * tp;
+    uint16_t target = (i == 0 || i == 6) ? col::CYAN : cardinal ? col::MAGENTA : col::N500;
+    uint16_t tc = tp < 0.92f ? gfx::blend(col::WHITE, target, 1.0f - tp) : target;
+    gfx::radialBar(s, i * 30.0f, rIn, rOut, cardinal ? 2.4f : 1.4f, tc);
+  }
+
+  // 4. Counter-rotating precision telemetry arcs & 12-o'clock reticle.
+  float ap = phaseOut(0.12f, 0.48f);
+  if (ap > 0.0f) {
+    float spin = (1.0f - ap) * 135.0f;
+    float halfSpan = 46.0f * ap;
+    gfx::arc(s, 102, 99, spin - halfSpan, spin + halfSpan, col::CYAN);
+    gfx::arc(s, 102, 99, 180.0f + spin - halfSpan, 180.0f + spin + halfSpan, col::CYAN);
+    if (ap < 0.99f) {
+      Pt tipA = gfx::polar(spin + halfSpan, 100.5f);
+      Pt tipB = gfx::polar(180.0f + spin + halfSpan, 100.5f);
+      gfx::dot(s, tipA.x, tipA.y, 2.8f, col::WHITE);
+      gfx::dot(s, tipB.x, tipB.y, 2.8f, col::WHITE);
+    }
+  }
+  float mp = phaseOut(0.18f, 0.48f);
+  if (mp > 0.0f) {
+    float mSpin = -(1.0f - mp) * 120.0f;
+    float mHalf = 28.0f * mp;
+    uint16_t mCol = gfx::blend(col::MAGENTA, col::MAGENTA_DIM, 0.35f + 0.65f * mp);
+    gfx::arc(s, 95, 93, 90.0f + mSpin - mHalf, 90.0f + mSpin + mHalf, mCol);
+    gfx::arc(s, 95, 93, 270.0f + mSpin - mHalf, 270.0f + mSpin + mHalf, mCol);
+    if (mp < 0.99f) {
+      Pt tipL = gfx::polar(90.0f + mSpin - mHalf, 94.0f);
+      Pt tipR = gfx::polar(270.0f + mSpin - mHalf, 94.0f);
+      gfx::dot(s, tipL.x, tipL.y, 2.2f, col::MAGENTA);
+      gfx::dot(s, tipR.x, tipR.y, 2.2f, col::MAGENTA);
+    }
+  }
+  float rp = phaseOut(0.50f, 0.24f);
+  if (rp > 0.0f) {
+    float dr = 4.0f * rp;
+    Pt dia[] = {{(float)CX, 68.0f - dr}, {CX + dr, 68.0f}, {(float)CX, 68.0f + dr}, {CX - dr, 68.0f}};
+    gfx::fillPoly(s, dia, 4, rp < 0.9f ? col::WHITE : col::CYAN);
+  }
+
+  // 5. Twin split chamfered cyber-rails & laser-scanned geometric "DRIFT" logo.
+  constexpr int LOGO_CY = 116;
+  float grow = phaseOut(0.22f, 0.24f);
+  float split = phaseOut(0.32f, 0.24f);
+  float reveal = phaseIO(0.42f, 0.38f);
+  int half = (int)lroundf(84.0f * grow);
+  int gap = (int)lroundf(23.0f * split);
+  int yTop = LOGO_CY - gap, yBot = LOGO_CY + gap;
+
+  if (half > 0) {
+    s.fillRect(CX - half, yTop - 1, 2 * half, 2, col::CYAN);
+    if (gap > 0) s.fillRect(CX - half, yBot - 1, 2 * half, 2, col::MAGENTA);
+    if (split > 0.25f) {
+      int wing = (int)lroundf(6.0f * split);
+      s.drawWideLine(CX - half, yTop, CX - half - 5, yTop + wing, 2.0f, col::CYAN);
+      s.drawWideLine(CX + half, yTop, CX + half + 5, yTop + wing, 2.0f, col::CYAN);
+      if (gap > 4) {
+        s.drawWideLine(CX - half, yBot, CX - half - 5, yBot - wing, 2.0f, col::MAGENTA);
+        s.drawWideLine(CX + half, yBot, CX + half + 5, yBot - wing, 2.0f, col::MAGENTA);
+      }
+    }
+  }
+
+  if (split > 0.55f && reveal > 0.005f) {
+    // Chromatic accent offset + crisp Cyber-Yellow geometric wordmark.
+    drawDriftWordmark(s, (float)LOGO_CY, reveal < 0.96f ? col::CYAN_DIM : col::MAGENTA_DIM, 2.0f, 1.5f);
+    float sheen = (t > 0.78f && t < 0.98f) ? sinf((t - 0.78f) / 0.20f * 3.14159265f) * 0.45f : 0.0f;
+    uint16_t wordCol = sheen > 0.01f ? gfx::blend(col::WHITE, col::YELLOW, sheen) : col::YELLOW;
+    drawDriftWordmark(s, (float)LOGO_CY, wordCol);
+
+    if (reveal < 0.999f) {
+      int scanX = 50 + (int)lroundf(142.0f * reveal);
+      int wipeH = max(0, yBot - yTop - 3);
+      if (wipeH > 0) {
+        // Mask unrevealed portion to the right of the scan beam.
+        s.fillRect(scanX, yTop + 2, (CX + 86) - scanX, wipeH, col::BG);
+        // Trailing phosphor wash to the left of the laser beam.
+        for (int k = 1; k <= 4; k++) {
+          int tx = scanX - k * 3;
+          if (tx > CX - half) {
+            uint16_t glow = gfx::blend(col::CYAN, col::BG, (5 - k) * 0.11f);
+            s.drawFastVLine(tx, yTop + 2, wipeH, glow);
+          }
+        }
+        // High-energy laser core + rail contact sparks.
+        s.fillRect(scanX - 1, yTop + 1, 3, max(1, yBot - yTop - 1), col::CYAN);
+        s.drawFastVLine(scanX, yTop, max(1, yBot - yTop + 1), col::WHITE);
+        gfx::dot(s, (float)scanX, (float)yTop, 3.2f, col::WHITE);
+        gfx::dot(s, (float)scanX, (float)yBot, 3.2f, col::WHITE);
+      }
+    }
+  }
+
+  // 6. Firmware version readout & flanking neon telemetry pips.
+  float vp = phaseOut(0.72f, 0.24f);
+  if (vp > 0.05f) {
+    int vy = LOGO_CY + gap + 18;
+    gfx::text(s, version, CX, vy, type::SMALL, gfx::blend(col::N300, col::BG, vp), MC_DATUM);
+    s.setTextFont(type::SMALL);
+    int halfW = s.textWidth(version) / 2 + 9;
+    gfx::dot(s, (float)(CX - halfW), (float)vy, 1.8f, gfx::blend(col::CYAN, col::BG, vp));
+    gfx::dot(s, (float)(CX + halfW), (float)vy, 1.8f, gfx::blend(col::MAGENTA, col::BG, vp));
   }
 }
 

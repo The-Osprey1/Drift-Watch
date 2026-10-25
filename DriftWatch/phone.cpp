@@ -139,13 +139,29 @@ const char *apply(const char *line) {
     net::startSync();
     return "ok";
   }
+  if (startsWith(line, "H=")) {
+    char *end = nullptr;
+    long mask = strtol(line + 2, &end, 0);
+    if (end == line + 2 || (mask & 0x0FFF) == 0) return refuse("no faces selected");
+    settings.activeFaces = (uint16_t)(mask & 0x0FFF);
+    if (!(settings.activeFaces & (1 << (settings.face % 12)))) {
+      for (int i = 0; i < 12; i++) {
+        if (settings.activeFaces & (1 << i)) {
+          settings.face = i;
+          break;
+        }
+      }
+    }
+    saveSettings();
+    return "ok";
+  }
   if (!strcmp(line, "?")) return "ok";
   return refuse("unknown line");
 }
 
 void status(char *out, size_t n, int batteryPct) {
-  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d", net::timeIsValid() ? (long)hal::now() : 0L,
-           settings.tz.c_str(), net::ssid(), batteryPct);
+  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u", net::timeIsValid() ? (long)hal::now() : 0L,
+           settings.tz.c_str(), net::ssid(), batteryPct, (int)(settings.face % 12), (unsigned int)(settings.activeFaces & 0x0FFF));
 }
 
 }  // namespace phone

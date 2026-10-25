@@ -60,7 +60,7 @@ struct Options {
   uint32_t qualifyMs = 1500;     // fresh samples taken after a motion interrupt
   uint32_t sampleMs = 80;        // between samples while qualifying or polling
   uint32_t firstSampleMs = 50;   // first sample after restoring sampling: one 21 Hz period
-  uint32_t pollDozeMs = 100;     // polling: light sleep between reads, as v0.10.1
+  uint32_t pollDozeMs = 70;     // polling: light sleep between reads, as v0.10.1
   uint8_t womThresholdMg = 80;
   uint8_t womBlankingSamples = 4;
   uint8_t quietRejects = 4;      // this many rejected motions

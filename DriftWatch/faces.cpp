@@ -123,6 +123,18 @@ void digitalLive(TFT_eSprite &s, const FaceContext &c) {
   if (!c.timeValid) return;
   Pt a = gfx::polar(c.now.tm_sec * 6, 104), b = gfx::polar(c.now.tm_sec * 6, 116);
   s.drawWideLine(a.x, a.y, b.x, b.y, 2.5f, col::CYAN, col::BG);
+  if (c.animate) {
+    // Subtle breathing glow on the colon dots between hours and minutes
+    float pulse = 0.5f + 0.5f * sinf(c.ms * 0.006283f);
+    uint16_t colonCol = gfx::blend(col::YELLOW, col::YELLOW_DIM, pulse);
+    s.fillCircle(117, 78, 2, colonCol);
+    s.fillCircle(117, 98, 2, colonCol);
+    // Subtle authentic CRT micro-flicker scanline once every ~3 seconds
+    if ((c.animMs % 3200) < 50) {
+      int y = 70 + (int)((c.animMs / 10) % 40);
+      s.drawFastHLine(45, y, 150, col::CYAN_DIM);
+    }
+  }
 }
 
 // ---- Dials -------------------------------------------------------------------
@@ -558,7 +570,7 @@ const char *faceName(Face f) {
   return f < FACE_COUNT ? names[f] : "?";
 }
 
-bool faceAnimates(Face f) { return f == FACE_RADAR || f == FACE_PHANTOM; }
+bool faceAnimates(Face f) { (void)f; return true; }
 
 uint32_t faceEntranceMs(Face f) {
   switch (f) {
@@ -573,6 +585,25 @@ uint32_t faceEntranceMs(Face f) {
 }
 
 bool faceMovesMarker(Face f) { return f == FACE_ORBIT; }
+
+FaceTheme faceTheme(Face f) {
+  switch (f) {
+    case FACE_DIGITAL:   return {col::YELLOW, col::CYAN, col::CYAN_DEEP, col::N600};
+    case FACE_STEALTH:   return {col::N100, col::CYAN, col::CYAN_DEEP, col::N600};
+    case FACE_CORPO:     return {col::RED, col::YELLOW, rgb(0x400000), col::N700};
+    case FACE_HOLO:      return {col::CYAN, col::WHITE, col::CYAN_DEEP, col::N600};
+    case FACE_RADAR:     return {col::PHOSPHOR, col::YELLOW, rgb(0x052B1E), col::N700};
+    case FACE_PHANTOM:   return {rgb(0xC41E3A), rgb(0xD4AF37), rgb(0x350810), col::N700};
+    case FACE_ORBIT:     return {rgb(0x00F0FF), rgb(0xA8A0E8), rgb(0x003340), rgb(0x26385C)};
+    case FACE_LUNAR:     return {rgb(0x96BEFF), rgb(0xCDD2DC), rgb(0x101830), rgb(0x283046)};
+    case FACE_YOZAKURA:  return {rgb(0xDE8CA5), rgb(0xFAEEDC), rgb(0x2A1522), rgb(0x4A303C)};
+    case FACE_HANAMI:    return {rgb(0xCC7086), rgb(0x461E3C), rgb(0x38182E), rgb(0x522E3A)};
+    case FACE_WASTELAND: return {rgb(0x5CFF7A), rgb(0xFF8C28), rgb(0x0C2814), rgb(0x185C2A)};
+    case FACE_MOJAVE:    return {rgb(0xF0A030), rgb(0xF5E6C8), rgb(0x352008), rgb(0x603E1C)};
+    default:             return {col::CYAN, col::TEXT_2, col::CYAN_DEEP, col::OUTLINE};
+  }
+}
+
 
 namespace phantom {
 namespace {

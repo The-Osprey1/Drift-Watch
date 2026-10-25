@@ -300,7 +300,7 @@ namespace yoz {
 const uint16_t BG = rgb(0x140E1A), DISC = rgb(0x22182C), DISC_EDGE = rgb(0x342642), IVORY = rgb(0xFAEEDC);
 const uint16_t PINK = rgb(0xDE8CA5), PINK_HI = rgb(0xF2BECD), ROSE = rgb(0xE296AA), BARK = rgb(0x4A303C);
 const uint16_t PETAL_EDGE = rgb(0x78465F), INK = rgb(0xBEA4B5);
-const Pt BR_TR[] = {{236, 46}, {206, 56}, {182, 60}, {164, 70}, {152, 84}};
+const Pt BR_TR[] = {{236, 46}, {206, 56}, {182, 60}, {164, 58}, {152, 64}};
 const Pt BR_BL[] = {{4, 190}, {34, 184}, {58, 178}, {78, 170}, {90, 160}};
 
 void drawStatic(TFT_eSprite &s, const FaceContext &c) {
@@ -309,7 +309,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   gfx::arc(s, 79, 78, 0, 360, DISC_EDGE, true, BG);
   branch(s, BR_TR, 5, 5, 1.8f, BARK, 1);
   branch(s, BR_BL, 5, 5, 1.8f, BARK, 1);
-  static const float BLOSSOMS[][4] = {{206, 56, 9, 10}, {182, 62, 7, 40}, {160, 76, 6, 70},
+  static const float BLOSSOMS[][4] = {{206, 56, 9, 10}, {182, 62, 7, 40}, {160, 64, 6, 70},
                                       {34, 184, 9, 20}, {60, 178, 7, 55}, {82, 168, 6, 80}};
   for (const auto &b : BLOSSOMS) {
     blossom(s, b[0], b[1], b[2], PINK, IVORY, b[3], 1, PETAL_EDGE);

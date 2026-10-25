@@ -19,22 +19,22 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 
 ## Faces
 
-Twelve faces; swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png`, `designs/v0.8.0_faces_native.png`, for Phantom `designs/v0.11.0_phantom_timeline.png` and `designs/v0.11.0_phantom_states.png`, and for the six themed faces `designs/v0.12.0_faces.png` and `designs/v0.12.0_storyboards.png` (each entrance from 0 ms to its final state).
+Twelve faces; swipe left or right to move between them. The precision revamp uses upright vector time on Digital, Radar, Orbit and Yozakura, quieter supporting detail, and distinct analog hand styles. Native previews and animation states are in [designs/precision](designs/precision/); the [design review](.design/revamp-review.md) records decisions and verification. Previews: `designs/v0.7.0_faces.png`, `designs/v0.8.0_faces_native.png`, for Phantom `designs/v0.11.0_phantom_timeline.png` and `designs/v0.11.0_phantom_states.png`, and for the six themed faces `designs/v0.12.0_faces.png` and `designs/v0.12.0_storyboards.png` (each entrance from 0 ms to its final state).
 
-- **Digital:** yellow segment time, magenta date strip, quiet seconds track with one cyan tick for the current second, battery at the top, a low dark skyline.
-- **Stealth dial:** silver markers and hands with cyan inlays, a magenta seconds hand, a date window and a battery ring.
-- **Corpo dial:** black dial, a thin segmented yellow rim, black hands edged in yellow, red seconds hand.
-- **Hologram dial:** cyan markers and edged hands, white inlays, magenta seconds hand.
-- **Radar:** large yellow time in the middle, an hour ring that fills through the day, a minute track with a pointer, range rings, and a beam that turns every 3.6 s with a fading phosphor trail. The seconds dot glows as the beam passes. Below 20% battery the beam sits on the seconds dot and moves once a second.
+- **Digital:** large silver instrument numerals, a quiet date register with yellow brackets, one cyan second tick, battery at the top and a small DRIFT signature.
+- **Stealth dial:** fine silver indices and baton hands, a cyan seconds hand, date window and battery ring.
+- **Corpo dial:** restrained segmented yellow rim and indices, silver baton hands and a red seconds hand.
+- **Hologram dial:** cyan indices and skeleton hands, white inlays and a silver seconds hand.
+- **Radar:** silver instrument time in the middle, an hour ring that fills through the day, a minute track with a pointer, range rings, and a peripheral beam that turns every 3.6 s with a fading phosphor trail, clear of the central time and date. The seconds dot glows as the beam passes. Below 20% battery the beam sits on the seconds dot and moves once a second.
 - **Phantom:** a dark dial with an opening at 12 showing a ticking balance wheel and a crimson jewel. The seconds hand slides in under the edge of the opening from 55 s, is hidden from 58 to 2 s, slides out again by 5 s and settles with a small bounce. With Motion Off or low battery the wheel stops and the seconds hand steps once a second.
 
 Every face shows a small lightning bolt next to its battery mark while the watch is charging (v0.13.0). Below 15% battery, and again below 5%, a notice shows over the face for 5 seconds the next time you look at the watch.
 
 The six themed faces (v0.12.0) come in pairs. Each plays one short entrance when you choose it by swiping or with BOOT, never when the screen wakes, and any touch ends it at once. The time is right from the first frame; only decoration moves.
 
-- **Orbit** (Space, digital): ivory segment time over stars and a ringed planet. The orbit track draws round from 12 and a cyan marker eases into the current minute (500 ms); at each new minute the marker moves on 6 degrees.
+- **Orbit** (Space, digital): ivory instrument numerals over stars and a ringed planet. The orbit track draws round from 12 and a cyan marker eases into the current minute (500 ms); at each new minute the marker moves on 6 degrees.
 - **Lunar** (Space, analog): silver hands on navy, a pale blue seconds hand, a battery ring and a moon that a curved wipe reveals (300 ms).
-- **Yozakura** (Sakura, digital): ivory time on a night disc between two blossoming branches; two petals fall beside the time and date, never across them (900 ms).
+- **Yozakura** (Sakura, digital): ivory instrument numerals on a night disc between two blossoming branches; two petals fall beside the time and date, never across them (900 ms).
 - **Hanami** (Sakura, analog): plum hands on a porcelain dial; a branch grows along the lower left and its blossoms open in two groups (600 ms).
 - **Wasteland** (Fallout, digital): green phosphor segments with the unlit ones faintly showing; dividers, brackets, the power bar and the sync line build up around the time (420 ms).
 - **Mojave** (Fallout, analog): cream hands on dark leather with amber markers; the battery arc fills and a highlight runs over the rim (600 ms).

@@ -2,6 +2,7 @@
 #include "ui.h"
 #include "ui_parts.h"
 #include "ble.h"
+#include "gfx.h"
 #include "hal.h"
 #include "imu.h"
 #include "orient.h"
@@ -57,7 +58,8 @@ uint32_t uiKey = 0;
 bool uiAnimated = false;   // the last drawn screen has a spinner that needs frames
 screens::Button pressed = screens::Button::None;
 // Page shown on each paged screen. The settings page is kept while details or setup are open.
-int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0, phonePage = 0, checkPage = 0;
+int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0, phonePage = 0, checkPage = 0, drawerPage = 0;
+TimerState timer{};
 tm editTime{};  // what the set time screen shows; applied only by Save
 
 RaiseDetector wristRaise;
@@ -229,9 +231,9 @@ uint32_t entrancesFinished() { return entrance.finished; }
 bool markerMoving() { return marker.moving; }
 
 const char *screenName() {
-  static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone"};
+  static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone", "drawer", "flashlight"};
   static const char *sliding[] = {"boot+slide",  "face+slide",    "panel+slide",      "details+slide",
-                                  "setup+slide", "settime+slide", "touchcheck+slide", "phone+slide"};
+                                  "setup+slide", "settime+slide", "touchcheck+slide", "phone+slide", "drawer+slide", "flashlight+slide"};
   if (!awake) return "asleep";
   return (tr.kind != Slide::None ? sliding : names)[(int)mode];
 }
@@ -250,7 +252,8 @@ void begin() {
   fading = irisWaking = sleeping = false;
   standby = power::Controller{};
   touchResting = wakeGuard = false;
-  settingsPage = detailsPage = setupPage = setTimePage = 0;
+  settingsPage = detailsPage = setupPage = setTimePage = drawerPage = 0;
+  timer = TimerState{};
   failsInARow = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
@@ -323,6 +326,37 @@ void begin() {
   hal::log("boot: done, %s", sequence ? "startup sequence" : "face");
 }
 
+void stepTimer() {
+  if (timer.active && (int32_t)(hal::ms() - timer.targetMs) >= 0) {
+    timer.active = false;
+    timer.alarming = true;
+    timer.alarmStartMs = hal::ms();
+    if (!awake) wakeScreen();
+    lastActivity = hal::ms();
+  }
+  if (timer.alarming) {
+    if (since(timer.alarmStartMs) > 30000) {
+      timer.alarming = false;
+      hal::backlight(backlightLevel());
+      if (mode == Mode::Drawer) mode = Mode::Face;
+      dirty = true;
+      return;
+    }
+    lastActivity = hal::ms();
+    if (since(lastPresent) >= 200) {
+      bool on = ((hal::ms() - timer.alarmStartMs) / 200) % 2 == 0;
+      hal::backlight(on ? 255 : 40);
+      cur->fillSprite(on ? col::WARN : col::BG);
+      const GFXfont *f = gfx::font(type::Role::Title, true);
+      gfx::text(*cur, "TIMER", CX, 90, f, on ? col::BG : col::WARN, MC_DATUM);
+      gfx::text(*cur, "UP!", CX, 130, f, on ? col::BG : col::WARN, MC_DATUM);
+      const GFXfont *fb = gfx::font(type::Role::Body, false);
+      gfx::text(*cur, "Tap to dismiss", CX, 175, fb, on ? col::BG : col::TEXT, MC_DATUM);
+      present(*cur);
+    }
+  }
+}
+
 void loop() {
   hal::watchdogFeed();
   if (!haveFrame) {
@@ -332,6 +366,7 @@ void loop() {
   pollInput();
   stepNetwork();
   if (ble::on() || ble::state() != ble::State::Off) stepPhone();
+  stepTimer();
   if (awake ? since(lastBatteryRead) > BATTERY_READ_MS : since(lastBatteryRead) >= BATTERY_READ_ASLEEP_MS) readBattery();
   if (settingsDirty && since(settingsChangedAt) > SAVE_DELAY_MS) {
     saveSettings();
@@ -343,7 +378,7 @@ void loop() {
     return;
   }
 
-  bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot;
+  bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot || timer.alarming || mode == Mode::Flashlight;
   if (held) lastActivity = hal::ms();
   if (!sleeping && since(lastActivity) > screenTimeout()) {
     startSleep();

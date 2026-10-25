@@ -195,6 +195,56 @@ void closeToFace(float v) {
   else animateTo(0, motion::PANEL_MS, H);
 }
 
+void openDrawer(float v) {
+  finishIris();
+  cancelEntrance(false);
+  pressed = screens::Button::None;
+  drawerPage = 0;
+  if (!haveSpare || !motionOn()) {
+    mode = Mode::Drawer;
+    refreshScreen(true);
+    return;
+  }
+  if (mode == Mode::Face) renderFace(*cur, currentFace(), false);
+  drawScreen(*nb, Mode::Drawer, drawerPage);
+  tr = Transition{};
+  tr.kind = Slide::DrawerOpen;
+  tr.pos = H;
+  if (v) settleTo(0, -v);
+  else animateTo(0, motion::PANEL_MS, H);
+}
+
+void closeDrawer(float v) {
+  finishIris();
+  pressed = screens::Button::None;
+  if (!haveSpare || !motionOn()) {
+    mode = Mode::Face;
+    dirty = true;
+    return;
+  }
+  renderFace(*nb, currentFace(), false);
+  drawScreen(*cur, Mode::Drawer, drawerPage);
+  tr = Transition{};
+  tr.kind = Slide::DrawerClose;
+  tr.pos = 0;
+  if (v) settleTo(H, v);
+  else animateTo(H, motion::PANEL_MS, H);
+}
+
+void openFlashlight() {
+  finishIris();
+  mode = Mode::Flashlight;
+  hal::backlight(255);
+  drawScreen(*cur, Mode::Flashlight, 0);
+  present(*cur);
+}
+
+void closeFlashlight() {
+  mode = Mode::Face;
+  hal::backlight(backlightLevel());
+  dirty = true;
+}
+
 void stepTransition() {
   if (tr.kind == Slide::None) return;
   if (tr.animating) {
@@ -216,6 +266,8 @@ void stepTransition() {
       case Slide::Page: showFaceSlide(); break;
       case Slide::PanelOpen: presentVertical(*cur, *nb, (int)tr.pos); break;
       case Slide::PanelClose: presentVertical(*nb, *cur, (int)tr.pos); break;
+      case Slide::DrawerOpen: presentVertical(*nb, *cur, (int)tr.pos); break;
+      case Slide::DrawerClose: presentVertical(*cur, *nb, (int)tr.pos); break;
       default: break;
     }
   }
@@ -244,6 +296,23 @@ void stepTransition() {
       uiKey = screenKey();
       break;
     case Slide::PanelClose:
+      std::swap(cur, nb);
+      tr = Transition{};
+      mode = Mode::Face;
+      dirty = true;
+      break;
+    case Slide::DrawerOpen:
+      if (tr.pos >= H) {
+        tr = Transition{};
+        dirty = true;
+        break;
+      }
+      std::swap(cur, nb);
+      tr = Transition{};
+      mode = Mode::Drawer;
+      uiKey = screenKey();
+      break;
+    case Slide::DrawerClose:
       std::swap(cur, nb);
       tr = Transition{};
       mode = Mode::Face;
@@ -455,6 +524,7 @@ uint32_t nextDeadline() {
   auto take = [&](uint32_t t) {
     if ((int32_t)(t - at) < 0) at = (int32_t)(t - now) > 0 ? t : now;
   };
+  if (timer.active) take(timer.targetMs);
   if (nextSyncAt) take(nextSyncAt);
   if (settingsDirty) take(settingsChangedAt + SAVE_DELAY_MS + 1);
   take(lastBatteryRead + BATTERY_READ_ASLEEP_MS);

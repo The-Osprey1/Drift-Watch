@@ -142,6 +142,7 @@ int &pageFor(Mode m) {
          : m == Mode::SetTime   ? setTimePage
          : m == Mode::PhoneSync ? phonePage
          : m == Mode::TouchCheck ? checkPage
+         : m == Mode::Drawer    ? drawerPage
                                  : settingsPage;
 }
 
@@ -168,6 +169,7 @@ screens::View view(Mode m, int page) {
              : m == Mode::SetTime ? screens::Screen::SetTime
              : m == Mode::TouchCheck ? screens::Screen::TouchCheck
              : m == Mode::PhoneSync ? screens::Screen::PhoneSync
+             : m == Mode::Drawer ? screens::Screen::Drawer
                                   : screens::Screen::Settings;
   v.page = page;
   v.large = settings.largeText;
@@ -175,6 +177,9 @@ screens::View view(Mode m, int page) {
   v.motion = settings.motion;
   v.activeFaces = settings.activeFaces;
   v.theme = faceTheme(currentFace());
+  v.timerActive = timer.active;
+  v.timerRemainingMs = timer.active && (int32_t)(timer.targetMs - hal::ms()) > 0 ? (timer.targetMs - hal::ms()) : 0;
+  v.timerTotalMs = timer.totalMs;
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
@@ -253,7 +258,7 @@ screens::View view(Mode m, int page) {
 }
 screens::View view() { return view(mode, pageFor(mode)); }
 bool pagedMode() {
-  return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup || mode == Mode::SetTime || mode == Mode::PhoneSync;
+  return mode == Mode::Panel || mode == Mode::Details || mode == Mode::Setup || mode == Mode::SetTime || mode == Mode::PhoneSync || mode == Mode::Drawer;
 }
 int pageCount() { return screens::pageCount(*cur, view()); }
 
@@ -296,10 +301,20 @@ uint32_t screenKey() {
     syncAgoText(ago, sizeof ago);
     for (const char *p = ago; *p; p++) k = k * 31 + (uint8_t)*p;
   }
+  if (mode == Mode::Drawer && timer.active) {
+    k = k * 61 + (uint32_t)(timer.targetMs > hal::ms() ? (timer.targetMs - hal::ms()) / 1000 : 0);
+  }
   return k;
 }
 
-void drawScreen(TFT_eSprite &s, Mode m, int page) { uiAnimated = screens::draw(s, view(m, page)); }
+void drawScreen(TFT_eSprite &s, Mode m, int page) {
+  if (m == Mode::Flashlight) {
+    s.fillSprite(0xFFFF);
+    uiAnimated = false;
+    return;
+  }
+  uiAnimated = screens::draw(s, view(m, page));
+}
 
 void refreshScreen(bool force) {
   uint32_t k = screenKey();

@@ -28,10 +28,11 @@ class LineBuffer {
   bool overflow_ = false;  // this line ran past the buffer; skip to its end
 };
 
-enum class Kind : uint8_t { None, Time, Wifi };
+enum class Kind : uint8_t { None, Time, Wifi, Faces, Info };
 struct Command {
   Kind kind = Kind::None;
   time_t time = 0;
+  uint16_t facesMask = 0;
   char ssid[33] = {};
   char password[64] = {};
 };

@@ -216,9 +216,27 @@ void goBack(float v) {
       settingsPage = screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::Details);
       showMode(Mode::Panel);
       break;
+    case Mode::Drawer: closeDrawer(v); break;
+    case Mode::Flashlight: closeFlashlight(); break;
     case Mode::Panel: closeToFace(v); break;
     default: break;
   }
+}
+
+void startTimer(uint32_t ms) {
+  timer.active = true;
+  timer.alarming = false;
+  timer.targetMs = hal::ms() + ms;
+  timer.totalMs = ms;
+  refreshScreen(true);
+}
+
+void resetTimer() {
+  timer.active = false;
+  timer.alarming = false;
+  timer.targetMs = 0;
+  timer.totalMs = 0;
+  refreshScreen(true);
 }
 
 void activate(screens::Button b) {
@@ -330,6 +348,21 @@ void activate(screens::Button b) {
       if (mode == Mode::PhoneSync) ble::close();
       showMode(Mode::Face);
       return;
+    case Button::Timer1m:
+      startTimer(60 * 1000);
+      return;
+    case Button::Timer3m:
+      startTimer(180 * 1000);
+      return;
+    case Button::Timer5m:
+      startTimer(300 * 1000);
+      return;
+    case Button::TimerReset:
+      resetTimer();
+      return;
+    case Button::Flashlight:
+      openFlashlight();
+      return;
     default:
       break;
   }
@@ -410,6 +443,19 @@ void onFingerDown(const TouchSample &s) {
   if (mode == Mode::Boot) {
     // A touch skips the startup sequence.
     bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
+    finger.ignore = true;
+    return;
+  }
+  if (timer.alarming) {
+    timer.alarming = false;
+    hal::backlight(backlightLevel());
+    if (mode == Mode::Drawer) mode = Mode::Face;
+    dirty = true;
+    finger.ignore = true;
+    return;
+  }
+  if (mode == Mode::Flashlight) {
+    closeFlashlight();
     finger.ignore = true;
     return;
   }
@@ -527,6 +573,8 @@ void onFingerUp() {
     bool up = dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS;
     bool down = dy >= SWIPE_PX || vy > motion::FLICK_PX_PER_MS;
     if (mode == Mode::Face && up) openPanel(vy ? -vy : 0.01f);
+    else if (mode == Mode::Face && down) openDrawer(vy ? vy : 0.01f);
+    else if (mode == Mode::Drawer && up) closeDrawer(vy ? -vy : -0.01f);
     else if (pagedMode() && down) goBack(vy ? -vy : -0.01f);
     return;
   }
@@ -631,6 +679,17 @@ void pollBoot() {
     boot.used = true;
     boot.checkOpened = false;
     noteLooking();
+    if (timer.alarming) {
+      timer.alarming = false;
+      hal::backlight(backlightLevel());
+      if (mode == Mode::Drawer) mode = Mode::Face;
+      dirty = true;
+      return;
+    }
+    if (mode == Mode::Flashlight) {
+      closeFlashlight();
+      return;
+    }
     if (sleeping) {
       float elapsed = min(1.0f, since(sleepStart) / (float)motion::SLEEP_MS);
       sleeping = false;
@@ -684,6 +743,14 @@ void runSerialCommand(const char *line) {
   } else if (cmd.kind == serialcmd::Kind::Wifi) {
     net::saveWifi(cmd.ssid, cmd.password);
     Serial.printf("Configuring Wi-Fi for SSID: %s\n", cmd.ssid);
+  } else if (cmd.kind == serialcmd::Kind::Faces) {
+    settings.activeFaces = (cmd.facesMask & ALL_FACES_MASK) ? (cmd.facesMask & ALL_FACES_MASK) : ALL_FACES_MASK;
+    saveSettings();
+    dirty = true;
+    Serial.printf("Faces mask set to 0x%04X\n", (unsigned int)settings.activeFaces);
+  } else if (cmd.kind == serialcmd::Kind::Info) {
+    Serial.printf("DRIFT:VER=0.14.0,TIME=%ld,BAT=%d,FACES=0x%04X\n",
+                  (long)hal::now(), battery::percent(), (unsigned int)settings.activeFaces);
   }
 }
 

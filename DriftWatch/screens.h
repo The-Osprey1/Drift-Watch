@@ -24,10 +24,12 @@ enum class Button : uint8_t {
   // Added in v0.10.0
   PhoneSync, Night, ScreenTurn, TouchCheck,
   HotSwap,
+  // Quick Drawer & Tools
+  Timer1m, Timer3m, Timer5m, Flashlight, TimerReset,
 };
 const char *buttonName(Button b);
 
-enum class Screen : uint8_t { Settings, Details, Setup, SetTime, TouchCheck, PhoneSync };
+enum class Screen : uint8_t { Settings, Details, Setup, SetTime, TouchCheck, PhoneSync, Drawer };
 
 // Where the touch check is: tapping one of the two dots, or showing how it went.
 enum class CheckResult : uint8_t { Tapping, Matched, NoMatch };
@@ -106,6 +108,10 @@ struct View {
   uint32_t ms;              // drives the progress spinner
   uint16_t activeFaces;
   FaceTheme theme;
+  // Quick Drawer & Timer
+  bool timerActive;
+  uint32_t timerRemainingMs;
+  uint32_t timerTotalMs;
 };
 
 // Draws the screen. Returns true if it shows a spinner that needs more frames.

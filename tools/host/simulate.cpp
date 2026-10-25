@@ -394,6 +394,15 @@ void screenVariants() {
       w.use12h = true;
       bad += renderAll(s, w, "settings_night_12h");
     }
+    {
+      screens::View w = v;
+      w.screen = screens::Screen::Drawer;
+      bad += renderAll(s, w, large ? "drawer_large" : "drawer");
+      w.timerActive = true;
+      w.timerRemainingMs = 45000;
+      w.timerTotalMs = 60000;
+      bad += renderAll(s, w, large ? "drawer_timer_large" : "drawer_timer");
+    }
 
     // Pressed states.
     screens::View pv = v;
@@ -2440,6 +2449,12 @@ void serialScenarios() {
           "a WIFI: line without a network name or comma is refused");
     std::string longSsid = "WIFI:" + std::string(33, 'n') + ",pw";
     CHECK(parse(longSsid.c_str()).kind == Kind::None, "a network name over 32 bytes is refused");
+    Command f = parse("FACES:0x0041");
+    CHECK(f.kind == Kind::Faces && f.facesMask == 0x0041, "FACES: with hex mask is read");
+    Command h = parse("H=65");
+    CHECK(h.kind == Kind::Faces && h.facesMask == 65, "H= with dec mask is read");
+    Command inf = parse("INFO?");
+    CHECK(inf.kind == Kind::Info, "INFO? is read");
   }
 
   printf("Serial: a command sent in pieces sets the clock once it is complete\n");
@@ -2845,6 +2860,44 @@ void lowBatteryScenarios() {
   sim::batteryMv = 3950;
 }
 
+void quickDrawerScenarios() {
+  printf("Quick Drawer: swipe down opens drawer, timer controls, flashlight\n");
+  startOn(FACE_DIGITAL);
+  swipeDown();
+  settle();
+  CHECK(screen() == "drawer", "swipe down from face opens drawer, got %s", screen().c_str());
+  CHECK(ui::page() == 0, "drawer starts on page 0");
+
+  screens::Control c;
+  CHECK(find(screens::Button::Timer1m, c), "Timer1m control found in drawer");
+  tapButton(screens::Button::Timer1m);
+  settle(100);
+  CHECK(uiparts::timer.active, "1m timer is active");
+  CHECK(uiparts::timer.totalMs == 60000, "timer total is 60000 ms");
+
+  CHECK(find(screens::Button::TimerReset, c), "TimerReset control found");
+  tapButton(screens::Button::TimerReset);
+  settle(100);
+  CHECK(!uiparts::timer.active, "timer reset");
+
+  CHECK(find(screens::Button::Flashlight, c), "Flashlight control found");
+  tapButton(screens::Button::Flashlight);
+  settle(100);
+  CHECK(screen() == "flashlight", "Flashlight mode entered, got %s", screen().c_str());
+  CHECK(lastBacklight() == 255, "Flashlight sets backlight to 255");
+  tap(120, 120);
+  settle(100);
+  CHECK(screen() == "face", "tap in flashlight returns to face, got %s", screen().c_str());
+  CHECK(lastBacklight() == backlightLevel(), "backlight restored");
+
+  uiparts::startTimer(1000);
+  runFor(2000);
+  CHECK(uiparts::timer.alarming, "timer is alarming");
+  tap(120, 120);
+  settle(100);
+  CHECK(!uiparts::timer.alarming, "tap dismisses alarm");
+}
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -2866,6 +2919,7 @@ int main(int argc, char **argv) {
   powerScenarios();
   reliabilityScenarios();
   lowBatteryScenarios();
+  quickDrawerScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

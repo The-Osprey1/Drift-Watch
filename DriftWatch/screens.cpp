@@ -1065,6 +1065,76 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
   dots(s, page + first, p.pages + first);
   return c.animated;
 }
+
+int drawerPages(const View &v) {
+  return v.timerActive ? 1 : (v.large ? 4 : 2);
+}
+
+int drawerControls(const View &v, int page, Control *out, int max) {
+  if (v.timerActive) {
+    if (max >= 1) {
+      out[0] = {Button::TimerReset, LOWER, LOWER_HIT};
+      return 1;
+    }
+    return 0;
+  }
+  if (v.large) {
+    if (max < 1) return 0;
+    Button b = page == 0 ? Button::Timer1m : page == 1 ? Button::Flashlight : page == 2 ? Button::Timer3m : Button::Timer5m;
+    out[0] = {b, TALL, TALL};
+    return 1;
+  }
+  int n = 0;
+  if (page == 0) {
+    if (n < max) out[n++] = {Button::Timer1m, UPPER, UPPER_HIT};
+    if (n < max) out[n++] = {Button::Flashlight, LOWER, LOWER_HIT};
+  } else {
+    if (n < max) out[n++] = {Button::Timer3m, UPPER, UPPER_HIT};
+    if (n < max) out[n++] = {Button::Timer5m, LOWER, LOWER_HIT};
+  }
+  return n;
+}
+
+bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
+  Ctx c{s, v, true, false};
+  handle(s);
+  if (!v.large && !v.timerActive) {
+    const GFXfont *f = fontFor(Role::Body, false);
+    gfx::text(s, "Quick Tools", CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
+  }
+
+  if (v.timerActive) {
+    int sec = (int)(v.timerRemainingMs / 1000);
+    int min = sec / 60;
+    sec %= 60;
+    char timeStr[16];
+    snprintf(timeStr, sizeof timeStr, "%02d:%02d", min, sec);
+    gfx::text(s, timeStr, CX, 85, fontFor(Role::Title, true), col::TEXT, MC_DATUM);
+    if (v.timerTotalMs > 0) {
+      s.drawCircle(CX, CY, 108, col::OUTLINE);
+    }
+    Control ctl[2];
+    int n = drawerControls(v, page, ctl, 2);
+    for (int i = 0; i < n; i++) {
+      Item it{Button::TimerReset, nullptr, Icon::None, 0, "Reset Timer", col::WARN, col::WARN, 0};
+      drawItem(c, it, ctl[i].visible);
+    }
+    return true;
+  }
+
+  Control ctl[2];
+  int n = drawerControls(v, page, ctl, 2);
+  for (int i = 0; i < n; i++) {
+    Item it{ctl[i].id, nullptr, Icon::None, 0, "", col::TEXT, col::TEXT, 0};
+    if (ctl[i].id == Button::Timer1m) { it.label = "Timer"; it.value = "1 Minute"; it.valueColor = col::CYAN; }
+    else if (ctl[i].id == Button::Flashlight) { it.label = "Light"; it.value = "Flashlight"; it.valueColor = col::TEXT; }
+    else if (ctl[i].id == Button::Timer3m) { it.label = "Timer"; it.value = "3 Minutes"; it.valueColor = col::CYAN; }
+    else if (ctl[i].id == Button::Timer5m) { it.label = "Timer"; it.value = "5 Minutes"; it.valueColor = col::CYAN; }
+    drawItem(c, it, ctl[i].visible);
+  }
+  dots(s, page, drawerPages(v), v.theme.primary ? v.theme.primary : col::TEXT, v.theme.outline ? v.theme.outline : col::OUTLINE);
+  return c.animated;
+}
 }  // namespace
 
 // ---- Public ------------------------------------------------------------------------------
@@ -1136,8 +1206,10 @@ const char *buttonName(Button b) {
   static const char *names[] = {"none",     "brightness", "time format", "motion",   "sync now",   "wi-fi setup",
                                 "details",  "text size",  "cancel",      "back",     "retry",      "edit wi-fi",
                                 "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time",
-                                "phone sync", "night mode", "screen turn", "touch check", "hot swap"};
-  return names[(int)b];
+                                "phone sync", "night mode", "screen turn", "touch check", "hot swap",
+                                "timer 1m", "timer 3m", "timer 5m", "flashlight", "timer reset"};
+  int idx = (int)b;
+  return idx >= 0 && idx < (int)(sizeof names / sizeof names[0]) ? names[idx] : "unknown";
 }
 
 SetupPhase setupPhase(const View &v) {
@@ -1178,6 +1250,7 @@ void stepTime(tm &t, TimeField f, int dir) {
 }
 
 int pageCount(TFT_eSprite &s, const View &v) {
+  if (v.screen == Screen::Drawer) return drawerPages(v);
   if (v.screen == Screen::Settings) return settingsPages(v);
   if (v.screen == Screen::SetTime) return TIME_PAGES;
   if (v.screen == Screen::TouchCheck) return 1;
@@ -1189,6 +1262,7 @@ int pageCount(TFT_eSprite &s, const View &v) {
 bool draw(TFT_eSprite &s, const View &v) {
   s.fillSprite(col::BG);
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
+  if (v.screen == Screen::Drawer) return drawDrawer(s, v, page);
   if (v.screen == Screen::Settings) return drawSettings(s, v, page);
   if (v.screen == Screen::SetTime) return drawSetTime(s, v, page);
   if (v.screen == Screen::TouchCheck) return drawTouchCheck(s, v);
@@ -1197,6 +1271,7 @@ bool draw(TFT_eSprite &s, const View &v) {
 
 int controls(TFT_eSprite &s, const View &v, Control *out, int max) {
   int page = constrain(v.page, 0, pageCount(s, v) - 1);
+  if (v.screen == Screen::Drawer) return drawerControls(v, page, out, max);
   if (v.screen == Screen::Settings) return settingsControls(v, page, out, max);
   if (v.screen == Screen::SetTime) return setTimeControls(v, page, out, max);
   if (v.screen == Screen::TouchCheck) return 0;  // taps there are raw positions, not controls

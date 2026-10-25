@@ -49,6 +49,15 @@ Command parse(const char *line) {
     memcpy(cmd.ssid, ssid, ssidLen);
     memcpy(cmd.password, comma + 1, passLen);
     cmd.kind = Kind::Wifi;
+  } else if ((len > 6 && strncmp(line, "FACES:", 6) == 0) || (len > 2 && strncmp(line, "H=", 2) == 0)) {
+    const char *arg = (line[0] == 'F') ? line + 6 : line + 2;
+    long m = strtol(arg, nullptr, 0);
+    if (m > 0 && m <= 0xFFFF) {
+      cmd.kind = Kind::Faces;
+      cmd.facesMask = (uint16_t)m;
+    }
+  } else if (strcmp(line, "INFO?") == 0 || strcmp(line, "?") == 0) {
+    cmd.kind = Kind::Info;
   }
   return cmd;
 }

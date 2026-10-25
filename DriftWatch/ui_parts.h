@@ -38,7 +38,7 @@ constexpr int SERIAL_BYTES_PER_POLL = 256;             // bounds the time one po
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
 
-enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup, SetTime, TouchCheck, PhoneSync };
+enum class Mode : uint8_t { Boot, Face, Panel, Details, Setup, SetTime, TouchCheck, PhoneSync, Drawer, Flashlight };
 
 // A face's entrance (faces.h): played once when a slide lands on a face other than the one last
 // shown settled, never on wake. A touch, BOOT, settings or sleep ends it at once, and the face is
@@ -99,7 +99,7 @@ struct Finger {
 
 // The one transition that can be running. A new touch takes over a face
 // slide where it is, so swipes never queue up.
-enum class Slide : uint8_t { None, Face, PanelOpen, PanelClose, Page };
+enum class Slide : uint8_t { None, Face, PanelOpen, PanelClose, Page, DrawerOpen, DrawerClose };
 struct Transition {
   Slide kind = Slide::None;
   bool dragging = false, animating = false;
@@ -108,6 +108,14 @@ struct Transition {
   uint32_t start = 0, duration = 0;
   int neighbour = -1;      // face drawn in `nb`
   int toPage = 0;          // page drawn in `nb` during a page slide
+};
+
+struct TimerState {
+  bool active = false;
+  bool alarming = false;
+  uint32_t targetMs = 0;
+  uint32_t totalMs = 0;
+  uint32_t alarmStartMs = 0;
 };
 
 #if DRIFT_DIAG
@@ -157,8 +165,9 @@ extern net::Portal seenPortal;
 extern uint32_t uiKey;
 extern bool uiAnimated;
 extern screens::Button pressed;
-extern int settingsPage, detailsPage, setupPage, setTimePage, phonePage, checkPage;
+extern int settingsPage, detailsPage, setupPage, setTimePage, phonePage, checkPage, drawerPage;
 extern tm editTime;
+extern TimerState timer;
 
 extern RaiseDetector wristRaise;
 extern TwistDetector wristTwist;
@@ -234,6 +243,13 @@ void cutToFace(int step);
 void openPanel(float v = 0);
 void startPanelDrag();
 void closeToFace(float v = 0);
+void openDrawer(float v = 0);
+void closeDrawer(float v = 0);
+void openFlashlight();
+void closeFlashlight();
+void startTimer(uint32_t ms);
+void resetTimer();
+void stepTimer();
 void stepTransition();
 void touchRest();
 void touchResume();

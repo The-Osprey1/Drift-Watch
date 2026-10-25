@@ -91,6 +91,8 @@ constexpr float RADAR_TRAIL_DEG = 105;  // how far behind the beam the trail is 
 constexpr float RADAR_DECAY_DEG = 32;   // the trail's brightness falls to 37% over this angle
 constexpr uint32_t RADAR_FRAME_MS = 33; // about 30 frames a second: 3.3 degrees a frame
 constexpr int LOW_BATTERY_PCT = 20;     // below this the beam only moves with the seconds
+// Phantom: the balance wheel and seconds hand at about 30 frames a second while it is on screen.
+constexpr uint32_t PHANTOM_FRAME_MS = 33;
 
 // Touch thresholds.
 constexpr int SLOP_PX = 10;             // movement before a touch counts as a drag

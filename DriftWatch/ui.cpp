@@ -10,6 +10,7 @@
 #include "net.h"
 #include "orient.h"
 #include "phone.h"
+#include "power.h"
 #include "raise.h"
 #include "screens.h"
 #include "serial_cmd.h"
@@ -23,6 +24,7 @@ constexpr uint32_t RESULT_TIMEOUT_MS = 30000;          // a setup result stays u
 constexpr uint32_t RESYNC_MS = 6UL * 60 * 60 * 1000;   // every 6 hours
 constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync
 constexpr uint32_t BATTERY_READ_MS = 10000;
+constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estimate needs no more, and the sleeps get longer
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
@@ -31,9 +33,6 @@ constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts s
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
 constexpr uint32_t REPEAT_DELAY_MS = 450;               // holding - or + starts repeating after this
 constexpr uint32_t REPEAT_MS = 120, REPEAT_FAST_MS = 50;  // then this often, faster after 8 steps
-constexpr uint32_t IMU_READ_MS = 80;                   // motion samples while the screen is off
-constexpr uint32_t DOZE_RAISE_MS = 100;                // screen-off wait with raise-to-wake on
-constexpr uint32_t DOZE_MS = 500;                      // and with it off; touch and BOOT wake it early
 constexpr uint32_t IMU_AWAKE_MS = 80;                  // motion samples while the screen is on, for wrist-down sleep
 constexpr uint32_t CHECK_RESULT_MS = 1400;             // touch check result stays up this long
 constexpr uint32_t BOOT_CHECK_MS = 4000;               // holding BOOT this long opens the touch check anywhere
@@ -67,7 +66,7 @@ uint32_t fadeStart = 0;
 uint32_t cacheKey = 0;
 bool cacheValid = false, dirty = true;
 int shownSecond = -1, lastMinute = -1;
-bool sweeping = false;      // the radar beam is turning
+bool faceMoving = false;    // the face animates between seconds: the radar beam, Phantom's movement
 uint32_t sweepStart = 0;
 
 int batteryPct = -1, batteryMv = -1;
@@ -89,6 +88,14 @@ TwistDetector wristTwist;
 DropDetector wristDrop;
 uint32_t lastImuRead = 0;
 bool wokeByRaise = false;
+// Screen-off waits (power.h). `touchResting` is true while the touch chip is allowed its
+// automatic standby; it is not read then, only its interrupt line can wake the watch.
+power::Controller standby;
+bool touchResting = false;
+// Set by a touch or BOOT wake: a finger found down afterwards is the one that woke the watch,
+// even if the chip only answers again after the screen is already on, so it never acts.
+// Cleared by the first answer that shows no finger.
+bool wakeGuard = false;
 
 // Touch check: two raw taps, then the result for a moment. `checkReturn` is where it goes
 // afterwards: the settings page it was opened from, or the face.
@@ -173,10 +180,16 @@ void present(TFT_eSprite &s) {
 
 // Shows `a` and `b` side by side, shifted so `offset` columns of `a` are off the left edge.
 void presentHorizontal(TFT_eSprite &a, TFT_eSprite &b, int offset) {
+#if DRIFT_DIAG
+  uint32_t t = micros();
+#endif
   offset = constrain(offset, 0, W);
   if (offset < W) a.pushSprite(0, 0, offset, 0, W - offset, H);
   if (offset > 0) b.pushSprite(W - offset, 0, 0, 0, offset, H);
   lastPresent = hal::ms();
+#if DRIFT_DIAG
+  diag.pushUs += micros() - t;
+#endif
 }
 
 // Shows `top` above `bottom`, shifted so `offset` rows of `top` are off the top edge.
@@ -211,8 +224,14 @@ bool syncBusy() { return net::syncRunning(); }
 
 FaceContext faceContext(bool withSweep) {
   FaceContext c{};
-  time_t t = hal::now();
+  // One reading of the wall clock for the whole frame: the time shown and the fraction of a
+  // second the smooth hands use can never disagree.
+  int64_t wall = hal::nowMs();
+  time_t t = (time_t)(wall / 1000);
   localtime_r(&t, &c.now);
+  c.ms = (uint16_t)(wall % 1000);
+  c.animMs = hal::ms();
+  c.animate = withSweep && faceMoving;
   c.timeValid = net::timeIsValid();
   c.use12h = settings.use12h;
   c.batteryPct = batteryPct;
@@ -223,7 +242,7 @@ FaceContext faceContext(bool withSweep) {
   c.noWifi = !net::hasSavedWifi();
   c.beamDeg = -1;
   if (withSweep && currentFace() == FACE_RADAR && motionOn()) {
-    if (sweeping) c.beamDeg = (since(sweepStart) % motion::RADAR_TURN_MS) * 360.0f / motion::RADAR_TURN_MS;
+    if (faceMoving) c.beamDeg = (since(sweepStart) % motion::RADAR_TURN_MS) * 360.0f / motion::RADAR_TURN_MS;
     else if ((lowPower() || !haveCache) && c.timeValid) c.beamDeg = c.now.tm_sec * 6;  // one step a second, with the seconds dot
   }
   return c;
@@ -514,7 +533,7 @@ void commitFace(int step) {
   shownSecond = -1;
   lastMinute = -1;
   tr = Transition{};
-  sweeping = false;  // stepFace starts the beam on the radar face
+  faceMoving = false;  // stepFace starts the beam on the radar face
 }
 
 // Mid-drag arrival on the neighbour: it becomes current and the drag continues.
@@ -525,7 +544,7 @@ void landOn(int step) {
   std::swap(cur, nb);
   tr.neighbour = faceAt(-step);  // the face just left is now the neighbour
   cacheValid = false;
-  sweeping = false;
+  faceMoving = false;
 }
 
 // Instant face change, used with reduced motion or without the spare buffer.
@@ -534,7 +553,7 @@ void cutToFace(int step) {
   markSettingsChanged();
   cacheValid = false;
   dirty = true;
-  sweeping = false;
+  faceMoving = false;
   tr = Transition{};
 }
 
@@ -637,6 +656,23 @@ void stepTransition() {
 }
 
 // ---- Sleep and wake -----------------------------------------------------------------
+// The touch chip may doze while the screen is off (DRIFT_TOUCH_STANDBY): it is set once when
+// the screen goes off and once when it comes on, never on every screen-off wake.
+void touchRest() {
+  if (!power::options.touchStandby || touchResting) return;
+  touchResting = touch::setAutoStandby(true);
+  if (!touchResting) hal::log("ui: touch standby not available, touch stays fully on");
+}
+
+void touchResume() {
+  if (!touchResting) return;
+  touchResting = false;
+  if (!touch::setAutoStandby(false)) {
+    hal::log("ui: touch did not answer after standby, restarting it");
+    touch::restart();
+  }
+}
+
 void sleepScreen() {
   if (!awake) return;
   hal::backlight(0);
@@ -645,7 +681,7 @@ void sleepScreen() {
   fading = false;
   pressed = screens::Button::None;
   tr = Transition{};
-  sweeping = false;
+  faceMoving = false;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
   if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
@@ -665,10 +701,14 @@ void sleepScreen() {
     saveSettings();
     settingsDirty = false;
   }
+  standby.screenOff(hal::ms());
+  touchRest();
 }
 
 void wakeScreen() {
   if (awake) return;
+  touchResume();
+  standby.screenOn(hal::ms());
   tft.writecommand(0x11);  // panel sleep out; the panel needs 5 ms before the next command
   hal::idle(5);
   awake = true;
@@ -1021,21 +1061,15 @@ void noteLooking() {
   }
 }
 
-// While the screen is off, watches for the wrist being raised.
-void stepRaise() {
-  if (!gesturesOn() || since(lastImuRead) < IMU_READ_MS) return;
-  lastImuRead = hal::ms();
-  Accel a;
-  if (!imu::read(a)) return;
+// While the screen is off, every fresh motion sample goes to both detectors (from polling or
+// from a motion interrupt's qualifying window, see power.h). True when one recognises a gesture.
+bool feedGesture(uint32_t ms, const Accel &a) {
   // Both detectors see every sample, so each keeps its own picture of the wrist.
-  bool raised = wristRaise.update(hal::ms(), a) && settings.raiseToWake;
-  bool twisted = wristTwist.update(hal::ms(), a, wristRaise.facing()) && settings.twistToWake;
-  if (raised || twisted) {
-    if (raised) hal::log("ui: raise to wake (turned at %d deg/s)", (int)wristRaise.lastPeakRate());
-    else hal::log("ui: wrist twist wake (turned at %d deg/s)", (int)wristTwist.lastPeakRate());
-    wakeScreen();
-    wokeByRaise = true;
-  }
+  bool raised = wristRaise.update(ms, a) && settings.raiseToWake;
+  bool twisted = wristTwist.update(ms, a, wristRaise.facing()) && settings.twistToWake;
+  if (raised) hal::log("ui: raise to wake (turned at %d deg/s)", (int)wristRaise.lastPeakRate());
+  else if (twisted) hal::log("ui: wrist twist wake (turned at %d deg/s)", (int)wristTwist.lastPeakRate());
+  return raised || twisted;
 }
 
 // While the screen is on a face, turning the wrist away after a look puts it to sleep early.
@@ -1063,7 +1097,7 @@ void onFingerDown(const TouchSample &s) {
   wristDrop.touched(hal::ms());
   noteLooking();
 
-  if (!awake) {
+  if (!awake || wakeGuard) {
     wakeScreen();
     finger.ignore = true;  // the waking touch never also acts
     return;
@@ -1309,6 +1343,10 @@ void pollSerial() {
 
 void pollInput() {
   pollSerial();
+  if (touchResting) {
+    pollBoot();  // the resting touch chip is not read; its interrupt line wakes the watch
+    return;
+  }
   TouchSample s{};
   if (!touch::read(s)) {
     // The shared I2C bus can drop a read. That says nothing about the finger, so the touch
@@ -1321,6 +1359,7 @@ void pollInput() {
     return;
   }
   touchFailing = false;
+  if (!s.down) wakeGuard = false;
   // The chip reports positions in the panel's own frame; turn them to match the screen.
   rawX = s.x;
   rawY = s.y;
@@ -1357,16 +1396,18 @@ void stepBoot() {
 void stepFace() {
   FaceContext c = faceContext(false);
   lastMinute = c.now.tm_min;
-  // The radar beam turns all the time the radar face is on screen, unless motion is reduced,
-  // the battery is low, or memory is short and there is no cached dial to draw over (then it
-  // steps with the seconds, drawn once a second).
-  bool beam = currentFace() == FACE_RADAR && motionOn() && !lowPower() && haveCache;
-  if (beam != sweeping) {
-    sweeping = beam;
+  // The radar beam and Phantom's movement run all the time their face is on screen, unless
+  // motion is reduced, the battery is low, or memory is short and there is no cached dial to
+  // draw over (then they step with the seconds, drawn once a second). With the screen off or
+  // another screen up this is not called at all.
+  bool moving = faceAnimates(currentFace()) && motionOn() && !lowPower() && haveCache;
+  if (moving != faceMoving) {
+    faceMoving = moving;
     sweepStart = hal::ms();
     dirty = true;
   }
-  bool due = dirty || c.now.tm_sec != shownSecond || (sweeping && since(lastPresent) >= motion::RADAR_FRAME_MS);
+  uint32_t frameMs = currentFace() == FACE_RADAR ? motion::RADAR_FRAME_MS : motion::PHANTOM_FRAME_MS;
+  bool due = dirty || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
   if (!due) return;
   renderFace(*cur, currentFace(), true);
   present(*cur);
@@ -1380,6 +1421,7 @@ void stepNetwork() {
     seenAttempts = net::attempts();
     // With no network saved there is nothing to retry; the clock may have been set by hand.
     nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    if (net::hasSavedWifi() && !nextSyncAt) nextSyncAt = 1;  // 0 means none; millis() can wrap onto it
     dirty = true;
   }
   net::Sync s = net::syncState();
@@ -1425,6 +1467,58 @@ uint32_t screenTimeout() {
   return result ? RESULT_TIMEOUT_MS : SCREEN_TIMEOUT_MS;
 }
 
+// ---- Screen-off waits -------------------------------------------------------------------------
+power::Inputs standbyInputs() {
+  power::Inputs in;
+  bool on = gesturesOn();  // includes night mode and the sensor being there
+  in.raise = on && settings.raiseToWake;
+  in.twist = on && settings.twistToWake;
+  return in;
+}
+
+// The next moment something needs the processor while the screen is off, so a sleep can last
+// until then and no longer: the next resync, a settings write, the next battery reading, and
+// the next hour while night mode is on (night mode turns the gestures on and off on the hour).
+// The clock's drift nudges need no deadline: ClockTrim works from the time that has passed, so
+// a nudge after a 30 s sleep is just a larger one (tested in net_test).
+uint32_t nextDeadline() {
+  uint32_t now = hal::ms(), at = now + power::options.maxSleepMs;
+  auto take = [&](uint32_t t) {
+    if ((int32_t)(t - at) < 0) at = (int32_t)(t - now) > 0 ? t : now;
+  };
+  if (nextSyncAt) take(nextSyncAt);
+  if (settingsDirty) take(settingsChangedAt + SAVE_DELAY_MS + 1);
+  take(lastBatteryRead + BATTERY_READ_ASLEEP_MS);
+  if (settings.night && net::timeIsValid()) {
+    time_t t = hal::now();
+    tm n;
+    localtime_r(&t, &n);
+    take(now + (uint32_t)((60 - n.tm_min) * 60 - n.tm_sec) * 1000 + 1);
+  }
+  return at;
+}
+
+void standbyStep() {
+  power::Inputs in = standbyInputs();
+  power::Wake w = net::radioOn() || ble::on() ? standby.stepRadio(in, feedGesture)
+                                              : standby.step(in, nextDeadline(), feedGesture);
+  switch (w) {
+    case power::Wake::Gesture:
+      wakeScreen();
+      wokeByRaise = true;
+      break;
+    case power::Wake::Touch:
+    case power::Wake::Button:
+      wakeGuard = true;
+      touchResume();
+      pollInput();               // a touch or press still down wakes the screen and does nothing else
+      if (!awake) wakeScreen();  // it was over before it could be read (a short touch pulse): wake anyway
+      break;
+    case power::Wake::None:
+      break;
+  }
+}
+
 #if DRIFT_DIAG
 void stepDiag() {
   if (since(diag.lastLog) < 10000) return;
@@ -1462,6 +1556,7 @@ TFT_eSPI &display() { return tft; }
 int controls(screens::Control *out, int max) { return pagedMode() ? screens::controls(*cur, view(), out, max) : 0; }
 int page() { return pageFor(mode); }
 float beamAngle() { return faceContext(true).beamDeg; }
+const power::Controller &standbyController() { return standby; }
 
 const char *screenName() {
   static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone"};
@@ -1480,6 +1575,8 @@ void begin() {
   finger = Finger{};
   pressed = screens::Button::None;
   awake = true;
+  standby = power::Controller{};
+  touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
@@ -1514,7 +1611,7 @@ void begin() {
   wristDrop = DropDetector{};
   check = {};
   batteryLife = battery::Estimate{};
-  sweeping = false;
+  faceMoving = false;
   phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
@@ -1545,28 +1642,14 @@ void loop() {
   pollInput();
   stepNetwork();
   if (ble::on() || ble::state() != ble::State::Off) stepPhone();
-  if (since(lastBatteryRead) > BATTERY_READ_MS) readBattery();
+  if (awake ? since(lastBatteryRead) > BATTERY_READ_MS : since(lastBatteryRead) >= BATTERY_READ_ASLEEP_MS) readBattery();
   if (settingsDirty && since(settingsChangedAt) > SAVE_DELAY_MS) {
     saveSettings();
     settingsDirty = false;
   }
 
   if (!awake) {
-    // The panel is asleep; only touch, BOOT, motion, Wi-Fi and the clock need attention.
-    stepRaise();
-    if (awake) return;
-    if (net::radioOn() || ble::on()) {
-      hal::idle(50);  // Wi-Fi and Bluetooth need the processor awake
-      return;
-    }
-    // Light sleep wakes early on touch or BOOT, so it can wait longer; a plain wait has to poll.
-    bool raising = (settings.raiseToWake || settings.twistToWake) && imu::present();
-    uint32_t wait = !DRIFT_LIGHT_SLEEP ? 50 : raising ? DOZE_RAISE_MS : DOZE_MS;
-    hal::WakeCause why = hal::doze(wait, DRIFT_LIGHT_SLEEP);
-    if (why != hal::WakeCause::Timer) {
-      pollInput();             // a touch or press still down wakes the screen and does nothing else
-      if (!awake) wakeScreen();  // it was over before it could be read: wake anyway
-    }
+    standbyStep();  // the panel is asleep; only touch, BOOT, motion, Wi-Fi and the clock need attention
     return;
   }
 
@@ -1596,7 +1679,7 @@ void loop() {
   stepDiag();
 #endif
 
-  bool busy = tr.kind != Slide::None || fading || sweeping || mode == Mode::Boot || finger.down || boot.down;
+  bool busy = tr.kind != Slide::None || fading || faceMoving || mode == Mode::Boot || finger.down || boot.down;
   hal::idle(busy ? 1 : 10);
 }
 

@@ -34,7 +34,7 @@
 #define DRIFT_LIGHT_SLEEP 1
 #endif
 
-#define FW_VERSION "0.10.1"
+#define FW_VERSION "0.11.0"
 
 // Set to 1 to log frame and memory timings over USB serial and show them on the status panel.
 #ifndef DRIFT_DIAG

@@ -5,6 +5,7 @@
 #include <WiFiManager.h>
 #include <esp_sntp.h>
 #include <esp_wifi.h>
+#include <atomic>
 #include "hal.h"
 #include "settings.h"
 #include "timekeep.h"
@@ -21,7 +22,7 @@ net::Result result = net::Result::None;
 net::Fail fail = net::Fail::None;
 net::JoinWhy why = net::JoinWhy::NoAnswer;
 int whyCode = 0;
-volatile uint8_t disconnectReason = 0;  // written by the Wi-Fi event task
+std::atomic<uint8_t> disconnectReason{0};  // written by the Wi-Fi event task
 bool byHand = false;
 uint16_t finished = 0;
 net::Portal portal = net::Portal::Off;
@@ -38,16 +39,28 @@ constexpr const char *DEFAULT_POSIX_TZ = "PST8PDT,M3.2.0,M11.1.0";  // US Pacifi
 char posixTz[64] = "UTC0";
 
 WiFiManager *wm = nullptr;
-WiFiManagerParameter *tzParam = nullptr;
+WiFiManagerParameter *tzParam = nullptr;   // kept for the life of the program too: the library
+                                           // class has no virtual destructor, so it is never deleted
 WiFiManagerParameter *bandNote = nullptr;  // text only; kept for the life of the program
 bool portalSaved = false;
 
 // ---- Time zone lookup ------------------------------------------------------
-// The HTTP request can take seconds, so it runs once in its own short-lived
-// task on core 0 (where Wi-Fi already runs) and the loop just checks the flag.
-volatile bool zoneDone = false, zoneOk = false;
-volatile bool zoneTaskRunning = false;  // a cancelled sync can leave one finishing in the background
-char zoneResultName[40], zoneResultPosix[64];
+// The HTTP request can take seconds, so it runs once in its own short-lived task on core 0
+// (where Wi-Fi already runs) and the loop just checks for its answer. Each lookup has a
+// number (its epoch). The task writes its answer into the slot and then publishes its epoch;
+// the loop reads the slot only when the published epoch is the one the running sync is waiting
+// for. A sync that was cancelled or gave up waiting sets that to 0, so a late answer is never
+// used. Only one task runs at a time, so the slot is never written while the loop reads it.
+struct ZoneAnswer {
+  bool ok;
+  char name[40], posix[64];
+};
+ZoneAnswer zoneSlot;
+std::atomic<uint32_t> zoneReady{0};          // epoch of the answer now in zoneSlot
+std::atomic<bool> zoneTaskRunning{false};    // a cancelled sync can leave one finishing in the background
+uint32_t zoneEpoch = 0, lastEpoch = 0;       // the lookup the running sync waits for (0 = none)
+
+constexpr long MIN_OFFSET_S = -12 * 3600, MAX_OFFSET_S = 14 * 3600;  // the real range of UTC offsets
 
 // Turns a UTC offset in seconds into a fixed POSIX zone. POSIX signs are
 // backwards: UTC+1 is written "-1".
@@ -57,38 +70,79 @@ void posixFromOffset(long offset, char *out, size_t n) {
            offset < 0 ? '+' : '-', a / 3600, (a % 3600) / 60);
 }
 
-// Copies a value out of a flat JSON reply without a JSON library.
-bool jsonField(const char *body, const char *key, char *out, size_t n) {
+const char *skipSpace(const char *p) {
+  while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') p++;
+  return p;
+}
+
+// True when the reply is one whole object: a reply cut short on a weak connection is not used.
+bool wholeObject(const char *body) {
+  const char *p = skipSpace(body), *end = body + strlen(body);
+  while (end > p && (end[-1] == ' ' || end[-1] == '\t' || end[-1] == '\r' || end[-1] == '\n')) end--;
+  return *p == '{' && end - p >= 2 && end[-1] == '}';
+}
+
+// Copies one value out of the flat JSON object the lookup service sends, without a JSON
+// library. Spaces are allowed around the colon; a string must end with its closing quote and
+// a number must be a whole number, each followed by a comma or the closing brace.
+bool jsonField(const char *body, const char *key, bool quoted, char *out, size_t n) {
   char k[24];
-  snprintf(k, sizeof k, "\"%s\":", key);
-  const char *p = strstr(body, k);
-  if (!p) return false;
-  p += strlen(k);
-  bool quoted = *p == '"';
-  if (quoted) p++;
-  size_t i = 0;
-  while (*p && *p != (quoted ? '"' : ',') && *p != '}' && i + 1 < n) out[i++] = *p++;
-  out[i] = 0;
+  snprintf(k, sizeof k, "\"%s\"", key);
+  for (const char *p = strstr(body, k); p; p = strstr(p + 1, k)) {
+    const char *q = skipSpace(p + strlen(k));
+    if (*q != ':') continue;  // the same word inside a value, not the key
+    q = skipSpace(q + 1);
+    size_t i = 0;
+    if (quoted) {
+      if (*q++ != '"') return false;
+      while (*q && *q != '"') {
+        if (*q == '\\' || i + 1 >= n) return false;  // no escapes in a zone name; too long to keep
+        out[i++] = *q++;
+      }
+      if (*q++ != '"') return false;
+    } else {
+      if (*q == '-') out[i++] = *q++;
+      while (*q >= '0' && *q <= '9') {
+        if (i + 1 >= n) return false;
+        out[i++] = *q++;
+      }
+      if (i == 0 || out[i - 1] == '-') return false;
+    }
+    out[i] = 0;
+    q = skipSpace(q);
+    return *q == ',' || *q == '}';
+  }
+  return false;
+}
+
+// Reads the lookup service's reply. Only a whole, successful reply with a real offset is used.
+bool parseZoneReply(const char *body, ZoneAnswer &a) {
+  char status[12], offset[12];
+  if (!wholeObject(body) || !jsonField(body, "status", true, status, sizeof status) || strcmp(status, "success") ||
+      !jsonField(body, "timezone", true, a.name, sizeof a.name) || !a.name[0] ||
+      !jsonField(body, "offset", false, offset, sizeof offset))
+    return false;
+  long off = strtol(offset, nullptr, 10);
+  // Every zone in use is a whole number of quarter hours from UTC, within -12 h to +14 h.
+  if (off < MIN_OFFSET_S || off > MAX_OFFSET_S || off % 900) return false;
+  posixFromOffset(off, a.posix, sizeof a.posix);
   return true;
 }
 
-void zoneTask(void *) {
+void zoneTask(void *arg) {
+  uint32_t epoch = (uint32_t)(uintptr_t)arg;
+  ZoneAnswer a = {};
   HTTPClient http;
   http.setConnectTimeout(ZONE_TIMEOUT_MS / 2);
   http.setTimeout(ZONE_TIMEOUT_MS / 2);
-  bool ok = false;
   if (http.begin("http://ip-api.com/json/?fields=status,timezone,offset") && http.GET() == 200) {
     String body = http.getString();
-    char status[12], offset[12];
-    ok = jsonField(body.c_str(), "status", status, sizeof status) && !strcmp(status, "success") &&
-         jsonField(body.c_str(), "timezone", zoneResultName, sizeof zoneResultName) &&
-         jsonField(body.c_str(), "offset", offset, sizeof offset);
-    if (ok) posixFromOffset(atol(offset), zoneResultPosix, sizeof zoneResultPosix);
+    a.ok = parseZoneReply(body.c_str(), a);
   }
   http.end();
-  zoneOk = ok;
-  zoneDone = true;  // written last; the loop reads the results only after seeing this
-  zoneTaskRunning = false;
+  zoneSlot = a;
+  zoneReady.store(epoch, std::memory_order_release);  // after the slot: the loop reads it only after seeing this
+  zoneTaskRunning.store(false, std::memory_order_release);
   vTaskDelete(nullptr);
 }
 
@@ -124,9 +178,14 @@ net::JoinWhy classify(uint8_t r) {
   }
 }
 
+// Stops the time server client, so an answer that comes late cannot set the clock.
+void stopClock() {
+  if (sntp_enabled()) sntp_stop();
+}
+
 void finish(net::Fail f) {
   if (f == net::Fail::JoinFailed) {
-    whyCode = disconnectReason;
+    whyCode = disconnectReason.load();
     why = classify(whyCode);
     hal::log("net: join failed, Wi-Fi reason %d (group %d)", whyCode, (int)why);
   }
@@ -135,6 +194,8 @@ void finish(net::Fail f) {
   result = f == net::Fail::None ? net::Result::Ok : net::Result::Failed;
   finished++;
   setState(net::Sync::Idle);
+  zoneEpoch = 0;
+  stopClock();
   wifiOff();
   hal::log("net: sync %s (reason %d)", f == net::Fail::None ? "done" : "failed", (int)f);
 }
@@ -150,6 +211,7 @@ void learnDrift(int64_t errorMs) {
 }
 
 void startClock() {
+  zoneEpoch = 0;  // an answer still to come from the lookup is not used
   clockStartWall = hal::nowMs();
   clockStartMs = hal::ms();
   setenv("TZ", posixTz, 1);
@@ -163,9 +225,7 @@ void closePortal(net::Portal endState) {
   if (wm) {
     wm->stopConfigPortal();
     delete wm;
-    delete tzParam;
     wm = nullptr;
-    tzParam = nullptr;
   }
   portal = endState;
   wifiOff();
@@ -197,7 +257,7 @@ void begin() {
   strlcpy(posixTz, settings.tz.isEmpty() ? DEFAULT_POSIX_TZ : settings.tz.c_str(), sizeof posixTz);
   setenv("TZ", posixTz, 1);
   tzset();
-  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason = info.wifi_sta_disconnected.reason; },
+  WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason.store(info.wifi_sta_disconnected.reason); },
                ARDUINO_EVENT_WIFI_STA_DISCONNECTED);
   WiFi.mode(WIFI_STA);
   readSavedSsid();
@@ -213,7 +273,7 @@ void startSync() {
     finish(Fail::NoNetworkSaved);
     return;
   }
-  disconnectReason = 0;
+  disconnectReason.store(0);
   WiFi.mode(WIFI_STA);
   WiFi.begin();
   setState(Sync::Connecting);
@@ -224,12 +284,13 @@ void poll() {
   switch (syncNow) {
     case Sync::Connecting:
       if (WiFi.status() == WL_CONNECTED) {
-        if (settings.tz.isEmpty() && !zoneTaskRunning) {
-          zoneDone = zoneOk = false;
-          zoneTaskRunning = true;
+        if (settings.tz.isEmpty() && !zoneTaskRunning.load(std::memory_order_acquire)) {
+          if (++lastEpoch == 0) lastEpoch = 1;  // never 0, which means none
+          zoneEpoch = lastEpoch;
+          zoneTaskRunning.store(true);
           setState(Sync::Zone);
-          if (xTaskCreatePinnedToCore(zoneTask, "zone", 6144, nullptr, 1, nullptr, 0) != pdPASS) {
-            zoneTaskRunning = false;
+          if (xTaskCreatePinnedToCore(zoneTask, "zone", 6144, (void *)(uintptr_t)zoneEpoch, 1, nullptr, 0) != pdPASS) {
+            zoneTaskRunning.store(false);
             startClock();
           }
         } else if (settings.tz.isEmpty()) {
@@ -242,21 +303,24 @@ void poll() {
         finish(Fail::JoinFailed);
       }
       break;
-    case Sync::Zone:
+    case Sync::Zone: {
       // The task always finishes within its own timeouts; the extra margin only
       // guards against a stuck socket.
-      if (zoneDone || elapsed > ZONE_TIMEOUT_MS + 2000) {
-        if (zoneDone && zoneOk) {
-          strlcpy(zone, zoneResultName, sizeof zone);
-          strlcpy(posixTz, zoneResultPosix, sizeof posixTz);
+      bool answered = zoneEpoch && zoneReady.load(std::memory_order_acquire) == zoneEpoch;
+      if (answered || elapsed > ZONE_TIMEOUT_MS + 2000) {
+        if (answered && zoneSlot.ok) {
+          strlcpy(zone, zoneSlot.name, sizeof zone);
+          strlcpy(posixTz, zoneSlot.posix, sizeof posixTz);
           hal::log("net: zone %s -> %s", zone, posixTz);
         }
         startClock();  // falls back to the last known zone, or the Pacific default
       }
       break;
+    }
     case Sync::Clock:
+      // The time server client sets the clock first and only then reports the sync as done.
       if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
-        lastSyncTime = time(nullptr);
+        lastSyncTime = hal::now();
         learnDrift(clockStartWall + (int64_t)(hal::ms() - clockStartMs) - hal::nowMs());
         source = Source::Wifi;
         finish(Fail::None);
@@ -296,6 +360,8 @@ void poll() {
 
 void cancelSync() {
   if (!syncRunning()) return;
+  zoneEpoch = 0;
+  stopClock();
   wifiOff();
   setState(Sync::Idle);
   hal::log("net: sync cancelled");
@@ -313,10 +379,7 @@ bool radioOn() { return syncRunning() || wm != nullptr; }
 
 void startPortal() {
   if (wm) return;
-  if (syncRunning()) {
-    wifiOff();
-    setState(Sync::Idle);
-  }
+  if (syncRunning()) cancelSync();
   // Start straight in hotspot mode. v0.8.0 switched to station mode here, and the library
   // then switched station mode off again, which stopped and restarted the radio just before
   // the hotspot came up and could leave it not broadcasting.
@@ -340,7 +403,8 @@ void startPortal() {
         "<p><b>This watch only works with 2.4 GHz Wi-Fi.</b> Only networks it can use are listed. "
         "If yours is missing, turn on 2.4 GHz on your router (some mesh routers call it a "
         "compatibility or IoT network).</p>");
-  tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", settings.tz.c_str(), 63);
+  if (!tzParam) tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", "", 63);
+  tzParam->setValue(settings.tz.c_str(), 63);  // the setup page opens with the zone in use now
   wm->setTitle("Drift-Watch");
   wm->addParameter(bandNote);
   wm->addParameter(tzParam);
@@ -373,7 +437,7 @@ uint32_t portalSecondsLeft() {
   return used >= PORTAL_TIMEOUT_MS ? 0 : (PORTAL_TIMEOUT_MS - used + 999) / 1000;
 }
 
-bool timeIsValid() { return time(nullptr) > 1700000000; }  // later than Nov 2023
+bool timeIsValid() { return hal::now() > 1700000000; }  // later than Nov 2023
 
 void setClockByHand(time_t t) {
   hal::setTime(t);

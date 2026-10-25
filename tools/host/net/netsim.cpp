@@ -6,6 +6,7 @@
 #include "WiFiManager.h"
 #include "esp_sntp.h"
 #include "esp_wifi.h"
+#include "hal.h"
 
 namespace netsim {
 int status = WL_DISCONNECTED;
@@ -21,6 +22,8 @@ TaskMode taskMode = TaskMode::RunNow;
 int tasksStarted = 0;
 int sntpStatus = SNTP_SYNC_STATUS_RESET;
 std::string configuredTz;
+bool sntpRunning = false;
+int sntpStarts = 0, sntpStops = 0;
 bool portalOpen = false;
 std::string portalTitle;
 
@@ -37,6 +40,13 @@ void dropConnection(uint8_t reason) {
     info.wifi_sta_disconnected.reason = reason;
     WiFi.handler(ARDUINO_EVENT_WIFI_STA_DISCONNECTED, info);
   }
+}
+
+bool sntpAnswer(int64_t trueMs) {
+  if (!sntpRunning) return false;
+  hal::setTimeMs(trueMs);
+  sntpStatus = SNTP_SYNC_STATUS_COMPLETED;
+  return true;
 }
 
 bool runTask() {
@@ -71,6 +81,10 @@ void reset() {
   heldTask = nullptr;
   sntpStatus = SNTP_SYNC_STATUS_RESET;
   configuredTz.clear();
+  sntpRunning = false;
+  sntpStarts = sntpStops = 0;
+  portalOpen = false;
+  stationsOnHotspot = 0;
 }
 }  // namespace netsim
 
@@ -125,7 +139,16 @@ esp_err_t esp_wifi_set_country(const wifi_country_t *) { return ESP_OK; }
 
 sntp_sync_status_t sntp_get_sync_status() { return (sntp_sync_status_t)netsim::sntpStatus; }
 void sntp_set_sync_status(sntp_sync_status_t s) { netsim::sntpStatus = s; }
-void configTzTime(const char *tz, const char *, const char *, const char *) { netsim::configuredTz = tz; }
+void configTzTime(const char *tz, const char *, const char *, const char *) {
+  netsim::configuredTz = tz;
+  netsim::sntpRunning = true;
+  netsim::sntpStarts++;
+}
+bool sntp_enabled() { return netsim::sntpRunning; }
+void sntp_stop() {
+  netsim::sntpRunning = false;
+  netsim::sntpStops++;
+}
 
 WiFiManager::WiFiManager() { netsim::openPortal = this; }
 WiFiManager::~WiFiManager() {

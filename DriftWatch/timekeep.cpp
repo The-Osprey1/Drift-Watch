@@ -9,8 +9,10 @@ bool ClockTrim::learn(int64_t trueMs, int64_t errorMs) {
   int64_t span = trueMs - refMs_;
   if (refMs_ && span >= MIN_SPAN_MS) {
     // The nudges since the last sync already corrected for the old rate, so what is left
-    // over is the error in that rate.
-    double residual = (double)errorMs / (double)span * 1e9;
+    // over is the error in that rate. Up to NUDGE_MS of that correction can still be owed and
+    // not yet applied; it is part of the old rate's work, not a new error, so it is taken off.
+    // (Left in, it made a 6 hour span off by up to 9 ppm.)
+    double residual = ((double)errorMs + owedMs_) / (double)span * 1e9;
     // Off by more than any clock drifts (a time zone mix-up, a clock set wrongly by hand):
     // nothing to learn, so start a new span from here.
     if (residual > MAX_PPB || residual < -MAX_PPB) {

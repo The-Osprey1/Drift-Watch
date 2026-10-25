@@ -29,9 +29,14 @@ extern TaskMode taskMode;
 extern int tasksStarted;
 bool runTask();                 // runs a held task; false if none was held
 
-// Time server.
+// Time server. configTzTime() starts the client and sntp_stop() stops it. An answer is only
+// taken while it runs, and, as in ESP-IDF, the client sets the clock (hal::setTimeMs) before it
+// reports the sync as completed.
 extern int sntpStatus;          // what sntp_get_sync_status() reports
 extern std::string configuredTz;  // the zone last passed to configTzTime()
+extern bool sntpRunning;
+extern int sntpStarts, sntpStops;
+bool sntpAnswer(int64_t trueMs);  // the server answers with this time; false if the client was stopped
 
 // Setup hotspot (WiFiManager).
 extern bool portalOpen;

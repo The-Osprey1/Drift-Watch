@@ -110,6 +110,57 @@ int main(int argc, char **argv) {
       writePpm(path, frame);
     }
   }
+  // The vector alphabet must fit its declared cell at every actual face size.
+  // Distinct hashes catch a missing/duplicated numeral; the blank leading cell stays empty.
+  for (auto style : {gfx::TimeStyle::Instrument, gfx::TimeStyle::Segment}) {
+    for (float height : {44.0f, 50.0f, 52.0f, 60.0f, 64.0f}) {
+      auto l = gfx::timeLayout(120, 104, height, style);
+      std::vector<std::vector<uint16_t>> glyphs;
+      for (int d = 0; d < 10; ++d) {
+        frame.fillSprite(0);
+        gfx::drawTime(frame, l, d * 11, d * 11, true, false, col::WHITE);
+        int ink = 0, outside = 0;
+        for (int y = 0; y < 240; ++y)
+          for (int x = 0; x < 240; ++x) if (frame.readPixel(x,y)) {
+            ++ink;
+            outside += x < floorf(l.x)-1 || x > ceilf(l.x+l.width)+1 ||
+                       y < floorf(l.y)-1 || y > ceilf(l.y+l.height)+1;
+          }
+        bool unique = std::find(glyphs.begin(), glyphs.end(), frame.buf) == glyphs.end();
+        if (!unique || outside || ink < 100) {
+          printf("  NUMERAL digit %d height %.0f: ink %d, outside %d, unique %d\n", d, height, ink, outside, unique);
+          ++problems;
+        }
+        glyphs.push_back(frame.buf);
+      }
+      frame.fillSprite(0);
+      gfx::drawTime(frame, l, 9, 41, true, true, col::WHITE);
+      int leading = 0;
+      for (int y=0; y<240; ++y)
+        for (int x=(int)floorf(l.x); x<(int)floorf(l.x+l.digitW); ++x)
+          leading += frame.readPixel(x,y) != 0;
+      if (leading) { printf("  NUMERAL blank leading cell has %d pixels\n", leading); ++problems; }
+    }
+  }
+  // The animated radar must never paint over the central time/date register.
+  {
+    FaceContext ctx{makeTime(10,9,31),true,false,86,SyncView::Synced,0,false,-1};
+    drawFaceStatic(frame, FACE_RADAR, ctx); drawFaceLive(frame, FACE_RADAR, ctx);
+    auto base = frame.buf;
+    int central = 0, moving = 0;
+    for (int angle=0; angle<360; angle+=9) {
+      ctx.beamDeg = (float)angle;
+      drawFaceStatic(frame, FACE_RADAR, ctx); drawFaceLive(frame, FACE_RADAR, ctx);
+      for (int i=0; i<240*240; ++i) if (base[i] != frame.buf[i]) {
+        ++moving;
+        central += hypotf(i%240-120, i/240-120) < 74;
+      }
+    }
+    if (central || moving < 1000) {
+      printf("  RADAR central animation pixels %d, moving %d\n",central,moving); ++problems;
+    }
+  }
+
   // v0.13.0: every face shows a small charging bolt, and only that changes.
   {
     TFT_eSprite plain(&screen);

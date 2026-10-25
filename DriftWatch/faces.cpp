@@ -1,9 +1,9 @@
 // Face designs. Accent hierarchy per face:
-//   Digital  - yellow time first, magenta date second, cyan only for the live second.
-//   Stealth  - silver hands and markers, cyan glow inlays, magenta seconds hand only.
-//   Corpo    - yellow structure, black hands edged in yellow, red for seconds and inlays.
-//   Hologram - cyan throughout, white inlays, magenta seconds hand.
-//   Radar    - yellow time, cyan hour ring, magenta seconds dot, phosphor green beam.
+//   Digital  - silver instrument time, quiet date, yellow brackets, cyan live second.
+//   Stealth  - silver baton hands and fine markers, cyan seconds hand.
+//   Corpo    - yellow indices, silver baton hands, red seconds.
+//   Hologram - cyan skeleton hands and indices, silver seconds.
+//   Radar    - silver time, cyan hour ring, magenta blip, peripheral phosphor beam.
 //   Phantom  - black and silver, a crimson jewel in the movement, the seconds hand eclipsed.
 // The themed faces added in v0.12.0 (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave) are in
 // faces_themed.cpp.

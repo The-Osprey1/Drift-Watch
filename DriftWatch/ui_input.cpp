@@ -530,24 +530,35 @@ void onFingerUp() {
     else if (pagedMode() && down) goBack(vy ? -vy : -0.01f);
     return;
   }
-  if (finger.axis == Axis::None && pressed != screens::Button::None) {
-    screens::Button b = pressed;
-    pressed = screens::Button::None;
-    if (finger.repeats) {
-      refreshScreen(true);  // a held - or + already stepped; release adds nothing
-    } else if (hitTest(finger.x, finger.y) == b) {
-      // The control keeps its accent briefly after acting (unless Motion is Off or the tap
-      // moved to another screen), drawn in the same frame as the change it made.
-      if (motionOn()) pressed = b;
-      Mode before = mode;
-      activate(b);
-      if (pressed == b && mode == before) releaseUntil = hal::ms() + motion::RELEASE_MS;
-      else if (pressed == b) {
-        pressed = screens::Button::None;
+  if (finger.axis == Axis::None) {
+    if (pressed != screens::Button::None) {
+      screens::Button b = pressed;
+      pressed = screens::Button::None;
+      if (finger.repeats) {
+        refreshScreen(true);  // a held - or + already stepped; release adds nothing
+      } else if (hitTest(finger.x, finger.y) == b) {
+        // The control keeps its accent briefly after acting (unless Motion is Off or the tap
+        // moved to another screen), drawn in the same frame as the change it made.
+        if (motionOn()) pressed = b;
+        Mode before = mode;
+        activate(b);
+        if (pressed == b && mode == before) releaseUntil = hal::ms() + motion::RELEASE_MS;
+        else if (pressed == b) {
+          pressed = screens::Button::None;
+          refreshScreen(true);
+        }
+      } else {
         refreshScreen(true);
       }
-    } else {
-      refreshScreen(true);
+    } else if (mode == Mode::Panel && finger.y < 42 && abs(dx) < 20 && abs(dy) < 20) {
+      // Tap on Category Hub header: jump to next/prev category hub
+      screens::Hub curHub = screens::hubOfPage(settingsPage, settings.largeText);
+      screens::Hub target = finger.x < 110 ? screens::prevHub(curHub) : screens::nextHub(curHub);
+      int targetPage = screens::hubFirstPage(target, settings.largeText);
+      if (targetPage != settingsPage) {
+        settingsPage = targetPage;
+        refreshScreen(true);
+      }
     }
   }
 }

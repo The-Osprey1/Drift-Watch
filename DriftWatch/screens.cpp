@@ -337,9 +337,16 @@ bool drawItem(Ctx &c, const Item &it, const Rect &r) {
 void dots(TFT_eSprite &s, int page, int pages, uint16_t activeCol, uint16_t outlineCol) {
   if (pages < 2) return;
   int gap = 12, x0 = CX - (pages - 1) * gap / 2;
+  Hub activeHub = hubOfPage(page, false);
   for (int i = 0; i < pages; i++) {
-    if (i == page) s.fillSmoothCircle(x0 + i * gap, DOTS_Y, 3, activeCol, col::BG);
-    else s.drawCircle(x0 + i * gap, DOTS_Y, 3, outlineCol);
+    int x = x0 + i * gap;
+    if (i == page) {
+      s.fillSmoothCircle(x, DOTS_Y, 3, activeCol, col::BG);
+    } else if (pages == (SETTINGS_ITEMS + 1) / 2 && hubOfPage(i, false) == activeHub) {
+      s.fillSmoothCircle(x, DOTS_Y, 2, activeCol, col::BG);
+    } else {
+      s.drawCircle(x, DOTS_Y, 3, outlineCol);
+    }
   }
 }
 void dots(TFT_eSprite &s, int page, int pages) { dots(s, page, pages, col::TEXT, col::OUTLINE); }
@@ -547,9 +554,10 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
   Ctx c{s, v, true, false};
   handle(s);
   if (!v.large) {
-    // Compact header; with large text the space goes to the control instead.
+    // Compact category hub header; with large text the space goes to the control instead.
     const GFXfont *f = fontFor(Role::Body, false);
-    gfx::text(s, "Settings", CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
+    Hub h = hubOfPage(page, false);
+    gfx::text(s, hubName(h), CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
   }
   Control ctl[2];
   int n = settingsControls(v, page, ctl, 2);
@@ -1061,14 +1069,67 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
 
 // ---- Public ------------------------------------------------------------------------------
 Button settingsItem(int i) {
-  // Setting the clock by hand or from a phone share a page, and syncing over Wi-Fi follows,
-  // so a watch with no time opens on the fixes.
-  static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::SetTime,
-                                                Button::PhoneSync,  Button::SyncNow,    Button::WifiSetup,
-                                                Button::RaiseWake,  Button::Night,      Button::Motion,
-                                                Button::HotSwap,    Button::ScreenTurn, Button::TouchCheck,
-                                                Button::Details};
+  // Grouped into 4 Category Hubs:
+  // Hub 0: Display & Style (items 0-3, pages 0-1)
+  // Hub 1: Clock & Sync (items 4-8, pages 2-4)
+  // Hub 2: Gestures & Wake (items 9-10, page 5)
+  // Hub 3: System & Info (items 11-12, page 6)
+  static const Button order[SETTINGS_ITEMS] = {
+      Button::Brightness, Button::Night,      Button::Motion,   Button::HotSwap,
+      Button::TimeFormat, Button::SetTime,    Button::PhoneSync, Button::SyncNow, Button::WifiSetup,
+      Button::RaiseWake,  Button::ScreenTurn,
+      Button::TouchCheck, Button::Details};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
+}
+
+Hub hubOfPage(int page, bool large) {
+  if (large) {
+    if (page < 4) return Hub::Display;
+    if (page < 9) return Hub::Clock;
+    if (page < 11) return Hub::Gestures;
+    return Hub::System;
+  }
+  if (page < 2) return Hub::Display;
+  if (page < 5) return Hub::Clock;
+  if (page < 6) return Hub::Gestures;
+  return Hub::System;
+}
+
+int hubFirstPage(Hub h, bool large) {
+  if (large) {
+    switch (h) {
+      case Hub::Display:  return 0;
+      case Hub::Clock:    return 4;
+      case Hub::Gestures: return 9;
+      case Hub::System:   return 11;
+    }
+  } else {
+    switch (h) {
+      case Hub::Display:  return 0;
+      case Hub::Clock:    return 2;
+      case Hub::Gestures: return 5;
+      case Hub::System:   return 6;
+    }
+  }
+  return 0;
+}
+
+const char *hubName(Hub h) {
+  switch (h) {
+    case Hub::Display:  return "Display";
+    case Hub::Clock:    return "Clock";
+    case Hub::Gestures: return "Gestures";
+    case Hub::System:   return "System";
+  }
+  return "Settings";
+}
+
+Hub nextHub(Hub h) {
+  return (Hub)(((uint8_t)h + 1) % HUB_COUNT);
+}
+
+Hub prevHub(Hub h) {
+  return (Hub)(((uint8_t)h + HUB_COUNT - 1) % HUB_COUNT);
 }
 
 const char *buttonName(Button b) {

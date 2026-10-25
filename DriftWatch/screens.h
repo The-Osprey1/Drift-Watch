@@ -122,8 +122,17 @@ enum class SetupPhase : uint8_t { Hotspot, Connecting, Done, Failed, TimedOut };
 SetupPhase setupPhase(const View &v);
 
 // Settings items in page order; two per page, or one with large text.
+// Grouped into 4 category hubs: Display, Clock, Gestures, System.
 constexpr int SETTINGS_ITEMS = 13;
 Button settingsItem(int i);
+
+enum class Hub : uint8_t { Display, Clock, Gestures, System };
+constexpr int HUB_COUNT = 4;
+Hub hubOfPage(int page, bool large = false);
+const char *hubName(Hub h);
+int hubFirstPage(Hub h, bool large = false);
+Hub nextHub(Hub h);
+Hub prevHub(Hub h);
 
 // Where phone sync is.
 enum class PhonePhase : uint8_t { Waiting, Connected, TimeSet, Closed, Failed };

@@ -1,11 +1,12 @@
-# Drift-Watch firmware (v0.14.0)
+# Drift-Watch firmware (v0.15.0)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
 ## Status
 
-- **v0.14.0** *(latest; pending hardware test)* — Precision face revamp (upright vector instrument numerals on Digital, Radar, Orbit and Yozakura, quieter supporting marks, distinct analog hand styles), hot-swap active faces (from **Settings > Hot swap** or the Drift sync web page), chronometer startup sequence, radial iris wake and sleep transitions, optional 20 fps ambient face touches on **Motion: Expressive**, shared face-mask constants (`face_id.h`), and `ui.cpp` split into focused units. See [`notes/NOTES-v0.14.0.md`](notes/NOTES-v0.14.0.md).
-- **v0.13.0** *(pending hardware test)* — Watchdog freeze recovery with restart reason on the details screen, stuck-I2C bus recovery at start, persisted Auto time zone with built-in summer time rules, two-try Wi-Fi join, failed-resync back-off, scan-to-join QR code on Wi-Fi setup, 15% and 5% low-battery warnings, and a charging bolt on every face. See [`notes/NOTES-v0.13.0.md`](notes/NOTES-v0.13.0.md).
+- **v0.15.0** *(latest; verified on hardware)* — Quick Drawer pull-down shade (swipe down from any face) with interactive countdown timers (1m, 3m, 5m presets, dial progress ring, background light sleep scheduling, visual strobe alarm), full-screen flashlight, Settings 4-Hub Overhaul with 1-tap category header fast-jumping, Instant USB-C Auto-Sync protocol (`TIME:`, `WIFI:`, `FACES:`, `INFO?`), zero-install Windows auto-sync script (`tools/windows/DriftWatchSync.ps1`), Web Serial companion auto-sync, PhoneSync QR code direct scanning, and QMI8658 onboard temperature telemetry. See [`notes/NOTES-v0.15.0.md`](notes/NOTES-v0.15.0.md).
+- **v0.14.0** *(verified on hardware)* — Precision face revamp (upright vector instrument numerals on Digital, Radar, Orbit and Yozakura, quieter supporting marks, distinct analog hand styles), hot-swap active faces (from **Settings > Hot swap** or the Drift sync web page), chronometer startup sequence, radial iris wake and sleep transitions, optional 20 fps ambient face touches on **Motion: Expressive**, shared face-mask constants (`face_id.h`), and `ui.cpp` split into focused units. See [`notes/NOTES-v0.14.0.md`](notes/NOTES-v0.14.0.md).
+- **v0.13.0** — Watchdog freeze recovery with restart reason on the details screen, stuck-I2C bus recovery at start, persisted Auto time zone with built-in summer time rules, two-try Wi-Fi join, failed-resync back-off, scan-to-join QR code on Wi-Fi setup, 15% and 5% low-battery warnings, and a charging bolt on every face. See [`notes/NOTES-v0.13.0.md`](notes/NOTES-v0.13.0.md).
 - **v0.12.0** *(pending hardware test)* — Six themed faces (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave) with one-shot entrances, three-level **Motion** setting (Off, Subtle, Expressive), and distance-scaled slide timing. See [`notes/NOTES-v0.12.0.md`](notes/NOTES-v0.12.0.md).
 - **v0.11.1** *(verified booting on a real watch)* — iPhone Bluetooth MTU and write fixes (247-byte ATT MTU, acknowledged GATT writes, 20-byte fallback framing), WPA3 SAE H2E and 802.11w PMF with straight/curly apostrophe fallback, and live sync page at https://the-osprey1.github.io/DriftWatch/; diagnostic wake-on-motion power saving is still to be measured. Earlier versions (`v0.7.0`–`v0.11.0`) are covered in [`notes/`](notes/).
 
@@ -51,8 +52,14 @@ On **Motion: Expressive** (above 20% battery), Digital pulses its colon with a s
 | Where | Action | What happens |
 |---|---|---|
 | Face | Swipe left / right | Next / previous active face. The face follows your finger; let go past 70 px, or flick, to change. It lands in 120 to 220 ms depending on the distance left (a flick in 140 ms at most), and a shorter drag returns in 150 ms |
+| Face | Swipe down | Open the Quick Drawer (Tools shade) with Countdown Timers (1m, 3m, 5m), live countdown dial, and Flashlight |
 | Face | Swipe up, hold for 0.6 s, or hold BOOT for 0.6 s | Open settings (styled with the current face's accent colours). The panel follows your finger up; a cyan ring grows while you hold |
 | Face | Short press of BOOT | Next active face |
+| Quick Drawer | Swipe up or BOOT | Close drawer back to the face |
+| Quick Drawer | Tap 1m / 3m / 5m Timer | Starts countdown; screen shows live MM:SS countdown and progress ring |
+| Quick Drawer | Tap Flashlight | Enters full-screen pure white maximum brightness (255 PWM); tap anywhere to return to face and restore brightness |
+| Timer Alarm | Tap anywhere or press BOOT | Dismisses visual strobe alarm and restores normal backlight |
+| Settings | Tap category header (top title) | 1-tap fast-jump across category hubs without horizontal swiping |
 | Set time | Tap - or +, or hold to repeat | Changes the field shown in cyan; swipe for the next field, then Save on the last page |
 | Settings, details, setup | Swipe left / right | Next / previous page. Never changes the face |
 | Settings, details, setup | Swipe down, or BOOT | Back one level (setup or details to settings, settings to face) |
@@ -63,15 +70,12 @@ On **Motion: Expressive** (above 20% battery), Digital pulses its colon with a s
 | Screen on | Turn the screen away after looking at it | Collapses the radial iris and turns the screen off (wrist-down sleep); touching or pressing BOOT mid-collapse catches the screen open |
 | Anywhere | Hold BOOT for 4 s | Opens the touch check, even if touch is lined up wrong |
 
-Settings has seven pages of up to two controls each (thirteen single-control pages with large text):
+Settings is organized into 4 Category Hubs with interactive header fast-jumping (tap the top title at `y < 42` to jump between hubs instantly):
 
-1. **Brightness** (four steps) and **Time format** (24-hour or 12-hour).
-2. **Set time** (shows the clock, or "Time not set") and **Phone sync** (sets the time, time zone, active watch faces and Wi-Fi from a phone or computer over Bluetooth). When the clock is not set, settings open on this page.
-3. **Sync now**, which also shows the sync state, and **Wi-Fi setup** (shows the saved network).
-4. **Wake gesture** (Raise, twist; Raise; Twist; or Off) and **Night mode** (Off, 22:00-07:00, 23:00-07:00 or 00:00-08:00; turns the wake gestures and wrist-down sleep off at night).
-5. **Motion** (Subtle, Expressive or Off. Subtle is the default: slides, the radial iris wake and sleep, the radar beam, Phantom's movement and one short entrance on the themed faces. Expressive plays those entrances half as long again and adds subtle ambient touches on Digital, Orbit, Lunar and Yozakura above 20% battery. Off turns slides, entrances, the startup sequence, the iris transitions, the radar beam and spinners into instant changes. A watch updated from v0.11 keeps its choice: Reduced becomes Off, Full becomes Subtle) and **Hot swap** (toggles between **All (12)** and a quick two-face pair on the watch, or shows how many active faces were picked on the Drift sync web page).
-6. **Screen turn** (Normal, Right, Half turn or Left; runs the touch check afterwards) and **Touch check** (two taps line touch up with the screen).
-7. **Status and Text size**, which opens the details screen: battery and time left, clock, last sync and how long ago, clock drift, time zone, network, motion sensor and its interrupt lines, screen turn, version, why the watch last restarted (if it restarted itself: a crash, a freeze caught by the watchdog, or a battery too low) and how often on this charge, and the **Text size** setting (Normal or Large, about 140%, for settings and setup screens only).
+- **Hub 0: Display & Style** (Pages 0–1): **Brightness** (four steps), **Night mode** (turns gestures/wrist-down sleep off at night), **Motion** (Subtle, Expressive, Off), and **Hot swap** (toggles between All 12 faces and a quick 2-face pair).
+- **Hub 1: Clock & Sync** (Pages 2–4): **Time format** (24h or 12h), **Set time** (manual time/date setting), **Phone sync** (Bluetooth sync & QR code), **Sync now** (NTP sync state & trigger), and **Wi-Fi setup** (shows saved SSID, scan QR code).
+- **Hub 2: Gestures & Wake** (Page 5): **Wake gesture** (Raise, twist; Raise; Twist; or Off) and **Screen turn** (Normal, Right, Half turn, Left).
+- **Hub 3: System & Info** (Page 6): **Touch check** (two-tap screen realignment) and **Status & Text size** (Details screen: battery, estimated time left, clock drift, QMI8658 onboard temperature, restart reason, and normal/large text toggle).
 
 **Set time** works with no Wi-Fi at all: hour, minutes, day, month and year each have a page with - and +, then a page shows the result with **Save**. Swipe down or BOOT leaves without saving. If the clock was never set it starts from the last time the watch saved (it saves at most once an hour), or else from the date the firmware was built. A later successful sync replaces it. The board has no clock chip, so the time is lost when the battery runs flat or the watch restarts from power-off. Between syncs the watch learns how fast its clock drifts and corrects for it.
 
@@ -81,14 +85,14 @@ The screen turns off after 15 seconds (30 seconds on a setup result). While it i
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
-3. Choose [`firmware/drift_watch_v0.14.0.bin`](firmware/drift_watch_v0.14.0.bin) at address **0x0**, then Program.
+3. Choose [`firmware/drift_watch_v0.15.0.bin`](firmware/drift_watch_v0.15.0.bin) at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
 If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
 
-[`firmware/drift_watch_v0.14.0_diag.bin`](firmware/drift_watch_v0.14.0_diag.bin) is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
+[`firmware/drift_watch_v0.15.0_diag.bin`](firmware/drift_watch_v0.15.0_diag.bin) is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
-Working earlier versions (`v0.9.0` through `v0.13.0`) are published on [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). (`v0.7.0` and `v0.8.0` are omitted because they were built with "USB CDC on boot" turned on, which sends serial output to disconnected USB pins and stalls at start on this board.)
+Working earlier versions (`v0.9.0` through `v0.14.0`) are published on [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). (`v0.7.0` and `v0.8.0` are omitted because they were built with "USB CDC on boot" turned on, which sends serial output to disconnected USB pins and stalls at start on this board.)
 
 ## First start
 

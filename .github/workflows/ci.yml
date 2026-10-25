@@ -121,6 +121,7 @@ jobs:
           path: |
             reports/
             build-*.log
+            out/*.bin
 
   pages:
     name: Publish the Drift sync page

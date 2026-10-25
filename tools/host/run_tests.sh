@@ -20,7 +20,8 @@ if [ "${HOST_STRICT:-0}" = "1" ]; then
   export UBSAN_OPTIONS=${UBSAN_OPTIONS:-print_stacktrace=1:halt_on_error=1}
 fi
 CXX="g++ $FLAGS"
-UI_SRC="DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp \
+UI_SRC="DriftWatch/ui.cpp DriftWatch/ui_render.cpp DriftWatch/ui_motion.cpp DriftWatch/ui_input.cpp \
+DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp \
 DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp \
 DriftWatch/serial_cmd.cpp DriftWatch/power.cpp DriftWatch/qrcodegen.c"
 

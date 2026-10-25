@@ -1,2 +1,0 @@
-ddfb5ef2d50f915e3f433b09796f786c3cfb9090c511518c640f1616ec988a3e  drift_watch_v0.11.1.bin
-06d799b9b9de8e3a264d26651fcb6cf65f1538af45afe3b91d00361b1f0c3f0c  drift_watch_v0.11.1_diag.bin

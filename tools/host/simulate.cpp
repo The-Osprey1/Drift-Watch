@@ -965,10 +965,13 @@ void scenarios() {
   runFor(400);
   CHECK(ui::display().pixelsPushed > px0, "the spinner animates while syncing");
   bool fmtBefore = settings.use12h;
-  goTo(screens::Button::TimeFormat);
+  swipeRight();
+  settle();
   tapButton(screens::Button::TimeFormat);
   CHECK(settings.use12h != fmtBefore && net::syncRunning(), "Time format still works during a sync");
   tapButton(screens::Button::TimeFormat);
+  swipeLeft();
+  settle();
   goTo(screens::Button::SyncNow);
   settle(1500);
   CHECK(net::lastResult() == net::Result::Ok && !net::syncRunning(), "sync done");

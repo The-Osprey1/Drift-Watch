@@ -162,7 +162,14 @@
       <li>Find <b>Phone sync</b> (page 2) and tap it. The watch shows its name, such as Drift-1A2B, for 3 minutes.</li>
     </ol>
     <p class="note"><b>Windows users:</b> Connect directly from this page. Do <i>not</i> pair the watch in Windows Bluetooth Settings (if paired, click "Remove device" in Windows Settings first, or Windows will disconnect the link every second).</p>
-    <button id="connect" class="primary">Connect to the watch</button>
+    <div style="display: flex; gap: 8px; margin-top: 12px;">
+      <button id="connect" class="primary" style="flex: 1; margin-top: 0;">Bluetooth</button>
+      <button id="connectUsb" class="primary" style="flex: 1; margin-top: 0;">USB-C Cable</button>
+    </div>
+    <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer;">
+      <input type="checkbox" id="autoSyncUsb" checked style="width: 18px; min-height: 18px; margin: 0;">
+      <span>Auto-sync whenever USB-C cable is plugged in</span>
+    </label>
     <p id="connMsg" class="msg" role="status"></p>
   </section>
 
@@ -380,7 +387,14 @@ async function writeRaw(bytes) {
   else await command.writeValue(bytes);
 }
 
+let serialPort = null, serialWriter = null, isSerial = false;
+
 async function send(line) {
+  if (isSerial && serialWriter) {
+    const data = new TextEncoder().encode(line + "\n");
+    await serialWriter.write(data);
+    return;
+  }
   if (!command) throw new Error("Not connected");
   const data = new TextEncoder().encode(line);
   if (data.byteLength <= 20) {
@@ -399,6 +413,64 @@ async function send(line) {
       pkt.set(slice, 1);
       await writeRaw(pkt);
     }
+  }
+}
+
+async function connectSerial(portArg = null) {
+  say("connMsg", "Connecting to watch over USB-C...");
+  try {
+    let port = portArg;
+    if (!port) {
+      if (navigator.serial.getPorts) {
+        const ports = await navigator.serial.getPorts().catch(() => []);
+        if (ports.length > 0) port = ports[0];
+      }
+      if (!port) {
+        port = await navigator.serial.requestPort({
+          filters: [{ usbVendorId: 0x1a86, usbProductId: 0x55d3 }]
+        });
+      }
+    }
+    serialPort = port;
+    await serialPort.open({ baudRate: 115200, bufferSize: 1024 });
+    serialWriter = serialPort.writable.getWriter();
+    isSerial = true;
+    connected(true);
+    $("connect").textContent = "Connected via USB-C";
+    $("connectUsb").textContent = "Connected (USB-C)";
+    say("connMsg", "Connected via USB-C Serial.", "ok");
+    readSerialLoop();
+    try { await send("INFO?"); } catch (e) {}
+  } catch (err) {
+    isSerial = false;
+    connected(false);
+    say("connMsg", "USB-C connect error: " + err.message, "err");
+  }
+}
+
+async function readSerialLoop() {
+  const textDecoder = new TextDecoderStream();
+  serialPort.readable.pipeTo(textDecoder.writable).catch(() => {});
+  const reader = textDecoder.readable.getReader();
+  try {
+    let buf = "";
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += value;
+      let lines = buf.split(/\r?\n/);
+      buf = lines.pop();
+      for (const line of lines) {
+        if (line.trim()) {
+          $("status").textContent = line;
+          parseWatchStatus(line);
+        }
+      }
+    }
+  } catch (err) {
+    // Port closed
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -471,6 +543,12 @@ async function connect() {
 async function syncTime() {
   say("syncMsg", "Sending...");
   try {
+    if (isSerial) {
+      const now = Math.floor(Date.now() / 1000);
+      await send("TIME:" + now);
+      say("syncMsg", "Time synced via USB-C (" + new Date().toLocaleTimeString() + ")!", "ok");
+      return;
+    }
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     if (zone) await send("N=" + zone);
     await send("Z=" + posixZone());
@@ -489,7 +567,11 @@ async function saveActiveFaces() {
   }
   say("facesMsg", "Sending...");
   try {
-    await send("H=" + mask);
+    if (isSerial) {
+      await send("FACES:0x" + mask.toString(16).toUpperCase());
+    } else {
+      await send("H=" + mask);
+    }
     const count = FACES.filter((_, i) => (mask & (1 << i))).length;
     if (count === 2) {
       say("facesMsg", "Saved! Hot Swap Pair enabled - swipe left or right on the watch to toggle between your 2 chosen faces.", "ok");
@@ -508,9 +590,13 @@ async function sendWifi() {
   if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
   say("wifiMsg", "Sending...");
   try {
-    await send("S=" + ssid);
-    await send("P=" + pass);
-    await send("J");
+    if (isSerial) {
+      await send("WIFI:" + ssid + "," + pass);
+    } else {
+      await send("S=" + ssid);
+      await send("P=" + pass);
+      await send("J");
+    }
     $("pass").value = "";
     say("wifiMsg", "Sent. The watch saves it and tries to join.", "ok");
   } catch (err) {
@@ -524,12 +610,37 @@ async function sendWifi() {
     $("zoneName").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
     $("zonePosix").textContent = posixZone();
   } catch (e) { /* the zone is shown when it can be worked out */ }
-  if (!navigator.bluetooth) {
-    $("unsupported").hidden = false;
+
+  if (navigator.bluetooth) {
+    $("connect").addEventListener("click", connect);
+  } else {
     $("connect").disabled = true;
-    return;
+    $("connect").title = "Web Bluetooth not available in this browser";
   }
-  $("connect").addEventListener("click", connect);
+
+  if (navigator.serial) {
+    $("connectUsb").addEventListener("click", () => connectSerial());
+    navigator.serial.addEventListener("connect", async (e) => {
+      if ($("autoSyncUsb").checked) {
+        say("connMsg", "USB-C plugged in! Auto-syncing time...", "ok");
+        try {
+          await connectSerial(e.target);
+          await syncTime();
+          say("connMsg", "USB-C Instant Sync complete!", "ok");
+        } catch (err) {
+          console.warn("Auto-sync error:", err);
+        }
+      }
+    });
+  } else {
+    $("connectUsb").disabled = true;
+    $("connectUsb").title = "Web Serial not supported in this browser (use Chrome or Edge)";
+  }
+
+  if (!navigator.bluetooth && !navigator.serial) {
+    $("unsupported").hidden = false;
+  }
+
   $("sync").addEventListener("click", syncTime);
   $("selectAllFaces").addEventListener("click", () => setFaceMask(0x0FFF));
   $("selectTwoFaces").addEventListener("click", () => {

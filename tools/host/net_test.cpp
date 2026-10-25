@@ -338,6 +338,70 @@ void joining() {
   net::saveNetwork("Cafe", "latte");
   CHECK(!strcmp(net::ssid(), "Cafe") && netsim::flashPassword == "latte" && !net::radioOn(),
         "a network from the phone is saved and the radio left off (%s)", net::ssid());
+  CHECK(netsim::lastStaConfig.sta.pmf_cfg.capable && !netsim::lastStaConfig.sta.pmf_cfg.required &&
+            netsim::lastStaConfig.sta.sae_pwe_h2e == WPA3_SAE_PWE_BOTH &&
+            netsim::lastStaConfig.sta.scan_method == WIFI_ALL_CHANNEL_SCAN &&
+            netsim::lastStaConfig.sta.threshold.rssi == -127 &&
+            netsim::lastStaConfig.sta.threshold.authmode == WIFI_AUTH_WPA_PSK,
+        "with PMF, WPA3 SAE H2E, all-channel scan and WPA threshold set");
+
+  // An open network uses WIFI_AUTH_OPEN; a 32-byte SSID is kept whole without cutting the 32nd byte.
+  const char *ssid32 = "ThirtyTwoCharacterNetworkName123";
+  net::saveNetwork(ssid32, "");
+  CHECK(!strcmp(net::ssid(), ssid32) && netsim::lastStaConfig.sta.threshold.authmode == WIFI_AUTH_OPEN,
+        "an open 32-byte SSID is kept whole (%zu chars, auth %d)", strlen(net::ssid()),
+        (int)netsim::lastStaConfig.sta.threshold.authmode);
+
+  // A network already in flash (e.g. from the setup hotspot) gets PMF and WPA3 SAE H2E on startSync().
+  freshBoard();
+  CHECK(!netsim::lastStaConfig.sta.pmf_cfg.capable && netsim::lastStaConfig.sta.sae_pwe_h2e == WPA3_SAE_PWE_UNSPECIFIED,
+        "before startSync, raw flash has neither PMF nor H2E set");
+  net::startSync();
+  CHECK(netsim::lastStaConfig.sta.pmf_cfg.capable && netsim::lastStaConfig.sta.sae_pwe_h2e == WPA3_SAE_PWE_BOTH &&
+            netsim::lastStaConfig.sta.scan_method == WIFI_ALL_CHANNEL_SCAN &&
+            netsim::lastStaConfig.sta.threshold.rssi == -127,
+        "startSync upgrades the saved config before joining");
+  net::cancelSync();
+
+  // Serial saveWifi sets the same WPA3/PMF fields and starts joining.
+  net::saveWifi("DeskNet", "hunter22");
+  CHECK(!strcmp(net::ssid(), "DeskNet") && net::syncState() == net::Sync::Connecting &&
+            netsim::lastStaConfig.sta.pmf_cfg.capable && netsim::lastStaConfig.sta.sae_pwe_h2e == WPA3_SAE_PWE_BOTH,
+        "saveWifi sets PMF and WPA3 SAE H2E and starts joining");
+  net::cancelSync();
+
+  // iPhone Personal Hotspot / iOS Smart Punctuation apostrophe mismatch: straight "'" vs curly U+2019.
+  printf("Wi-Fi: straight and curly apostrophes in network names\n");
+  freshBoard();
+  net::saveNetwork("Alex's iPhone", "pass1234");
+  net::startSync();
+  runFor(200);
+  netsim::dropConnection(WIFI_REASON_NO_AP_FOUND);
+  runFor(50);
+  CHECK(net::syncState() == net::Sync::Connecting && netsim::flashSsid == "Alex\xe2\x80\x99s iPhone",
+        "straight apostrophe not found: tries the curly one (%s)", netsim::flashSsid.c_str());
+  netsim::status = WL_CONNECTED;
+  runFor(100);
+  netsim::sntpAnswer(truthMs());
+  runFor(100);
+  CHECK(net::lastResult() == net::Result::Ok && !strcmp(net::ssid(), "Alex\xe2\x80\x99s iPhone"),
+        "when the curly name answers, it is kept for later syncs (%s)", net::ssid());
+
+  // Reverse: curly apostrophe typed on an iPhone keyboard, router broadcasts straight ASCII "'".
+  freshBoard();
+  net::saveNetwork("Alex\xe2\x80\x99s Router", "pass1234");
+  net::startSync();
+  runFor(200);
+  netsim::dropConnection(WIFI_REASON_NO_AP_FOUND);
+  runFor(50);
+  CHECK(net::syncState() == net::Sync::Connecting && netsim::flashSsid == "Alex's Router",
+        "curly apostrophe not found: tries the straight one (%s)", netsim::flashSsid.c_str());
+  // Neither exists on the air: fails as NotFound and keeps what the person typed.
+  netsim::dropConnection(WIFI_REASON_NO_AP_FOUND);
+  runFor(15500);
+  CHECK(net::lastResult() == net::Result::Failed && net::joinWhy() == net::JoinWhy::NotFound &&
+            !strcmp(net::ssid(), "Alex\xe2\x80\x99s Router") && netsim::flashSsid == "Alex\xe2\x80\x99s Router",
+        "if neither is found, the original name stays saved (%s)", net::ssid());
 }
 
 void portal() {

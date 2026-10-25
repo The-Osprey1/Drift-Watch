@@ -1,5 +1,6 @@
 // The Wi-Fi, web and time-server stand-ins behind the headers in this folder.
 #include "netsim.h"
+#include <algorithm>
 #include <string.h>
 #include "HTTPClient.h"
 #include "WiFi.h"
@@ -13,6 +14,7 @@ int status = WL_DISCONNECTED;
 int mode = WIFI_OFF;
 int begins = 0;
 std::string flashSsid, flashPassword;
+wifi_config_t lastStaConfig = {};
 int stationsOnHotspot = 0;
 bool httpBeginOk = true;
 int httpCode = 200;
@@ -70,6 +72,7 @@ void reset() {
   begins = 0;
   flashSsid.clear();
   flashPassword.clear();
+  lastStaConfig = {};
   stationsOnHotspot = 0;
   httpBeginOk = true;
   httpCode = 200;
@@ -123,12 +126,17 @@ int xTaskCreatePinnedToCore(TaskFunction_t fn, const char *, uint32_t, void *arg
 }
 
 esp_err_t esp_wifi_get_config(wifi_interface_t, wifi_config_t *conf) {
-  memset(conf, 0, sizeof *conf);
-  strncpy((char *)conf->sta.ssid, netsim::flashSsid.c_str(), sizeof conf->sta.ssid);
-  strncpy((char *)conf->sta.password, netsim::flashPassword.c_str(), sizeof conf->sta.password);
+  *conf = netsim::lastStaConfig;
+  memset(conf->sta.ssid, 0, sizeof conf->sta.ssid);
+  memset(conf->sta.password, 0, sizeof conf->sta.password);
+  size_t sn = std::min(netsim::flashSsid.size(), sizeof conf->sta.ssid);
+  size_t pn = std::min(netsim::flashPassword.size(), sizeof conf->sta.password);
+  memcpy(conf->sta.ssid, netsim::flashSsid.data(), sn);
+  memcpy(conf->sta.password, netsim::flashPassword.data(), pn);
   return ESP_OK;
 }
 esp_err_t esp_wifi_set_config(wifi_interface_t, wifi_config_t *conf) {
+  netsim::lastStaConfig = *conf;
   netsim::flashSsid.assign((const char *)conf->sta.ssid, strnlen((const char *)conf->sta.ssid, sizeof conf->sta.ssid));
   netsim::flashPassword.assign((const char *)conf->sta.password,
                                strnlen((const char *)conf->sta.password, sizeof conf->sta.password));

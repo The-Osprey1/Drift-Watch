@@ -1,8 +1,8 @@
-# Drift-Watch firmware (v0.11.0)
+# Drift-Watch firmware (v0.11.1)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
-**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. v0.10.1 fixes four bugs in it: a dropped touch read no longer counts as lifting the finger, serial commands no longer pause the watch for up to a second, the Auto time zone is no longer replaced by Pacific time on the first start, and a screen notice shows if memory for the picture runs out. It passes 336 simulation checks; see `NOTES-v0.10.1.md`. **v0.11.0** adds the Phantom face, a candidate low-power wait for the screen-off time (the motion sensor's own wake-on-motion interrupt and the touch chip's standby, in the diagnostic image only), stricter and better-tested network code, and GitHub Pages publishing for the Drift sync page. Its computer checks all pass; **it has not been run on a watch, and its power saving is not measured yet**. See `NOTES-v0.11.0.md`. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
+**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. v0.10.1 fixes four bugs in it (touch read dropouts, non-blocking serial commands, keeping Auto time zone across first start, and an out-of-memory screen notice); see `NOTES-v0.10.1.md`. v0.11.0 adds the Phantom face, a candidate low-power wait for the screen-off time (the motion sensor's own wake-on-motion interrupt and the touch chip's standby, in the diagnostic image only), stricter network code, and GitHub Pages publishing for the Drift sync page; see `NOTES-v0.11.0.md`. **v0.11.1** fixes iPhone Bluetooth truncation and write failures (247-byte ATT MTU, acknowledged GATT writes, and 20-byte fallback framing), enables WPA3 SAE H2E and 802.11w PMF with straight/curly apostrophe fallback for modern routers and iPhone Personal Hotspots, publishes the live sync page at https://the-osprey1.github.io/DriftWatch/, and verifies boot on a real watch; power saving in the diagnostic image is still to be measured. See `NOTES-v0.11.1.md` (earlier `NOTES-*.md` files cover earlier versions).
 
 ## The board (checked against the Waveshare wiki)
 
@@ -62,12 +62,12 @@ The screen turns off after 15 seconds (30 seconds on a setup result). While it i
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
-3. Choose `firmware/drift_watch_v0.11.0.bin` at address **0x0**, then Program.
+3. Choose `firmware/drift_watch_v0.11.1.bin` at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
 If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
 
-`firmware/drift_watch_v0.11.0_diag.bin` is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
+`firmware/drift_watch_v0.11.1_diag.bin` is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
 **The v0.7.0 and v0.8.0 files in `firmware/` stall at start on this board**: they were built with "USB CDC on boot" turned on, which sends serial output to the ESP32-S3's own USB pins, and on this board those are not connected to the USB-C port. Use v0.9.0 or later, or rebuild an older version with the current `build.sh`.
 
@@ -79,9 +79,9 @@ To set the clock, use any one of: **Phone sync** (quickest), **Wi-Fi setup** (ke
 
 ## Phone sync
 
-1. Open the Drift sync page (`companion/index.html`, served over https, for example with GitHub Pages) in Chrome or Edge on Android, Windows, macOS, Linux or a Chromebook, or in the free **Bluefy** app on an iPhone or iPad.
+1. Open https://the-osprey1.github.io/DriftWatch/ (`companion/index.html`, served over https by GitHub Pages) in Chrome or Edge on Android, Windows, macOS, Linux or a Chromebook, or in the free **Bluefy** app on an iPhone or iPad.
 2. On the watch, open settings, then **Phone sync**. It shows its name, such as Drift-1A2B, for 3 minutes.
-3. On the page, tap **Connect to the watch**, pick the name, then **Sync time**. The page sends your time zone (with its summer time rules) and the time. You can also send a Wi-Fi network and password.
+3. On the page, tap **Connect to the watch**, pick the name, then **Sync time**. The page sends your time zone (with its summer time rules) and the time. You can also send a Wi-Fi network and password (for an iPhone Personal Hotspot, turn on **Maximize Compatibility** in Settings > Personal Hotspot and keep that screen open while the watch joins).
 
 Bluetooth is only on while that screen is open. The link is not encrypted, so only send a Wi-Fi password with the watch close to you. Generic Bluetooth apps that use the standard Current Time Service can set the clock too.
 
@@ -91,7 +91,7 @@ Open settings, then **Wi-Fi setup**. The screen walks you through it:
 
 1. On your phone, open the Wi-Fi list and join **Drift-Setup** first. http://192.168.4.1 only works while your phone is on Drift-Setup; on your home Wi-Fi it just times out.
 2. A page should open by itself; if not, go to http://192.168.4.1. If the phone warns that Drift-Setup has no internet, choose to stay connected.
-3. Pick your home network and type its password. **The watch only works with 2.4 GHz Wi-Fi**, so only 2.4 GHz networks are listed. If yours is missing, or the router mixes 2.4 and 5 GHz under one name and the watch can't join, turn on a 2.4 GHz network on the router (mesh routers often call it a compatibility or IoT network). You can also type a time zone, or leave it blank to detect it.
+3. Pick your home network and type its password. **The watch only works with 2.4 GHz Wi-Fi**, so only 2.4 GHz networks are listed. If yours is missing, or the router mixes 2.4 and 5 GHz under one name and the watch can't join, turn on a 2.4 GHz network on the router (mesh routers often call it a compatibility or IoT network; on an iPhone Personal Hotspot, turn on **Maximize Compatibility** in Settings > Personal Hotspot). You can also type a time zone, or leave it blank to detect it.
 4. Save. The watch says "Connecting" and shows each step (joining Wi-Fi, finding the time zone, setting the clock), then "All set". If it can't join, it says why in plain words (network not found, password not accepted, the router turned the watch away, or no answer) and what to try, with **Edit Wi-Fi** (reopens the hotspot to fix the network or password) and **Retry**.
 
 No Wi-Fi at all? Cancel setup and use **Set time** instead.
@@ -139,4 +139,4 @@ Step counter (the motion sensor can do it), wake on motion for the twist gesture
 
 ## Ready-made firmware files
 
-The `firmware/` folder holds the ready-to-flash v0.11.0 image, `drift_watch_v0.11.0.bin`, and the diagnostic build, `drift_watch_v0.11.0_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in `SHA256SUMS-v0.11.0.txt` and a manifest in `MANIFEST-v0.11.0.md`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.
+The `firmware/` folder holds the ready-to-flash v0.11.1 image, `drift_watch_v0.11.1.bin`, and the diagnostic build, `drift_watch_v0.11.1_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in `SHA256SUMS-v0.11.1.txt` and a manifest in `MANIFEST-v0.11.1.md`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.

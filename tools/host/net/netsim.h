@@ -5,6 +5,7 @@
 #include <stdint.h>
 #include <functional>
 #include <string>
+#include "esp_wifi.h"
 
 namespace netsim {
 // Radio.
@@ -13,6 +14,7 @@ extern int mode;                // last WiFi.mode() (WIFI_*)
 extern int begins;              // WiFi.begin() calls
 extern std::string flashSsid;   // the network saved in the radio's own flash
 extern std::string flashPassword;
+extern wifi_config_t lastStaConfig;  // last station config passed to esp_wifi_set_config()
 extern int stationsOnHotspot;   // phones joined to the setup hotspot
 void dropConnection(uint8_t reason);  // the radio reports a disconnect with this reason
 

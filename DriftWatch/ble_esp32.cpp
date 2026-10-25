@@ -28,6 +28,8 @@ QueueHandle_t lines = nullptr;
 BLEServer *server = nullptr;
 BLECharacteristic *statusChar = nullptr;
 char deviceName[16] = "Drift";
+char part[LINE];
+size_t partLen = 0;
 
 // Runs on the Bluetooth task: copy the line and leave, the main loop applies it.
 void queueLine(const char *text, size_t n) {
@@ -40,10 +42,28 @@ void queueLine(const char *text, size_t n) {
   if (xQueueSend(lines, &l, 0) == pdTRUE) lastLineAt = millis();
 }
 
+void appendPart(const char *data, size_t n) {
+  size_t room = LINE - 1 - partLen;
+  if (n > room) n = room;
+  if (n) memcpy(part + partLen, data, n);
+  partLen += n;
+}
+
 class CommandWrites : public BLECharacteristicCallbacks {
   void onWrite(BLECharacteristic *c) override {
     std::string v = c->getValue();
-    queueLine(v.data(), v.size());
+    // 0x01 marks a piece with more to come and 0x02 marks the last piece, for iOS Web Bluetooth
+    // wrappers that split writes at 20 bytes; ordinary clients send one whole line per write.
+    if (!v.empty() && (uint8_t)v[0] == 0x01) {
+      appendPart(v.data() + 1, v.size() - 1);
+    } else if (!v.empty() && (uint8_t)v[0] == 0x02) {
+      appendPart(v.data() + 1, v.size() - 1);
+      queueLine(part, partLen);
+      partLen = 0;
+    } else {
+      partLen = 0;
+      queueLine(v.data(), v.size());
+    }
   }
 };
 
@@ -62,6 +82,7 @@ class Links : public BLEServerCallbacks {
   void onConnect(BLEServer *) override { connected = true; }
   void onDisconnect(BLEServer *s) override {
     connected = false;
+    partLen = 0;
     s->startAdvertising();  // the window is still open: let the phone come back
   }
 };
@@ -76,14 +97,18 @@ bool start() {
   snprintf(deviceName, sizeof deviceName, "Drift-%02X%02X", mac[4], mac[5]);
   BLEDevice::init(deviceName);
   if (esp_bluedroid_get_status() != ESP_BLUEDROID_STATUS_ENABLED) return false;
+  // Without this, Bluedroid keeps the 23-byte default ATT MTU (20 bytes of payload), cutting
+  // Z=, N=, S= and P= lines and status notifications short on iPhones and browsers.
+  BLEDevice::setMTU(247);
   // The objects below belong to this start; Bluetooth is shut down with deinit(false) on
   // close, so a later open builds a fresh set (the old ones are a few hundred bytes).
   server = BLEDevice::createServer();
   server->setCallbacks(&links);
 
   BLEService *drift = server->createService(SERVICE_UUID);
-  BLECharacteristic *cmd = drift->createCharacteristic(
-      COMMAND_UUID, BLECharacteristic::PROPERTY_WRITE | BLECharacteristic::PROPERTY_WRITE_NR);
+  // Acknowledged writes only: unacknowledged writes cannot use GATT long writes and are cut off
+  // or refused past MTU - 3 bytes by iOS Web Bluetooth browsers.
+  BLECharacteristic *cmd = drift->createCharacteristic(COMMAND_UUID, BLECharacteristic::PROPERTY_WRITE);
   cmd->setCallbacks(&commandWrites);
   statusChar = drift->createCharacteristic(STATUS_UUID, BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_NOTIFY);
   statusChar->addDescriptor(new BLE2902());
@@ -102,7 +127,8 @@ bool start() {
   BLEAdvertising *adv = BLEDevice::getAdvertising();
   adv->addServiceUUID(SERVICE_UUID);
   adv->setScanResponse(true);  // the 128-bit service and the name do not both fit in the advert
-  adv->setMinPreferred(0x06);  // helps iPhones connect
+  adv->setMinPreferred(0x06);  // 7.5 ms to 22.5 ms connection interval, per Apple's BLE guidelines
+  adv->setMaxPreferred(0x12);
   BLEDevice::startAdvertising();
   return true;
 }
@@ -114,6 +140,7 @@ void open() {
   openedAt = hal::ms();
   lastLineAt = 0;
   if (started) return;
+  partLen = 0;
   if (!lines) lines = xQueueCreate(QUEUE_DEPTH, sizeof(Line));
   xQueueReset(lines);
   started = start();

@@ -17,6 +17,9 @@ late-zone-answer-used|DriftWatch/net.cpp|bool answered = zoneEpoch && zoneReady.
 time-client-left-running|DriftWatch/net.cpp|  if (sntp_enabled()) sntp_stop();|  (void)0;|network
 truncated-reply-used|DriftWatch/net.cpp|  return *p == '{' \&\& end - p >= 2 \&\& end[-1] == '}';|  return *p == '{';|network
 owed-nudge-ignored|DriftWatch/timekeep.cpp|((double)errorMs + owedMs_)|((double)errorMs)|network
+pmf-disabled|DriftWatch/net.cpp|  conf.sta.pmf_cfg.capable = true;|  conf.sta.pmf_cfg.capable = false;|network
+wpa3-sae-h2e-disabled|DriftWatch/net.cpp|  conf.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;|  conf.sta.sae_pwe_h2e = WPA3_SAE_PWE_UNSPECIFIED;|network
+apostrophe-fallback-skipped|DriftWatch/net.cpp|  if (!hasCurly \&\& !hasStraight) return false;|  return false;|network
 LIST
 )
 

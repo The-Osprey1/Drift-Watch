@@ -35,6 +35,8 @@ int64_t clockStartWall = 0;  // wall clock (ms) when the time server was asked, 
 uint32_t clockStartMs = 0;
 char zone[40] = "";
 char savedSsid[33] = "";
+char joiningSsid[33] = "";
+bool triedAltQuote = false;
 constexpr const char *DEFAULT_POSIX_TZ = "PST8PDT,M3.2.0,M11.1.0";  // US Pacific, until Auto finds the zone
 char posixTz[64] = "UTC0";
 
@@ -147,10 +149,73 @@ void zoneTask(void *arg) {
 }
 
 // ---- Helpers ---------------------------------------------------------------
+void copyStaField(uint8_t *dst, size_t dstSize, const char *src) {
+  memset(dst, 0, dstSize);
+  size_t n = strlen(src);
+  if (n > dstSize) n = dstSize;
+  memcpy(dst, src, n);
+}
+
+// Sets the station fields that a zeroed wifi_config_t (or WiFiManager's save) leaves off:
+// all-channel scan for mesh routers, Protected Management Frames (802.11w) for WPA2/WPA3
+// routers, and WPA3 SAE hash-to-element (H2E) for iPhone Personal Hotspots.
+void fillStationDefaults(wifi_config_t &conf) {
+  conf.sta.scan_method = WIFI_ALL_CHANNEL_SCAN;
+  conf.sta.sort_method = WIFI_CONNECT_AP_BY_SIGNAL;
+  conf.sta.threshold.rssi = -127;
+  conf.sta.threshold.authmode = conf.sta.password[0] ? WIFI_AUTH_WPA_PSK : WIFI_AUTH_OPEN;
+  conf.sta.pmf_cfg.capable = true;
+  conf.sta.pmf_cfg.required = false;
+  conf.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;
+}
+
+// iPhones name their hotspot with a curly apostrophe (U+2019, UTF-8 E2 80 99) and iOS Smart
+// Punctuation types one in web forms, while computer keyboards and most routers use straight
+// ASCII "'". When an SSID with one is not found, the join tries the other once.
+bool flipApostrophe(const char *in, char *out, size_t outSize) {
+  bool hasCurly = strstr(in, "\xe2\x80\x99") || strstr(in, "\xe2\x80\x98");
+  bool hasStraight = strchr(in, '\'') != nullptr;
+  if (!hasCurly && !hasStraight) return false;
+  size_t j = 0;
+  for (size_t i = 0; in[i];) {
+    if (hasCurly && (uint8_t)in[i] == 0xe2 && (uint8_t)in[i + 1] == 0x80 &&
+        ((uint8_t)in[i + 2] == 0x99 || (uint8_t)in[i + 2] == 0x98)) {
+      if (j + 1 >= outSize) return false;
+      out[j++] = '\'';
+      i += 3;
+    } else if (!hasCurly && in[i] == '\'') {
+      if (j + 3 >= outSize) return false;
+      memcpy(out + j, "\xe2\x80\x99", 3);
+      j += 3;
+      i++;
+    } else {
+      if (j + 1 >= outSize) return false;
+      out[j++] = in[i++];
+    }
+  }
+  out[j] = 0;
+  return true;
+}
+
 // Reads the network name saved in flash. Wi-Fi must be started for this.
 void readSavedSsid() {
   wifi_config_t conf = {};
-  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) strlcpy(savedSsid, (const char *)conf.sta.ssid, sizeof savedSsid);
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+    size_t n = strnlen((const char *)conf.sta.ssid, sizeof conf.sta.ssid);
+    memcpy(savedSsid, conf.sta.ssid, n);
+    savedSsid[n] = 0;
+  }
+}
+
+void restoreSavedSsid() {
+  if (!joiningSsid[0] || !strcmp(joiningSsid, savedSsid)) return;
+  wifi_config_t conf = {};
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+    copyStaField(conf.sta.ssid, sizeof conf.sta.ssid, savedSsid);
+    fillStationDefaults(conf);
+    esp_wifi_set_config(WIFI_IF_STA, &conf);
+  }
+  joiningSsid[0] = 0;
 }
 
 void wifiOff() {
@@ -190,6 +255,7 @@ void finish(net::Fail f) {
     hal::log("net: join failed, Wi-Fi reason %d (group %d)", whyCode, (int)why);
   }
   if (f == net::Fail::None) byHand = false;
+  else restoreSavedSsid();
   fail = f;
   result = f == net::Fail::None ? net::Result::Ok : net::Result::Failed;
   finished++;
@@ -238,15 +304,20 @@ void saveWifi(const char *ssid, const char *password) {
   closePortal(Portal::Saved);
   WiFi.disconnect(true);
   delay(50);
+  disconnectReason.store(0);
+  triedAltQuote = false;
   WiFi.mode(WIFI_STA);
   wifi_config_t conf = {};
-  strlcpy((char *)conf.sta.ssid, ssid, sizeof conf.sta.ssid);
-  strlcpy((char *)conf.sta.password, password, sizeof conf.sta.password);
+  copyStaField(conf.sta.ssid, sizeof conf.sta.ssid, ssid);
+  copyStaField(conf.sta.password, sizeof conf.sta.password, password);
+  fillStationDefaults(conf);
+  esp_wifi_set_storage(WIFI_STORAGE_FLASH);
   esp_wifi_set_config(WIFI_IF_STA, &conf);
-  WiFi.begin(ssid, password);
-  strlcpy(savedSsid, ssid, sizeof savedSsid);
+  readSavedSsid();
+  strlcpy(joiningSsid, savedSsid, sizeof joiningSsid);
+  WiFi.begin();
   setState(Sync::Connecting);
-  hal::log("net: configured Wi-Fi for %s", ssid);
+  hal::log("net: configured Wi-Fi for %s", savedSsid);
 }
 
 void begin() {
@@ -274,7 +345,14 @@ void startSync() {
     return;
   }
   disconnectReason.store(0);
+  triedAltQuote = false;
+  strlcpy(joiningSsid, savedSsid, sizeof joiningSsid);
   WiFi.mode(WIFI_STA);
+  wifi_config_t conf = {};
+  if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+    fillStationDefaults(conf);
+    esp_wifi_set_config(WIFI_IF_STA, &conf);
+  }
   WiFi.begin();
   setState(Sync::Connecting);
 }
@@ -284,6 +362,7 @@ void poll() {
   switch (syncNow) {
     case Sync::Connecting:
       if (WiFi.status() == WL_CONNECTED) {
+        if (joiningSsid[0] && strcmp(joiningSsid, savedSsid) != 0) strlcpy(savedSsid, joiningSsid, sizeof savedSsid);
         if (settings.tz.isEmpty() && !zoneTaskRunning.load(std::memory_order_acquire)) {
           if (++lastEpoch == 0) lastEpoch = 1;  // never 0, which means none
           zoneEpoch = lastEpoch;
@@ -298,6 +377,23 @@ void poll() {
         } else {
           strlcpy(posixTz, settings.tz.c_str(), sizeof posixTz);
           startClock();
+        }
+      } else if (!triedAltQuote && disconnectReason.load() == WIFI_REASON_NO_AP_FOUND) {
+        triedAltQuote = true;
+        char alt[33];
+        if (flipApostrophe(savedSsid, alt, sizeof alt)) {
+          WiFi.disconnect(false);
+          disconnectReason.store(0);
+          wifi_config_t conf = {};
+          if (esp_wifi_get_config(WIFI_IF_STA, &conf) == ESP_OK) {
+            copyStaField(conf.sta.ssid, sizeof conf.sta.ssid, alt);
+            fillStationDefaults(conf);
+            esp_wifi_set_config(WIFI_IF_STA, &conf);
+          }
+          strlcpy(joiningSsid, alt, sizeof joiningSsid);
+          WiFi.begin();
+          stateStart = hal::ms();
+          hal::log("net: %s not found, trying %s", savedSsid, joiningSsid);
         }
       } else if (elapsed > CONNECT_TIMEOUT_MS) {
         finish(Fail::JoinFailed);
@@ -362,6 +458,7 @@ void cancelSync() {
   if (!syncRunning()) return;
   zoneEpoch = 0;
   stopClock();
+  restoreSavedSsid();
   wifiOff();
   setState(Sync::Idle);
   hal::log("net: sync cancelled");
@@ -402,7 +499,8 @@ void startPortal() {
     bandNote = new WiFiManagerParameter(
         "<p><b>This watch only works with 2.4 GHz Wi-Fi.</b> Only networks it can use are listed. "
         "If yours is missing, turn on 2.4 GHz on your router (some mesh routers call it a "
-        "compatibility or IoT network).</p>");
+        "compatibility or IoT network). For an iPhone Personal Hotspot, turn on Maximize "
+        "Compatibility in Settings &gt; Personal Hotspot.</p>");
   if (!tzParam) tzParam = new WiFiManagerParameter("tz", "Time zone (leave blank to detect automatically)", "", 63);
   tzParam->setValue(settings.tz.c_str(), 63);  // the setup page opens with the zone in use now
   wm->setTitle("Drift-Watch");
@@ -479,11 +577,13 @@ void saveNetwork(const char *newSsid, const char *password) {
   if (syncRunning()) cancelSync();
   WiFi.mode(WIFI_STA);
   wifi_config_t conf = {};
-  strlcpy((char *)conf.sta.ssid, newSsid, sizeof conf.sta.ssid);
-  strlcpy((char *)conf.sta.password, password, sizeof conf.sta.password);
+  copyStaField(conf.sta.ssid, sizeof conf.sta.ssid, newSsid);
+  copyStaField(conf.sta.password, sizeof conf.sta.password, password);
+  fillStationDefaults(conf);
   esp_wifi_set_storage(WIFI_STORAGE_FLASH);
   esp_wifi_set_config(WIFI_IF_STA, &conf);
   readSavedSsid();
+  joiningSsid[0] = 0;
   wifiOff();
   hal::log("net: network %s saved from phone", savedSsid);
 }

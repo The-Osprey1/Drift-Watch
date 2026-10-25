@@ -9,6 +9,7 @@
 #include "hal.h"
 #include "settings.h"
 #include "timekeep.h"
+#include "zones.h"
 
 namespace {
 constexpr uint32_t CONNECT_TIMEOUT_MS = 15000;
@@ -37,6 +38,10 @@ char zone[40] = "";
 char savedSsid[33] = "";
 char joiningSsid[33] = "";
 bool triedAltQuote = false;
+// Many mesh and band-steering routers turn a device away on its first try and let it in on the
+// next, so a join that has not worked by its time gets one more full try before it fails.
+bool joinRetried = false;
+uint8_t firstReason = 0;  // the radio's reason from the first try, if the second reports none
 constexpr const char *DEFAULT_POSIX_TZ = "PST8PDT,M3.2.0,M11.1.0";  // US Pacific, until Auto finds the zone
 char posixTz[64] = "UTC0";
 
@@ -55,6 +60,7 @@ bool portalSaved = false;
 // used. Only one task runs at a time, so the slot is never written while the loop reads it.
 struct ZoneAnswer {
   bool ok;
+  long offset;  // seconds east of UTC, now
   char name[40], posix[64];
 };
 ZoneAnswer zoneSlot;
@@ -127,8 +133,42 @@ bool parseZoneReply(const char *body, ZoneAnswer &a) {
   long off = strtol(offset, nullptr, 10);
   // Every zone in use is a whole number of quarter hours from UTC, within -12 h to +14 h.
   if (off < MIN_OFFSET_S || off > MAX_OFFSET_S || off % 900) return false;
+  a.offset = off;
   posixFromOffset(off, a.posix, sizeof a.posix);
   return true;
+}
+
+// Days from 1970-01-01 to a date (Howard Hinnant's days_from_civil), so a local time can be
+// compared with UTC without timegm, which the watch's C library lacks.
+long daysFromCivil(int y, unsigned m, unsigned d) {
+  y -= m <= 2;
+  long era = (y >= 0 ? y : y - 399) / 400;
+  unsigned yoe = (unsigned)(y - era * 400);
+  unsigned doy = (153 * (m + (m > 2 ? -3 : 9)) + 2) / 5 + d - 1;
+  unsigned doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + (long)doe - 719468;
+}
+
+// The offset east of UTC, in seconds, that POSIX zone `posix` gives at time t. It switches TZ to
+// read it; the caller sets the zone it wants afterwards.
+long offsetIn(const char *posix, time_t t) {
+  setenv("TZ", posix, 1);
+  tzset();
+  tm l;
+  localtime_r(&t, &l);
+  int64_t local = (int64_t)daysFromCivil(l.tm_year + 1900, l.tm_mon + 1, l.tm_mday) * 86400 + l.tm_hour * 3600 +
+                  l.tm_min * 60 + l.tm_sec;
+  return (long)(local - (int64_t)t);
+}
+
+// The zone to use for a lookup's answer: the zone's own summer time rules when they are known and
+// agree with the offset the service sees now, otherwise the fixed offset (right until the next
+// change, and the next sync after it puts it right).
+const char *zoneFor(const ZoneAnswer &a) {
+  const char *rules = zones::rulesFor(a.name);
+  if (rules && (!net::timeIsValid() || offsetIn(rules, hal::now()) == a.offset)) return rules;
+  if (rules) hal::log("net: rules for %s do not match offset %ld, using the offset", a.name, a.offset);
+  return a.posix;
 }
 
 void zoneTask(void *arg) {
@@ -251,6 +291,7 @@ void stopClock() {
 void finish(net::Fail f) {
   if (f == net::Fail::JoinFailed) {
     whyCode = disconnectReason.load();
+    if (!whyCode) whyCode = firstReason;
     why = classify(whyCode);
     hal::log("net: join failed, Wi-Fi reason %d (group %d)", whyCode, (int)why);
   }
@@ -305,7 +346,8 @@ void saveWifi(const char *ssid, const char *password) {
   WiFi.disconnect(true);
   delay(50);
   disconnectReason.store(0);
-  triedAltQuote = false;
+  triedAltQuote = joinRetried = false;
+  firstReason = 0;
   WiFi.mode(WIFI_STA);
   wifi_config_t conf = {};
   copyStaField(conf.sta.ssid, sizeof conf.sta.ssid, ssid);
@@ -326,6 +368,12 @@ void begin() {
   // is only the zone in use until a lookup answers. It is never saved: saving it would turn
   // Auto into a fixed zone on the first start.
   strlcpy(posixTz, settings.tz.isEmpty() ? DEFAULT_POSIX_TZ : settings.tz.c_str(), sizeof posixTz);
+  // Auto starts from the zone its last lookup found, if it has found one: after a restart, the
+  // watch keeps showing local time instead of Pacific until Wi-Fi answers.
+  if (settings.tz.isEmpty() && !settings.autoTz.isEmpty()) {
+    strlcpy(posixTz, settings.autoTz.c_str(), sizeof posixTz);
+    strlcpy(zone, settings.autoZone.c_str(), sizeof zone);
+  }
   setenv("TZ", posixTz, 1);
   tzset();
   WiFi.onEvent([](WiFiEvent_t, WiFiEventInfo_t info) { disconnectReason.store(info.wifi_sta_disconnected.reason); },
@@ -345,7 +393,8 @@ void startSync() {
     return;
   }
   disconnectReason.store(0);
-  triedAltQuote = false;
+  triedAltQuote = joinRetried = false;
+  firstReason = 0;
   strlcpy(joiningSsid, savedSsid, sizeof joiningSsid);
   WiFi.mode(WIFI_STA);
   wifi_config_t conf = {};
@@ -395,6 +444,14 @@ void poll() {
           stateStart = hal::ms();
           hal::log("net: %s not found, trying %s", savedSsid, joiningSsid);
         }
+      } else if (elapsed > CONNECT_TIMEOUT_MS && !joinRetried) {
+        joinRetried = true;
+        firstReason = disconnectReason.load();
+        WiFi.disconnect(false);
+        disconnectReason.store(0);
+        WiFi.begin();
+        stateStart = hal::ms();
+        hal::log("net: no join after %lu s (reason %d), trying once more", (unsigned long)(CONNECT_TIMEOUT_MS / 1000), firstReason);
       } else if (elapsed > CONNECT_TIMEOUT_MS) {
         finish(Fail::JoinFailed);
       }
@@ -406,8 +463,15 @@ void poll() {
       if (answered || elapsed > ZONE_TIMEOUT_MS + 2000) {
         if (answered && zoneSlot.ok) {
           strlcpy(zone, zoneSlot.name, sizeof zone);
-          strlcpy(posixTz, zoneSlot.posix, sizeof posixTz);
+          strlcpy(posixTz, zoneFor(zoneSlot), sizeof posixTz);
           hal::log("net: zone %s -> %s", zone, posixTz);
+          // Kept for the next start, so a restart shows local time before any sync. Written only
+          // when it changes, which is rare, so the flash is not worn.
+          if (settings.autoTz != posixTz || settings.autoZone != zone) {
+            settings.autoTz = posixTz;
+            settings.autoZone = zone;
+            saveSettings();
+          }
         }
         startClock();  // falls back to the last known zone, or the Pacific default
       }
@@ -469,6 +533,7 @@ bool syncRunning() { return syncNow != Sync::Idle; }
 Result lastResult() { return result; }
 Fail failReason() { return fail; }
 uint16_t attempts() { return finished; }
+int joinTry() { return syncNow == Sync::Connecting && joinRetried ? 2 : 1; }
 int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
 JoinWhy joinWhy() { return why; }
 int joinCode() { return whyCode; }

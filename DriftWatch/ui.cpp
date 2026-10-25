@@ -22,7 +22,7 @@ namespace {
 constexpr uint32_t SCREEN_TIMEOUT_MS = 15000;
 constexpr uint32_t RESULT_TIMEOUT_MS = 30000;          // a setup result stays up longer, to be read and acted on
 constexpr uint32_t RESYNC_MS = 6UL * 60 * 60 * 1000;   // every 6 hours
-constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync
+constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync; doubles with each failure in a row
 constexpr uint32_t BATTERY_READ_MS = 10000;
 constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estimate needs no more, and the sleeps get longer
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
@@ -91,6 +91,7 @@ battery::Estimate batteryLife;
 uint32_t lastBatteryRead = 0;
 uint32_t nextSyncAt = 0;
 uint16_t seenAttempts = 0;
+uint8_t failsInARow = 0;  // syncs that failed since the last one that worked
 net::Sync seenSync = net::Sync::Idle;
 net::Portal seenPortal = net::Portal::Off;
 uint32_t uiKey = 0;
@@ -375,6 +376,7 @@ screens::View view(Mode m, int page) {
   v.result = net::lastResult();
   v.fail = net::failReason();
   v.syncStep = net::syncStep();
+  v.joinTry = net::joinTry();
   v.portal = net::portalState();
   v.secondsLeft = net::portalSecondsLeft();
   v.lastSyncText = synced;
@@ -420,6 +422,8 @@ screens::View view(Mode m, int page) {
   }
   v.nowText = nowBuf;
   v.version = "v" FW_VERSION;
+  v.startReason = hal::startReason();
+  v.restarts = hal::unexpectedRestarts();
 #if DRIFT_DIAG
   v.diag = diag.line;
 #else
@@ -1568,7 +1572,12 @@ void stepNetwork() {
   if (net::attempts() != seenAttempts) {
     seenAttempts = net::attempts();
     // With no network saved there is nothing to retry; the clock may have been set by hand.
-    nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    // Failures in a row wait 30 minutes, then 1, 2 and 4 hours, then every 6 hours like a working
+    // sync: away from the saved network, the radio is not switched on every half hour for nothing.
+    bool ok = net::lastResult() == net::Result::Ok;
+    failsInARow = ok ? 0 : failsInARow < 8 ? failsInARow + 1 : 8;
+    uint32_t wait = ok ? RESYNC_MS : min<uint32_t>(RESYNC_MS, RETRY_SYNC_MS << (failsInARow - 1));
+    nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + wait;
     if (net::hasSavedWifi() && !nextSyncAt) nextSyncAt = 1;  // 0 means none; millis() can wrap onto it
     dirty = true;
   }
@@ -1724,6 +1733,8 @@ const char *screenName() {
 
 void begin() {
   hal::begin();
+  // Each start-up step is logged before it runs, so a start that stalls shows where.
+  hal::watchdogStart(DRIFT_WATCHDOG_S);
   // Start from a clean interface state (the simulation calls begin() more than once).
   cur = &spriteA;
   nb = &spriteB;
@@ -1734,6 +1745,7 @@ void begin() {
   standby = power::Controller{};
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = 0;
+  failsInARow = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
@@ -1742,6 +1754,8 @@ void begin() {
   marker.minute = -1;
   releaseUntil = 0;
 
+  hal::log("boot: settings v%u, face %u", (unsigned)SETTINGS_VERSION, (unsigned)settings.face);
+  hal::log("boot: screen");
   tft.init();
   applyTurn();  // sprites stay 240 x 240: the panel turns the picture as it is written
   tft.fillScreen(TFT_BLACK);
@@ -1765,7 +1779,9 @@ void begin() {
     return;
   }
 
+  hal::log("boot: touch");
   touch::begin();
+  hal::log("boot: motion sensor");
   imu::begin();
   wristRaise = RaiseDetector{};
   wristDrop = DropDetector{};
@@ -1775,6 +1791,7 @@ void begin() {
   phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
+  hal::log("boot: battery %d mV, network", batteryMv);
   net::begin();
   if (net::hasSavedWifi()) net::startSync();  // runs alongside the startup sequence
 
@@ -1792,9 +1809,11 @@ void begin() {
     present(*cur);
   }
   hal::backlight(backlightLevel());
+  hal::log("boot: done, %s", sequence ? "startup sequence" : "face");
 }
 
 void loop() {
+  hal::watchdogFeed();
   if (!haveFrame) {
     hal::idle(100);  // nothing can be drawn; the notice from begin() stays up
     return;

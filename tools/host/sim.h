@@ -40,6 +40,12 @@ void rawTouch(int x, int y, int &rx, int &ry);  // what the touch chip reports f
 extern std::vector<std::string> bleLines;
 extern bool bleConnected, bleStarts;  // bleStarts = false makes Bluetooth fail to start
 extern int bleOpens;
+
+// Start reason and the watchdog: how long the loop went without feeding it.
+extern const char *startReason;   // what hal::startReason() returns, nullptr = power on
+extern uint32_t restarts;
+extern uint32_t watchdogSeconds, lastFeed, longestUnfed;
+extern int watchdogFeeds;
 }
 const char *simBleStatus();  // what the watch last put in the status characteristic
 namespace sim {

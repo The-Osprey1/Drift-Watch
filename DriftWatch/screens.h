@@ -65,6 +65,7 @@ struct View {
   net::JoinWhy joinWhy;     // why the latest join failed
   int joinCode;             // the radio's reason number, 0 if none
   int syncStep;
+  int joinTry;              // 2 on the second try at joining Wi-Fi
   net::Portal portal;
   uint32_t secondsLeft;     // hotspot time left
   const char *lastSyncText; // e.g. "14:02", or "" if never synced
@@ -94,6 +95,8 @@ struct View {
   const char *syncAgo;      // e.g. "3 h ago", "" if never
   uint32_t imuLine1, imuLine2;  // edges seen on the motion sensor's interrupt lines
   const char *version;
+  const char *startReason;  // why the watch last started, nullptr after a normal power-on
+  uint32_t restarts;        // restarts the watch did by itself on this charge
   const char *diag;         // diagnostics line, or nullptr
   Button pressed;
   uint32_t ms;              // drives the progress spinner

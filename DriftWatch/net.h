@@ -32,6 +32,7 @@ Result lastResult();        // of the latest attempt that finished
 Fail failReason();          // why the latest attempt failed, None if it did not
 uint16_t attempts();        // counts finished attempts, so callers can see a new result
 int syncStep();             // 1..3 while syncing, for "step 2 of 3" progress
+int joinTry();              // 2 while joining for the second time (one retry before a join fails), else 1
 JoinWhy joinWhy();          // for the latest JoinFailed
 int joinCode();             // the radio's reason number behind it (0 = none reported), for the log and details
 bool radioOn();             // Wi-Fi is switched on: a sync or the hotspot is running

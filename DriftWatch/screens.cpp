@@ -62,17 +62,17 @@ struct Item {
   int bars;  // brightness bars before the value, 0 = none
 };
 
-constexpr int MAX_BLOCKS = 16;
+constexpr int MAX_BLOCKS = 24;
 
 struct Doc {
   Block blocks[MAX_BLOCKS];
   int nb = 0;
   Item items[2];
   int ni = 0;
-  char text[14][72];
+  char text[20][72];
   int nt = 0;
   const char *fmt(const char *f, ...) {
-    char *out = text[nt < 13 ? nt++ : 13];
+    char *out = text[nt < 19 ? nt++ : 19];
     va_list ap;
     va_start(ap, f);
     vsnprintf(out, sizeof text[0], f, ap);
@@ -690,6 +690,10 @@ void detailsDoc(const View &v, Doc &d) {
   d.add(d.fmt("Screen %s, touch %s", orient::turnName(v.screenTurn), v.touchChecked ? "checked" : "not checked"), Role::Body,
         col::TEXT_2);
   d.add(d.fmt("Firmware %s", v.version), Role::Body, col::TEXT_2);
+  if (v.startReason) d.add(d.fmt("Last start: %s", v.startReason), Role::Body, v.restarts ? col::WARN : col::TEXT_2);
+  if (v.restarts)
+    d.add(v.restarts == 1 ? "Restarted by itself once on this charge" : d.fmt("Restarted by itself %lu times on this charge", (unsigned long)v.restarts),
+          Role::Body, col::TEXT_2);
   if (v.diag) d.add(v.diag, Role::Body, col::TEXT_2);
   d.add("Bigger text on these screens. Faces stay the same.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
   d.items[0] = {Button::TextSize, "Text size", Icon::None, col::TEXT_2, v.large ? "Large" : "Normal", col::TEXT, col::OUTLINE, 0};
@@ -723,6 +727,7 @@ void setupDoc(const View &v, Doc &d) {
       // Real stages only, with no percentage: the watch cannot know how long each will take.
       d.add("Connecting", Role::Title, col::TEXT);
       d.add(d.fmt("%s  %d/3", stageShort(v.stage), max(1, v.syncStep)), Role::Body, col::CYAN, Icon::Busy);
+      if (v.joinTry > 1 && v.stage == net::Sync::Connecting) d.add("No answer yet. Trying again", Role::Body, col::TEXT);
       d.add("Back lets it finish", Role::Body, col::TEXT_2);
       d.action(Button::Back, "Back", col::TEXT_2);
       d.action(Button::Cancel, "Cancel", col::TEXT_2);

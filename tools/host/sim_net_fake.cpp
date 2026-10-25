@@ -79,6 +79,7 @@ bool syncRunning() { return syncNow != Sync::Idle; }
 Result lastResult() { return result; }
 uint16_t attempts() { return finished; }
 Fail failReason() { return fail; }
+int joinTry() { return 1; }
 int syncStep() { return syncNow == Sync::Connecting ? 1 : syncNow == Sync::Zone ? 2 : syncNow == Sync::Clock ? 3 : 0; }
 void startPortal() { portal = Portal::Waiting; portalStart = sim::clockMs; syncNow = Sync::Idle; }
 void cancelPortal() { if (portal == Portal::Waiting || portal == Portal::PhoneJoined) portal = Portal::Closed; }

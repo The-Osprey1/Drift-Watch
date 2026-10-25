@@ -1420,7 +1420,7 @@ void migration() {
   settings = Settings{};
   loadSettings();
   p.begin("watch", true);
-  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == 5 && !p.getBool("lessmo", true),
+  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == SETTINGS_VERSION && !p.getBool("lessmo", true),
         "Expressive is kept, and older firmware flashed back would read full motion");
   p.end();
   settings.motion = MOTION_OFF;
@@ -2413,6 +2413,60 @@ void serialScenarios() {
   settle(2500);
 }
 
+// ---- Reliability (v0.13.0) ----------------------------------------------------------------------
+void reliabilityScenarios() {
+  printf("Watchdog: the loop feeds it far more often than its limit, through every scenario so far\n");
+  CHECK(sim::watchdogSeconds == DRIFT_WATCHDOG_S && DRIFT_WATCHDOG_S > 30,
+        "it is started with %d s, longer than the longest screen-off wait (30 s)", (int)sim::watchdogSeconds);
+  CHECK(sim::watchdogFeeds > 1000 && sim::longestUnfed <= 31000,
+        "the longest the loop went without feeding it is %.1f s (%d feeds)", sim::longestUnfed / 1000.0, sim::watchdogFeeds);
+
+  printf("Start reason: shown on the details screen after the watch restarted itself\n");
+  TFT_eSPI parent;
+  TFT_eSprite s(&parent);
+  s.createSprite(240, 240);
+  screens::View v = baseView();
+  v.screen = screens::Screen::Details;
+  std::string normal = wordsOf(s, v);
+  CHECK(!says(normal, "Last start") && !says(normal, "Restarted by itself"), "nothing is said after a normal power-on");
+  v.startReason = "Froze, restarted by watchdog";
+  v.restarts = 2;
+  std::string after = wordsOf(s, v);
+  CHECK(says(after, "Last start: Froze, restarted by watchdog") && says(after, "Restarted by itself 2 times on this charge"),
+        "after a freeze it says why and how often");
+  int bad = 0;
+  for (bool large : {false, true}) {
+    v.large = large;
+    v.diag = "draw 4ms  push 9ms  heap 180k";
+    bad += renderAll(s, v, large ? "details_restarted_large" : "details_restarted");
+  }
+  CHECK(bad == 0, "the details pages still lay out with the extra lines (%d problems)", bad);
+
+  printf("Wi-Fi setup: the second try at joining is shown\n");
+  screens::View j = baseView();
+  j.screen = screens::Screen::Setup;
+  j.portal = net::Portal::Saved;
+  j.stage = net::Sync::Connecting;
+  j.syncStep = 1;
+  j.joinTry = 1;
+  CHECK(!says(wordsOf(s, j), "Trying again"), "the first try says nothing extra");
+  j.joinTry = 2;
+  CHECK(says(wordsOf(s, j), "Trying again"), "the second try says it is trying again");
+  bad = 0;
+  for (bool large : {false, true}) {
+    j.large = large;
+    bad += renderAll(s, j, large ? "setup_second_try_large" : "setup_second_try");
+  }
+  CHECK(bad == 0, "and still lays out (%d problems)", bad);
+  sim::startReason = "Crashed, restarted";
+  sim::restarts = 1;
+  sim::cold = false;
+  ui::begin();
+  CHECK(screen() == "face", "a restart after a crash goes straight to the face, with no startup sequence (%s)", screen().c_str());
+  sim::startReason = nullptr;
+  sim::restarts = 0;
+}
+
 void noMemoryScenario() {
   printf("Low memory: not even an 8-bit frame fits\n");
   spriteBudget16 = 0;
@@ -2686,6 +2740,7 @@ int main(int argc, char **argv) {
   motionScenarios();
   serialScenarios();
   powerScenarios();
+  reliabilityScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

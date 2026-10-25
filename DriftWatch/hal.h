@@ -13,6 +13,15 @@ void backlight(uint8_t level);       // 0 = off
 int batteryMilliVolts();             // battery voltage after the divider is undone; < 0 if unreadable
 bool bootButtonDown();
 bool coldBoot();                     // true after power-on or reset, false after a crash restart
+// Why the watch last started, in plain words ("Crashed", "Froze, restarted by watchdog", ...),
+// or nullptr after a normal power-on or reset. `unexpected` counts the restarts the watch did by
+// itself (crash, watchdog, low battery) since the battery was last connected.
+const char *startReason();
+uint32_t unexpectedRestarts();
+// The loop must call watchdogFeed() at least this often, or the watch restarts itself: a frozen
+// watch comes back on its own instead of staying stuck until the battery runs flat.
+void watchdogStart(uint32_t seconds);
+void watchdogFeed();
 uint32_t freeHeap();
 uint32_t freePsram();
 void log(const char *fmt, ...);

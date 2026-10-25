@@ -34,7 +34,13 @@
 #define DRIFT_LIGHT_SLEEP 1
 #endif
 
-#define FW_VERSION "0.12.0"
+#define FW_VERSION "0.13.0"
+
+// The watch restarts itself if the main loop stops for this long (a freeze). Longer than the
+// longest screen-off wait (30 s), so a normal sleep never trips it.
+#ifndef DRIFT_WATCHDOG_S
+#define DRIFT_WATCHDOG_S 60
+#endif
 
 // Set to 1 to log frame and memory timings over USB serial and show them on the status panel.
 #ifndef DRIFT_DIAG

@@ -26,10 +26,10 @@ int main(int argc, char **argv) {
     drawFaceStatic(s,(Face)f,c); drawFaceLive(s,(Face)f,c);
     save(argv[1],faceName((Face)f),0,s);
   }
-  // Eight seconds at 20 fps: real drawing code, no interpolation of rendered frames.
+  // Twelve seconds at 20 fps: includes Phantom hiding, returning and settling.
   for (int f : {FACE_RADAR, FACE_PHANTOM, FACE_ORBIT, FACE_LUNAR,
                  FACE_YOZAKURA, FACE_HANAMI, FACE_WASTELAND, FACE_MOJAVE}) {
-    for (int i=0;i<160;++i) {
+    for (int i=0;i<240;++i) {
       uint32_t ms=i*50; c.now.tm_sec=(54+ms/1000)%60; c.ms=ms%1000;
       c.animMs=ms; c.animate=true; c.entranceMs=ms;
       c.entering=ms<faceEntranceMs((Face)f);

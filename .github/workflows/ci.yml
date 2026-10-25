@@ -37,7 +37,7 @@ jobs:
         if: always()
         run: |
           python3 -m pip install Pillow
-          python3 tools/host/preview_sheet.py tools/host/out
+          python3 tools/host/preview_sheet.py tools/host/out --log-preview
           # Keep representative test frames; the GIF already contains the animation sequence.
           rm -f tools/host/out/preview_*.ppm
       - name: Keep the frames, logs and report

@@ -37,3 +37,12 @@ for i in range(1,161):
     frames.append(im)
 frames[0].save(out/"precision-motion.gif",save_all=True,append_images=frames[1:],
                duration=50,loop=0,optimize=False)
+
+# Opt-in transport for inspecting native previews when artifact downloads are unavailable.
+if "--log-preview" in sys.argv:
+    import base64
+    print("PREVIEW_PNG_BEGIN")
+    data=base64.b64encode((out/"precision-faces.png").read_bytes()).decode()
+    for i in range(0,len(data),1000):
+        print(data[i:i+1000])
+    print("PREVIEW_PNG_END")

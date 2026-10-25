@@ -2,8 +2,9 @@
 
 | | |
 |---|---|
+| Source commit | `d5fc344941fd069d3f3333a1651a3c7058987ccc` (`main`, PR #19) |
 | Release version | `v0.15.0` |
-| Built | GitHub Actions CI with `build.sh` (`DRIFT_WARNINGS=all`) |
+| Built | 2026-10-25, in GitHub Actions CI run `40229916987` with `build.sh` (`DRIFT_WARNINGS=all`) |
 | arduino-cli | 1.1.1 |
 | ESP32 Arduino core | esp32:esp32 2.0.17 (ESP-IDF 4.4) |
 | Compiler | xtensa-esp32s3-elf-gcc (crosstool-NG esp-2021r2-patch5) 8.4.0 |
@@ -13,10 +14,10 @@
 
 ## Images
 
-| File | Flags | Bytes | Description |
+| File | Flags | Bytes | SHA-256 |
 |---|---|---|---|
-| `drift_watch_v0.15.0.bin` | standard build; `DRIFT_WOM=0`, `DRIFT_TOUCH_STANDBY=0`, `DRIFT_LIGHT_SLEEP=1` (defaults) | ~1,827,904 | Standard release image |
-| `drift_watch_v0.15.0_diag.bin` | `-DDRIFT_DIAG=1`, `DRIFT_WOM=1`, `DRIFT_TOUCH_STANDBY=1`, logs frame and memory timings | ~1,828,752 | Diagnostic telemetry image |
+| `drift_watch_v0.15.0.bin` | standard build; `DRIFT_WOM=0`, `DRIFT_TOUCH_STANDBY=0`, `DRIFT_LIGHT_SLEEP=1` (defaults) | 1827904 | `2f5c74987b7d26f0f61fe1c5763d456b6c84cf817896825cc00b278553d6c107` |
+| `drift_watch_v0.15.0_diag.bin` | `-DDRIFT_DIAG=1`, `DRIFT_WOM=1`, `DRIFT_TOUCH_STANDBY=1`, logs frame and memory timings | 1828752 | `44f7ec3f2eab4f763ea5dab285740611316c90246d1ea536b46ff0dd95ba6027` |
 
 ## Merged image layout
 

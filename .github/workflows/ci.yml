@@ -33,13 +33,6 @@ jobs:
         run: tools/host/run_tests.sh "$RUNNER_TEMP/TFT_eSPI" tools/host/out
       - name: Known bugs put back are caught
         run: tools/host/mutation_check.sh "$RUNNER_TEMP/TFT_eSPI" | tee tools/host/out/mutations.log
-      - name: Render face gallery and motion review
-        if: always()
-        run: |
-          python3 -m pip install Pillow
-          python3 tools/host/preview_sheet.py tools/host/out --log-preview
-          # Keep representative test frames; the GIF already contains the animation sequence.
-          rm -f tools/host/out/preview_*.ppm
       - name: Keep the frames, logs and report
         if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
@@ -47,11 +40,35 @@ jobs:
           name: simulation-output
           path: |
             tools/host/out/*.ppm
-            tools/host/out/*.png
-            tools/host/out/*.gif
             tools/host/out/*.log
             tools/host/out/report.md
           if-no-files-found: ignore
+
+  face-previews:
+    name: Native face previews
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+      - name: Get panel font tables
+        run: git clone --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git "$RUNNER_TEMP/TFT_eSPI"
+      - name: Render native watch faces and animation states
+        run: |
+          mkdir -p tools/host/out
+          g++ -std=c++17 -O1 -Wall -Wextra -Werror -Wno-unused-parameter -Wno-missing-field-initializers \
+            -I tools/host -I DriftWatch -isystem "$RUNNER_TEMP/TFT_eSPI" \
+            tools/host/tft_shim.cpp tools/host/preview_faces.cpp \
+            DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp -o "$RUNNER_TEMP/preview_faces"
+          "$RUNNER_TEMP/preview_faces" tools/host/out
+          python3 -m pip install Pillow
+          python3 tools/host/preview_sheet.py tools/host/out --log-preview
+      - name: Keep gallery and motion review
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2
+        with:
+          name: face-previews
+          path: |
+            tools/host/out/precision-faces.png
+            tools/host/out/precision-motion.gif
+            tools/host/out/precision-motion-states.png
 
   firmware:
     name: Firmware

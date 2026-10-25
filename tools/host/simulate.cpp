@@ -2583,7 +2583,7 @@ void motionScenarios() {
   runFor(120);
   snap("entrance_orbit_120ms");
   uint64_t frames = framesIn(300);
-  CHECK(frames >= 14, "the entrance runs at the slide frame rate (%llu frames in 0.3 s)", (unsigned long long)frames);
+  CHECK(frames >= 8 && frames <= 11, "the entrance runs at the 30 fps decoration budget (%llu frames in 0.3 s)", (unsigned long long)frames);
   runFor(200);
   CHECK(!ui::entrancePlaying() && ui::entrancesFinished() == finished + 1, "and ends after 500 ms");
   runFor(1000);
@@ -2709,7 +2709,7 @@ void motionScenarios() {
   int64_t at = (sim::wallAtZeroMs + sim::clockMs) % 60000;
   CHECK(ui::markerMoving() && at < 50, "it starts as the minute turns (%lld ms in)", (long long)at);
   frames = framesIn(170);
-  CHECK(frames >= 8, "and moves smoothly (%llu frames in 170 ms)", (unsigned long long)frames);
+  CHECK(frames >= 4 && frames <= 7, "and moves at the 30 fps decoration budget (%llu frames in 170 ms)", (unsigned long long)frames);
   runFor(30);
   CHECK(!ui::markerMoving(), "for 180 ms");
   into = (sim::wallAtZeroMs + sim::clockMs) % 60000;

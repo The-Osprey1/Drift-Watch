@@ -21,9 +21,16 @@ int64_t nowMs();                     // wall clock in milliseconds
 void setTimeMs(int64_t ms);
 void adjustMs(int64_t ms);           // moves the wall clock by this much (drift correction)
 
-// What ended a wait while the screen is off.
-enum class WakeCause : uint8_t { Timer, Touch, Button };
-// Waits up to `ms` while the screen is off. With `lowPower` the chip goes into light sleep
-// and wakes early on a touch or the BOOT button; without it this is a plain wait.
-WakeCause doze(uint32_t ms, bool lowPower);
+// What ended a wait while the screen is off, as a set of bits: more than one can be true at
+// once (a touch during a motion wake, say), and the caller gives touch and BOOT priority.
+constexpr uint8_t WAKE_TIMER = 1, WAKE_MOTION = 2, WAKE_TOUCH = 4, WAKE_BUTTON = 8, WAKE_FAULT = 16;
+struct DozeArm {
+  bool lowPower = false;  // light sleep; otherwise a plain wait that only a timer ends
+  bool motion = false;    // also wake when the motion sensor's INT2 line goes high
+};
+// Waits up to `ms` while the screen is off and returns the wake bits. In light sleep it wakes
+// early on touch, BOOT or (if armed) motion. A line already at its wake level is not armed,
+// so a stuck line cannot keep the chip busy; WAKE_FAULT means light sleep could not be set up or
+// entered (the wait then still lasted, as a plain delay).
+uint8_t doze(uint32_t ms, const DozeArm &arm);
 }

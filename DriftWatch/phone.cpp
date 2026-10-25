@@ -102,7 +102,7 @@ const char *apply(const char *line) {
     s.haveOffset = true;
     if (!s.gotZone) {
       // Only an offset: a fixed zone. A Z= line, sent by the Drift sync page, keeps summer time rules.
-      char posix[24];
+      char posix[48];  // room for any long, so the compiler can see it never cuts the zone short
       posixFromOffset(s.offset, posix, sizeof posix);
       net::setZone(posix, nullptr);
     }

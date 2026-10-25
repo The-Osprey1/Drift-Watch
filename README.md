@@ -1,8 +1,8 @@
-# Drift-Watch firmware (v0.10.1)
+# Drift-Watch firmware (v0.11.0)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
-**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. v0.10.1 fixes four bugs in it: a dropped touch read no longer counts as lifting the finger, serial commands no longer pause the watch for up to a second, the Auto time zone is no longer replaced by Pacific time on the first start, and a screen notice shows if memory for the picture runs out. It passes 336 simulation checks; see `NOTES-v0.10.1.md`. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
+**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. It builds with no warnings and passes 307 scripted checks in a computer simulation that runs the real drawing, touch, settings, phone-sync and gesture code. **v0.10.0 has not been run on a watch yet**. v0.10.1 fixes four bugs in it: a dropped touch read no longer counts as lifting the finger, serial commands no longer pause the watch for up to a second, the Auto time zone is no longer replaced by Pacific time on the first start, and a screen notice shows if memory for the picture runs out. It passes 336 simulation checks; see `NOTES-v0.10.1.md`. **v0.11.0** adds the Phantom face, a candidate low-power wait for the screen-off time (the motion sensor's own wake-on-motion interrupt and the touch chip's standby, in the diagnostic image only), stricter and better-tested network code, and GitHub Pages publishing for the Drift sync page. Its computer checks all pass; **it has not been run on a watch, and its power saving is not measured yet**. See `NOTES-v0.11.0.md`. See `NOTES-v0.10.0.md` for the plan, what changed, the test matrix and the checklist for the watch (earlier `NOTES-*.md` files cover earlier versions).
 
 ## The board (checked against the Waveshare wiki)
 
@@ -11,7 +11,7 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 | Chip | ESP32-S3R2: two cores, 2 MB PSRAM, 16 MB flash |
 | Screen | 1.28" round IPS LCD, 240 x 240, GC9A01A driver, 4-wire SPI up to 80 MHz. Lit by a backlight, so black pixels do **not** save power |
 | Touch | CST816S on I2C (address 0x15), with interrupt and reset pins |
-| Motion sensor | QMI8658 on the same I2C bus, used for raise to wake, wrist twist and wrist-down sleep (read by polling). Interrupt lines: INT1 on GPIO 4 (shared with the MOSFET 1 gate, so left undriven) and INT2 on GPIO 3 |
+| Motion sensor | QMI8658 on the same I2C bus, used for raise to wake, wrist twist and wrist-down sleep (read by polling; the diagnostic image can also use its wake-on-motion interrupt on INT2). Interrupt lines: INT1 on GPIO 4 (shared with the MOSFET 1 gate, so left undriven) and INT2 on GPIO 3 |
 | Bluetooth | Bluetooth Low Energy, used only while Phone sync is open |
 | USB-C | Goes through a CH343P USB-to-serial chip to UART0 (GPIO 43/44), not to the ESP32-S3's own USB pins. Serial runs at 115200 baud |
 | Battery | Read through a 200k/100k divider on GPIO 1. The charger chip has no "charging" signal wired to the ESP32, so the watch cannot tell directly if it is charging (it guesses from a rising level) |
@@ -19,13 +19,14 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 
 ## Faces
 
-Swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png` and `designs/v0.8.0_faces_native.png`.
+Swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png`, `designs/v0.8.0_faces_native.png` and, for Phantom, `designs/v0.11.0_phantom_timeline.png` and `designs/v0.11.0_phantom_states.png`.
 
 - **Digital:** yellow segment time, magenta date strip, quiet seconds track with one cyan tick for the current second, battery at the top, a low dark skyline.
 - **Stealth dial:** silver markers and hands with cyan inlays, a magenta seconds hand, a date window and a battery ring.
 - **Corpo dial:** black dial, a thin segmented yellow rim, black hands edged in yellow, red seconds hand.
 - **Hologram dial:** cyan markers and edged hands, white inlays, magenta seconds hand.
 - **Radar:** large yellow time in the middle, an hour ring that fills through the day, a minute track with a pointer, range rings, and a beam that turns every 3.6 s with a fading phosphor trail. The seconds dot glows as the beam passes. Below 20% battery the beam sits on the seconds dot and moves once a second.
+- **Phantom:** a dark dial with an opening at 12 showing a ticking balance wheel and a crimson jewel. The seconds hand slides in under the edge of the opening from 55 s, is hidden from 58 to 2 s, slides out again by 5 s and settles with a small bounce. With reduced motion or low battery the wheel stops and the seconds hand steps once a second.
 
 ## Controls
 
@@ -55,18 +56,18 @@ Settings has six pages of two controls each (twelve pages of one with large text
 
 **Set time** works with no Wi-Fi at all: hour, minutes, day, month and year each have a page with - and +, then a page shows the result with **Save**. Swipe down or BOOT leaves without saving. If the clock was never set it starts from the last time the watch saved (it saves at most once an hour), or else from the date the firmware was built. A later successful sync replaces it. The board has no clock chip, so the time is lost when the battery runs flat or the watch restarts from power-off. Between syncs the watch learns how fast its clock drifts and corrects for it.
 
-The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (every 0.5 s with Wake gesture off). Light sleep is skipped while Wi-Fi or Bluetooth is on. The time resyncs every 6 hours while the screen is off (30 minutes after a failure), only if a network is saved.
+The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (with Wake gesture off it sleeps until the next thing that needs doing, at most 30 s). Light sleep is skipped while Wi-Fi or Bluetooth is on. The diagnostic image, with Wake gesture set to Raise, instead lets the motion sensor watch by itself and sleeps until it reports movement; the screen comes on only if the movement turns out to be a raise. Twist modes keep checking every 0.1 s. The serial port does not wake the watch, so press BOOT before sending a serial command while the screen is off. The time resyncs every 6 hours while the screen is off (30 minutes after a failure), only if a network is saved.
 
 ## Flashing
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
-3. Choose `firmware/drift_watch_v0.10.1.bin` at address **0x0**, then Program.
+3. Choose `firmware/drift_watch_v0.11.0.bin` at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
 If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
 
-`firmware/drift_watch_v0.10.1_diag.bin` is the same firmware with timing logs: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
+`firmware/drift_watch_v0.11.0_diag.bin` is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
 **The v0.7.0 and v0.8.0 files in `firmware/` stall at start on this board**: they were built with "USB CDC on boot" turned on, which sends serial output to the ESP32-S3's own USB pins, and on this board those are not connected to the USB-C port. Use v0.9.0 or later, or rebuild an older version with the current `build.sh`.
 
@@ -101,37 +102,41 @@ Time zone format, if you type one: `GMT0BST,M3.5.0/1,M10.5.0` (UK), `EST5EDT,M3.
 
 ## Building it yourself
 
-`build.sh` compiles with arduino-cli and joins everything into one .bin. You need arduino-cli with the esp32 core **2.0.17**, and the libraries **TFT_eSPI 2.5.43** and **WiFiManager 2.0.17** (tzapu). Run `DRIFT_DIAG=1 ./build.sh` for the diagnostics version. `platformio.ini` is a PlatformIO alternative that hasn't been tested. In the Arduino IDE, choose ESP32S3 Dev Module with **USB CDC On Boot: Disabled**, Flash Size 16MB, Partition Scheme "16M Flash (3MB APP/9.9MB FATFS)" and PSRAM "QSPI PSRAM", and add the screen settings from `build.sh` to TFT_eSPI's setup. To turn off light sleep, build with `-DDRIFT_LIGHT_SLEEP=0` (or edit `board.h`).
+`build.sh` compiles with arduino-cli and joins everything into one .bin. You need arduino-cli with the esp32 core **2.0.17**, and the libraries **TFT_eSPI 2.5.43** and **WiFiManager 2.0.17** (tzapu). Run `DRIFT_DIAG=1 ./build.sh` for the diagnostics version. `platformio.ini` is a PlatformIO alternative that hasn't been tested. In the Arduino IDE, choose ESP32S3 Dev Module with **USB CDC On Boot: Disabled**, Flash Size 16MB, Partition Scheme "16M Flash (3MB APP/9.9MB FATFS)" and PSRAM "QSPI PSRAM", and add the screen settings from `build.sh` to TFT_eSPI's setup. To turn off light sleep, build with `-DDRIFT_LIGHT_SLEEP=0` (or edit `board.h`). `-DDRIFT_WOM=1` and `-DDRIFT_TOUCH_STANDBY=1` turn on wake on motion and touch standby in a normal build (both are on in the diagnostic build). `DRIFT_WARNINGS=all ./build.sh` shows every compiler warning.
 
 | File | What it holds |
 |---|---|
 | `DriftWatch/theme.h` | Design system: colours, type sizes, spacing, strokes, motion timing and easing |
 | `DriftWatch/gfx.*` | Shared drawing parts: segment digits, battery, icons, arcs, text fitting and line breaking, the readable font, skyline |
-| `DriftWatch/faces.*` | The five faces, each split into a cached static layer and a live layer |
+| `DriftWatch/faces.*` | The six faces, each split into a cached static layer and a live layer |
 | `DriftWatch/screens.*` | Paged settings, details and Wi-Fi setup screens, round-screen text flow, startup sequence. Each control has a drawn rectangle and a touch rectangle in one table used for drawing and hit-testing |
 | `DriftWatch/ui.*` | Screens, gestures, transitions, sleep and wake, sync timing |
 | `DriftWatch/net.*` | Wi-Fi setup hotspot and time sync, as step-by-step state machines that never block the screen. Sync stage and last result are tracked separately |
 | `DriftWatch/hal_esp32.cpp`, `touch.*`, `settings.*`, `board.h` | Hardware: backlight, battery, BOOT button, light sleep, touch chip, saved settings, pins |
-| `DriftWatch/imu*`, `raise.*` | QMI8658 motion sensor driver, and the raise-to-wake and wrist-down detectors (plain logic, tested in the simulation) |
+| `DriftWatch/imu*`, `qmi8658.*`, `raise.*` | QMI8658 motion sensor driver (its register sequences, including wake on motion, are plain logic in `qmi8658.*`), and the raise-to-wake and wrist-down detectors (plain logic, tested in the simulation) |
+| `DriftWatch/power.*` | What the watch does while the screen is off: polling, wake on motion, checking a motion is a raise, fallbacks and statistics |
 | `DriftWatch/orient.*` | Screen turns, touch maps and the two-tap touch check solver |
 | `DriftWatch/timekeep.*` | Clock drift learning and correction |
 | `DriftWatch/battery.*` | Battery percentage and the measured time left |
 | `DriftWatch/phone.*`, `ble.h`, `ble_esp32.cpp` | Phone sync: the messages a phone may send, and the Bluetooth service that carries them |
 | `companion/index.html` | The Drift sync web page |
-| `tools/host/` | Computer stand-ins and tests. `render_faces` draws every face at test times and checks text stays inside the round screen; `simulate` drives the real interface and settings code with scripted touches and BOOT presses, checks every screen's layout and touch regions, and writes `report.md` (touch sizes and contrast); `Preferences.h` is an in-memory stand-in for saved settings; `sheet.py` makes preview sheets |
+| `tools/host/` | Computer stand-ins and tests. `render_faces` draws every face at test times and checks text stays inside the round screen; `simulate` drives the real interface and settings code with scripted touches and BOOT presses, checks every screen's layout and touch regions, and writes `report.md` (touch sizes and contrast); `simulate_network` runs the real interface and the real `net.cpp` together; `net_test` runs the real `net.cpp` (sync, time zone lookup, time server, setup hotspot, drift, restarts in a fresh process) against the Wi-Fi, web and time-server stand-ins in `tools/host/net/`; `power_test` checks the motion sensor's register sequences and the screen-off controller; `mutation_check.sh` puts known bugs back and checks the tests catch them; `Preferences.h` is an in-memory stand-in for saved settings; `sheet.py` makes preview sheets |
 
-Host tests, from the project folder (needs g++ and the TFT_eSPI library source for its fonts):
+Host tests, from the project folder (needs g++ and the TFT_eSPI 2.5.43 source for its fonts):
 
 ```
-g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/render_faces.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp -o render_faces
-g++ -std=c++17 -O1 -I tools/host -I DriftWatch -I path/to/TFT_eSPI tools/host/tft_shim.cpp tools/host/sim_stubs.cpp tools/host/simulate.cpp DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp DriftWatch/serial_cmd.cpp -o simulate
-mkdir -p out && ./render_faces out/ && ./simulate out/
+git clone --depth 1 --branch V2.5.43 https://github.com/Bodmer/TFT_eSPI.git ../TFT_eSPI
+tools/host/run_tests.sh ../TFT_eSPI
 ```
+
+This builds and runs all five: `render_faces`, `simulate` (frames and `report.md` go to `tools/host/out`), `simulate_network`, `net_test` and `power_test`. `HOST_STRICT=1` adds warnings as errors and the address and undefined-behaviour sanitizers. `tools/host/mutation_check.sh ../TFT_eSPI` runs the mutation checks.
+
+GitHub Actions (`.github/workflows/ci.yml`) runs the strict tests and the mutation checks, and builds and checks both firmware images with a report of compiler warnings, on every push and pull request; the images are kept as a download on each run. On a push to main, once those pass, it publishes the Drift sync page (`companion/` only) to GitHub Pages. That needs one setting, once: **Settings, Pages, Build and deployment, Source: GitHub Actions**.
 
 ## Ideas for later
 
-Step counter (the motion sensor can do it), the motion sensor's own wake-on-motion interrupt (so the chip could sleep longer), deep sleep, and Bluetooth pairing so the Wi-Fi password is encrypted. See section 9 of `NOTES-v0.10.0.md`.
+Step counter (the motion sensor can do it), wake on motion for the twist gesture (it needs a way to know the wrist was still just before), deep sleep, and Bluetooth pairing so the Wi-Fi password is encrypted. See section 9 of `NOTES-v0.10.0.md`.
 
 ## Ready-made firmware files
 
-The `firmware/` folder holds the ready-to-flash v0.10.1 image, `drift_watch_v0.10.1.bin`, and the timing-log build, `drift_watch_v0.10.1_diag.bin`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.
+The `firmware/` folder holds the ready-to-flash v0.11.0 image, `drift_watch_v0.11.0.bin`, and the diagnostic build, `drift_watch_v0.11.0_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in `SHA256SUMS-v0.11.0.txt` and a manifest in `MANIFEST-v0.11.0.md`, plus older versions (the v0.7.0 and v0.8.0 files stall at start on this board, see Flashing). All are flashed at address 0x0.

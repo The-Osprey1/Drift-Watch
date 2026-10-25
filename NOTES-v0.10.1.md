@@ -23,7 +23,7 @@ The simulation has 336 checks (29 new), all passing. With the old touch handling
 - Serial: lines sent in pieces, `\r\n` endings, an over-long line dropped, the parser's accept and refuse cases, `TIME:` setting the clock and `WIFI:` saving the network through the real interface loop.
 - Memory: with no frame at all, the notice is drawn and the loop keeps running.
 
-The time zone fix is not covered: the simulation stands in for all of `net.cpp`. Testing the real `net.cpp` with Wi-Fi stand-ins is the next step (phase 2).
+The time zone fix is covered by `tools/host/net_test.cpp`, added after this release: it runs the real `net.cpp` against Wi-Fi stand-ins (99 checks), and with the old code put back its Auto checks fail.
 
 ## On the watch
 

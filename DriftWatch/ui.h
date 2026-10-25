@@ -17,6 +17,7 @@
 //   raising the wrist        wakes the screen (raise to wake)
 #pragma once
 #include <TFT_eSPI.h>
+#include "power.h"
 #include "screens.h"
 
 namespace ui {
@@ -29,4 +30,5 @@ const char *screenName();
 int controls(screens::Control *out, int max);
 int page();
 float beamAngle();  // the radar beam's angle now, < 0 when there is none
+const power::Controller &standbyController();  // the screen-off waits, for the simulation and the log
 }

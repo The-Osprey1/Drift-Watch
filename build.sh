@@ -25,7 +25,7 @@ mkdir -p build out
 arduino-cli "$@" compile ${CTAGS_DIR:+--build-property tools.ctags.path=$CTAGS_DIR} --fqbn "$FQBN" \
   --build-property "compiler.cpp.extra_flags=$TFT_FLAGS" \
   --build-property "compiler.c.extra_flags=$TFT_FLAGS" \
-  --output-dir build --warnings default DriftWatch
+  --output-dir build --warnings "${DRIFT_WARNINGS:-default}" DriftWatch
 
 # build/ now holds the bootloader, partition table and app; join them into one image.
 BOOT_APP0=$(find "$(arduino-cli "$@" config get directories.data)" -path '*esp32/2.0.17/tools/partitions/boot_app0.bin' | head -1)

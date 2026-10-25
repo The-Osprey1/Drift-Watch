@@ -1,0 +1,2 @@
+27adf6c50cb72f2891381a60e0571cfb01c4f2cf9ca9f7d99aa0c4d039a04258  drift_watch_v0.11.0.bin
+157e99cd49a910b8869ba5bb8b04eaa4ceda6e8d06279a07f7db00475447ba25  drift_watch_v0.11.0_diag.bin

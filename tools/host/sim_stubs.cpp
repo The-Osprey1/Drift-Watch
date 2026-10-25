@@ -43,6 +43,9 @@ uint8_t touchMount = 0;
 std::vector<std::string> bleLines;
 bool bleConnected = false, bleStarts = true;
 int bleOpens = 0;
+const char *startReason = nullptr;
+uint32_t restarts = 0, watchdogSeconds = 0, lastFeed = 0, longestUnfed = 0;
+int watchdogFeeds = 0;
 
 void rawTouch(int x, int y, int &rx, int &ry) {
   // Where the drawn point is on the panel: setRotation(r) turns the picture r quarter turns.
@@ -71,6 +74,19 @@ void backlight(uint8_t level) {
 int batteryMilliVolts() { return sim::batteryMv; }
 bool bootButtonDown() { return sim::bootDown; }
 bool coldBoot() { return sim::cold; }
+const char *startReason() { return sim::startReason; }
+uint32_t unexpectedRestarts() { return sim::restarts; }
+void watchdogStart(uint32_t seconds) {
+  sim::watchdogSeconds = seconds;
+  sim::lastFeed = sim::clockMs;
+}
+void watchdogFeed() {
+  sim::watchdogFeeds++;
+  // Scripts that jump the clock (sim::clockMs set directly) start a new span from begin().
+  uint32_t gap = sim::clockMs - sim::lastFeed;
+  if ((int32_t)gap > 0 && gap > sim::longestUnfed) sim::longestUnfed = gap;
+  sim::lastFeed = sim::clockMs;
+}
 uint32_t freeHeap() { return 200000; }
 uint32_t freePsram() { return 1700000; }
 void setTimeMs(int64_t ms) {

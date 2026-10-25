@@ -142,7 +142,7 @@ void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, b
 }
 
 // ---- Battery ---------------------------------------------------------------
-void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink) {
+void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink, bool charging) {
   char buf[16];
   if (pct < 0) strcpy(buf, "--");
   else snprintf(buf, sizeof buf, "%d%%", pct);
@@ -158,9 +158,10 @@ void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink) {
   if (pct > 0) s.fillRect(x + 2, y + 2, max(1, (bw - 4) * pct / 100), bh - 4, c);
   if (pct < 0) s.drawFastHLine(x + 6, cy, bw - 12, c);
   text(s, buf, x + bw + capW + gap, cy, type::SMALL, c, ML_DATUM);
+  if (charging) chargeBolt(s, x - 7, cy, 11, c);
 }
 
-void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink) {
+void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink, bool charging) {
   // 270-degree gauge, open at the bottom.
   bool low = pct >= 0 && pct <= 15;
   s.drawArc(cx, cy, r, r - 3, 45, 315, track, col::BG, true);
@@ -169,9 +170,17 @@ void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track
   if (pct < 0) strcpy(buf, "--");
   else snprintf(buf, sizeof buf, "%d", pct);
   text(s, buf, cx, cy, type::SMALL, low ? col::WARN : ink);
+  if (charging) chargeBolt(s, cx, cy + r - 3, 9, low ? col::WARN : fill);
 }
 
 // ---- Icons -----------------------------------------------------------------
+void chargeBolt(TFT_eSprite &s, int cx, int cy, int h, uint16_t c) {
+  // Two triangles that overlap across the middle make the zigzag.
+  float u = h / 10.0f;
+  s.fillTriangle(cx + 1 * u, cy - 5 * u, cx - 3 * u, cy + 1 * u, cx + 1 * u, cy + 1 * u, c);
+  s.fillTriangle(cx - 1 * u, cy + 5 * u, cx + 3 * u, cy - 1 * u, cx - 1 * u, cy - 1 * u, c);
+}
+
 void iconCheck(TFT_eSprite &s, int cx, int cy, int size, uint16_t c) {
   float u = size / 10.0f;
   s.drawWideLine(cx - 4 * u, cy, cx - 1 * u, cy + 3 * u, 2.5f * u, c);

@@ -7,6 +7,7 @@
 #include <stdarg.h>
 #include "gfx.h"
 #include "orient.h"
+#include "qrcodegen.h"
 #include "settings.h"
 #include "theme.h"
 
@@ -62,17 +63,17 @@ struct Item {
   int bars;  // brightness bars before the value, 0 = none
 };
 
-constexpr int MAX_BLOCKS = 16;
+constexpr int MAX_BLOCKS = 24;
 
 struct Doc {
   Block blocks[MAX_BLOCKS];
   int nb = 0;
   Item items[2];
   int ni = 0;
-  char text[14][72];
+  char text[20][72];
   int nt = 0;
   const char *fmt(const char *f, ...) {
-    char *out = text[nt < 13 ? nt++ : 13];
+    char *out = text[nt < 19 ? nt++ : 19];
     va_list ap;
     va_start(ap, f);
     vsnprintf(out, sizeof text[0], f, ap);
@@ -690,6 +691,10 @@ void detailsDoc(const View &v, Doc &d) {
   d.add(d.fmt("Screen %s, touch %s", orient::turnName(v.screenTurn), v.touchChecked ? "checked" : "not checked"), Role::Body,
         col::TEXT_2);
   d.add(d.fmt("Firmware %s", v.version), Role::Body, col::TEXT_2);
+  if (v.startReason) d.add(d.fmt("Last start: %s", v.startReason), Role::Body, v.restarts ? col::WARN : col::TEXT_2);
+  if (v.restarts)
+    d.add(v.restarts == 1 ? "Restarted by itself once on this charge" : d.fmt("Restarted by itself %lu times on this charge", (unsigned long)v.restarts),
+          Role::Body, col::TEXT_2);
   if (v.diag) d.add(v.diag, Role::Body, col::TEXT_2);
   d.add("Bigger text on these screens. Faces stay the same.", Role::Body, col::TEXT_2, Icon::None, Place::Note);
   d.items[0] = {Button::TextSize, "Text size", Icon::None, col::TEXT_2, v.large ? "Large" : "Normal", col::TEXT, col::OUTLINE, 0};
@@ -723,6 +728,7 @@ void setupDoc(const View &v, Doc &d) {
       // Real stages only, with no percentage: the watch cannot know how long each will take.
       d.add("Connecting", Role::Title, col::TEXT);
       d.add(d.fmt("%s  %d/3", stageShort(v.stage), max(1, v.syncStep)), Role::Body, col::CYAN, Icon::Busy);
+      if (v.joinTry > 1 && v.stage == net::Sync::Connecting) d.add("No answer yet. Trying again", Role::Body, col::TEXT);
       d.add("Back lets it finish", Role::Body, col::TEXT_2);
       d.action(Button::Back, "Back", col::TEXT_2);
       d.action(Button::Cancel, "Cancel", col::TEXT_2);
@@ -918,11 +924,63 @@ int docControls(TFT_eSprite &s, const View &v, const Doc &d, const Plan &p, int 
   return n;
 }
 
+// ---- Scan-to-join code -------------------------------------------------------------------
+// While the setup hotspot is open, its first page is a code for the phone's camera. Before a phone
+// has joined, it is the standard Wi-Fi code (iPhone and Android cameras offer to join Drift-Setup);
+// once one has, it opens the setup page, for phones that do not pop it up by themselves.
+// Largest white square, quiet zone included, with its corners inside the safe circle. Large text
+// takes two lines under it, so the code is a little smaller there (3 px modules, about 11 mm).
+constexpr int QR_SIDE = 132, QR_SIDE_LARGE = 100;
+constexpr int QR_CY = 100, QR_CY_LARGE = 86;
+constexpr int QR_QUIET = 2;   // modules of white around the code; phones read 2 reliably on a screen
+
+const char *qrText(const View &v) {
+  static char join[64], open[32];
+  if (v.screen != Screen::Setup || v.portal == net::Portal::Saved) return nullptr;
+  if (v.portal == net::Portal::Waiting) {
+    snprintf(join, sizeof join, "WIFI:T:nopass;S:%s;;", net::SETUP_AP_NAME);
+    return join;
+  }
+  if (v.portal == net::Portal::PhoneJoined) {
+    snprintf(open, sizeof open, "http://%s", net::SETUP_ADDRESS);
+    return open;
+  }
+  return nullptr;
+}
+int qrPages(const View &v) { return qrText(v) ? 1 : 0; }
+
+void drawQrPage(TFT_eSprite &s, const View &v, int pages) {
+  uint8_t code[qrcodegen_BUFFER_LEN_FOR_VERSION(4)], temp[qrcodegen_BUFFER_LEN_FOR_VERSION(4)];
+  bool joined = v.portal == net::Portal::PhoneJoined;
+  if (qrcodegen_encodeText(qrText(v), temp, code, qrcodegen_Ecc_MEDIUM, 1, 4, qrcodegen_Mask_AUTO, true)) {
+    int n = qrcodegen_getSize(code), px = (v.large ? QR_SIDE_LARGE : QR_SIDE) / (n + 2 * QR_QUIET);
+    int side = px * (n + 2 * QR_QUIET), x0 = CX - side / 2, y0 = (v.large ? QR_CY_LARGE : QR_CY) - side / 2;
+    s.fillRect(x0, y0, side, side, TFT_WHITE);
+    for (int y = 0; y < n; y++)
+      for (int x = 0; x < n; x++)
+        if (qrcodegen_getModule(code, x, y))
+          s.fillRect(x0 + (x + QR_QUIET) * px, y0 + (y + QR_QUIET) * px, px, px, TFT_BLACK);
+  }
+  const GFXfont *f = fontFor(Role::Body, v.large);
+  if (v.large) {
+    gfx::text(s, "Scan to", CX, 160, f, col::TEXT, MC_DATUM);
+    gfx::text(s, joined ? "open setup" : "join Wi-Fi", CX, 186, f, col::TEXT, MC_DATUM);
+  } else {
+    gfx::text(s, joined ? "Scan to open setup" : "Scan to join Wi-Fi", CX, 184, f, col::TEXT, MC_DATUM);
+  }
+  dots(s, 0, pages);
+}
+
 bool drawDoc(TFT_eSprite &s, const View &v, int page) {
   Doc d;
   buildDoc(v, d);
   Plan p = plan(s, v, d);
-  page = constrain(page, 0, p.pages - 1);
+  int first = qrPages(v);
+  if (first && page == 0) {
+    drawQrPage(s, v, p.pages + first);
+    return false;
+  }
+  page = constrain(page - first, 0, p.pages - 1);
   Ctx c{s, v, true, false};
   if (v.screen == Screen::Details) handle(s);
   Control ctl[2];
@@ -942,7 +1000,7 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
     flow(c, d, notes, nn, TOP, ctl[0].visible.y - 6);
   }
   for (int i = 0; i < nc; i++) drawItem(c, d.items[i], ctl[i].visible);
-  dots(s, page, p.pages);
+  dots(s, page + first, p.pages + first);
   return c.animated;
 }
 }  // namespace
@@ -1009,7 +1067,7 @@ int pageCount(TFT_eSprite &s, const View &v) {
   if (v.screen == Screen::TouchCheck) return 1;
   Doc d;
   buildDoc(v, d);
-  return plan(s, v, d).pages;
+  return plan(s, v, d).pages + qrPages(v);
 }
 
 bool draw(TFT_eSprite &s, const View &v) {
@@ -1026,9 +1084,11 @@ int controls(TFT_eSprite &s, const View &v, Control *out, int max) {
   if (v.screen == Screen::Settings) return settingsControls(v, page, out, max);
   if (v.screen == Screen::SetTime) return setTimeControls(v, page, out, max);
   if (v.screen == Screen::TouchCheck) return 0;  // taps there are raw positions, not controls
+  int first = qrPages(v);
+  if (page < first) return 0;  // the scan page has no controls; swipe or BOOT as usual
   Doc d;
   buildDoc(v, d);
-  return docControls(s, v, d, plan(s, v, d), page, out, max);
+  return docControls(s, v, d, plan(s, v, d), page - first, out, max);
 }
 
 Button hit(TFT_eSprite &s, const View &v, int x, int y) {
@@ -1054,6 +1114,25 @@ int pageOf(TFT_eSprite &s, View v, Button b) {
       if (ctl[i].id == b) return p;
   }
   return -1;
+}
+
+// ---- Low battery notice -------------------------------------------------------------
+// A box over the bottom of the face, with its corners inside the safe circle.
+constexpr Rect LOW_BOX = {52, 158, 136, 46};
+
+void drawLowBattery(TFT_eSprite &s, int pct, bool urgent) {
+  const Rect &r = LOW_BOX;
+  s.fillRect(r.x, r.y, r.w, r.h, col::BG);
+  s.drawRect(r.x, r.y, r.w, r.h, col::WARN);
+  s.drawRect(r.x + 1, r.y + 1, r.w - 2, r.h - 2, col::WARN);
+  const GFXfont *f = gfx::font(Role::Body, false);
+  char line[24];
+  snprintf(line, sizeof line, "Battery %d%%", pct < 0 ? 0 : pct);
+  constexpr int ICON = 14, GAP = 6;
+  int tw = gfx::textWidth(s, line, f), x0 = CX - (ICON + GAP + tw) / 2;
+  gfx::iconAlert(s, x0 + ICON / 2, r.y + 14, ICON, col::WARN);
+  gfx::text(s, line, x0 + ICON + GAP, r.y + 14, f, col::WARN, ML_DATUM);
+  gfx::text(s, urgent ? "Charge now" : "Charge soon", CX, r.y + 33, f, col::TEXT, MC_DATUM);
 }
 
 // ---- Startup ------------------------------------------------------------------

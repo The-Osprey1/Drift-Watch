@@ -45,6 +45,22 @@ void Estimate::add(uint32_t ms, int pct) {
   }
 }
 
+int LowWarning::update(float level, bool charging) {
+  if (toldSoon_ && level >= SOON + MARGIN) toldSoon_ = false;
+  if (toldNow_ && level >= NOW + MARGIN) toldNow_ = false;
+  if (charging || level < 0) return 0;
+  int crossed = 0;
+  if (!toldSoon_ && level < SOON) {
+    toldSoon_ = true;
+    crossed = SOON;
+  }
+  if (!toldNow_ && level < NOW) {
+    toldNow_ = true;
+    crossed = NOW;
+  }
+  return crossed;
+}
+
 float Estimate::hoursLeft() const {
   if (ratePerHour_ <= 0 || charging_) return -1;
   return level_ / ratePerHour_;

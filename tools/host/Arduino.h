@@ -29,6 +29,7 @@ class String {
   size_t length() const { return s_.size(); }
   String &operator=(const char *s) { s_ = s ? s : ""; return *this; }
   bool operator==(const char *o) const { return s_ == o; }
+  bool operator!=(const char *o) const { return s_ != o; }
   void trim() {
     size_t a = s_.find_first_not_of(" \t\r\n"), b = s_.find_last_not_of(" \t\r\n");
     s_ = a == std::string::npos ? "" : s_.substr(a, b - a + 1);

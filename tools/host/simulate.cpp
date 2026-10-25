@@ -411,7 +411,15 @@ void screenVariants() {
     w.screen = screens::Screen::Setup;
     w.portal = net::Portal::Waiting;
     std::string step1 = wordsOf(s, w);
+    // The first page is the code to scan; the first page of words comes next.
     w.page = 0;
+    s.textLog.clear();
+    screens::draw(s, w);
+    bool scanFirst = false;
+    for (const auto &t : s.textLog) scanFirst |= t.text == "Scan to join Wi-Fi";
+    screens::Control none[2];
+    CHECK(scanFirst && screens::controls(s, w, none, 2) == 0, "the hotspot opens on the code to scan, a page with no controls");
+    w.page = 1;
     s.textLog.clear();
     screens::draw(s, w);
     bool firstPageJoins = false;
@@ -1420,7 +1428,7 @@ void migration() {
   settings = Settings{};
   loadSettings();
   p.begin("watch", true);
-  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == 5 && !p.getBool("lessmo", true),
+  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == SETTINGS_VERSION && !p.getBool("lessmo", true),
         "Expressive is kept, and older firmware flashed back would read full motion");
   p.end();
   settings.motion = MOTION_OFF;
@@ -2413,6 +2421,60 @@ void serialScenarios() {
   settle(2500);
 }
 
+// ---- Reliability (v0.13.0) ----------------------------------------------------------------------
+void reliabilityScenarios() {
+  printf("Watchdog: the loop feeds it far more often than its limit, through every scenario so far\n");
+  CHECK(sim::watchdogSeconds == DRIFT_WATCHDOG_S && DRIFT_WATCHDOG_S > 30,
+        "it is started with %d s, longer than the longest screen-off wait (30 s)", (int)sim::watchdogSeconds);
+  CHECK(sim::watchdogFeeds > 1000 && sim::longestUnfed <= 31000,
+        "the longest the loop went without feeding it is %.1f s (%d feeds)", sim::longestUnfed / 1000.0, sim::watchdogFeeds);
+
+  printf("Start reason: shown on the details screen after the watch restarted itself\n");
+  TFT_eSPI parent;
+  TFT_eSprite s(&parent);
+  s.createSprite(240, 240);
+  screens::View v = baseView();
+  v.screen = screens::Screen::Details;
+  std::string normal = wordsOf(s, v);
+  CHECK(!says(normal, "Last start") && !says(normal, "Restarted by itself"), "nothing is said after a normal power-on");
+  v.startReason = "Froze, restarted by watchdog";
+  v.restarts = 2;
+  std::string after = wordsOf(s, v);
+  CHECK(says(after, "Last start: Froze, restarted by watchdog") && says(after, "Restarted by itself 2 times on this charge"),
+        "after a freeze it says why and how often");
+  int bad = 0;
+  for (bool large : {false, true}) {
+    v.large = large;
+    v.diag = "draw 4ms  push 9ms  heap 180k";
+    bad += renderAll(s, v, large ? "details_restarted_large" : "details_restarted");
+  }
+  CHECK(bad == 0, "the details pages still lay out with the extra lines (%d problems)", bad);
+
+  printf("Wi-Fi setup: the second try at joining is shown\n");
+  screens::View j = baseView();
+  j.screen = screens::Screen::Setup;
+  j.portal = net::Portal::Saved;
+  j.stage = net::Sync::Connecting;
+  j.syncStep = 1;
+  j.joinTry = 1;
+  CHECK(!says(wordsOf(s, j), "Trying again"), "the first try says nothing extra");
+  j.joinTry = 2;
+  CHECK(says(wordsOf(s, j), "Trying again"), "the second try says it is trying again");
+  bad = 0;
+  for (bool large : {false, true}) {
+    j.large = large;
+    bad += renderAll(s, j, large ? "setup_second_try_large" : "setup_second_try");
+  }
+  CHECK(bad == 0, "and still lays out (%d problems)", bad);
+  sim::startReason = "Crashed, restarted";
+  sim::restarts = 1;
+  sim::cold = false;
+  ui::begin();
+  CHECK(screen() == "face", "a restart after a crash goes straight to the face, with no startup sequence (%s)", screen().c_str());
+  sim::startReason = nullptr;
+  sim::restarts = 0;
+}
+
 void noMemoryScenario() {
   printf("Low memory: not even an 8-bit frame fits\n");
   spriteBudget16 = 0;
@@ -2667,6 +2729,58 @@ void motionScenarios() {
   settings.motion = MOTION_SUBTLE;
 }
 
+// ---- Low battery notice (v0.13.0) -------------------------------------------------------------
+int warnPixels() {
+  int n = 0;
+  for (uint16_t px : ui::display().buf) n += px == col::WARN;
+  return n;
+}
+
+void lowBatteryScenarios() {
+  printf("Low battery: told once below 15%%, once below 5%%, again only after charging\n");
+  {
+    battery::LowWarning w;
+    CHECK(w.update(50, false) == 0, "nothing at 50%%");
+    CHECK(w.update(14.9f, false) == battery::LowWarning::SOON, "below 15%% it says so");
+    CHECK(w.update(14, false) == 0 && w.update(15.5f, false) == 0 && w.update(14.5f, false) == 0,
+          "a level wavering on the line says nothing more");
+    CHECK(w.update(4.5f, false) == battery::LowWarning::NOW && w.update(3, false) == 0, "below 5%% it says so once");
+    CHECK(w.update(40, true) == 0 && w.update(19, false) == 0, "charged up and falling again: quiet above 15%%");
+    CHECK(w.update(14, false) == battery::LowWarning::SOON, "and below 15%% it is said again");
+    battery::LowWarning c;
+    CHECK(c.update(10, true) == 0, "nothing while charging");
+    battery::LowWarning b;
+    CHECK(b.update(3, false) == battery::LowWarning::NOW, "starting at 3%% says the urgent one, once");
+    battery::LowWarning u;
+    CHECK(u.update(-1, false) == 0, "nothing with no reading");
+  }
+
+  printf("Low battery: the notice shows on the face for 5 s, on the next look\n");
+  sim::batteryMv = 3950;
+  startOn(FACE_STEALTH);
+  CHECK(warnPixels() == 0, "no notice at a good level");
+  sim::batteryMv = 3590;  // 14%
+  // The face's own battery mark turns orange too (under 100 pixels); the notice adds a box.
+  uint32_t t0 = sim::clockMs;
+  for (int i = 0; sim::clockMs - t0 < 3UL * 3600 * 1000 && warnPixels() <= 300; i++) {
+    runFor(1000);
+    if (i % 60 == 59 && screen() == "asleep") {
+      pressBoot();  // a look at the watch now and then
+      settle(500);
+    }
+  }
+  snap("low_battery_notice");
+  CHECK(screen() == "face" && warnPixels() > 300, "a look at the watch shows it (%d warning pixels, after %.0f min)", warnPixels(),
+        (sim::clockMs - t0) / 60000.0);
+  runFor(5200);
+  CHECK(warnPixels() < 150, "it goes after 5 s, and the face is whole again (%d)", warnPixels());
+  runFor(20000);
+  pressBoot();
+  settle(500);
+  CHECK(screen() == "face" && warnPixels() < 150, "the next look does not show it again (%d)", warnPixels());
+  sim::batteryMv = 3950;
+}
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -2686,6 +2800,8 @@ int main(int argc, char **argv) {
   motionScenarios();
   serialScenarios();
   powerScenarios();
+  reliabilityScenarios();
+  lowBatteryScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

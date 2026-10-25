@@ -10,8 +10,8 @@ constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
 // raise-to-wake and which way the screen faces relative to the motion sensor; version 4
 // (v0.10.0) adds the screen turn, the checked touch map, night mode, the learned clock drift
 // and the last time the clock was known; version 5 (v0.12.0) turns the two-way Motion setting
-// into three levels.
-constexpr uint8_t SETTINGS_VERSION = 5;
+// into three levels; version 6 (v0.13.0) keeps the zone Auto last found.
+constexpr uint8_t SETTINGS_VERSION = 6;
 
 // How much the interface moves. Off: instant changes, no entrances, hands and the radar step once
 // a second. Subtle (the default): slides, settles and one short entrance after choosing a face.
@@ -26,6 +26,8 @@ constexpr uint8_t TOUCH_NOT_CHECKED = 0xFF;
 
 struct Settings {
   String tz;                    // POSIX time zone, e.g. "GMT0BST,M3.5.0/1,M10.5.0". Empty = detect from IP.
+  String autoTz, autoZone;      // with tz empty: the POSIX zone and name the last lookup found, used
+                                // from the start until the next lookup, so a restart keeps local time
   bool use12h = false;
   uint8_t face = 0;
   uint8_t brightnessLevel = 2;  // index into BRIGHTNESS_LEVELS

@@ -209,6 +209,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   percentText(buf, sizeof buf, c.batteryPct, true);
   uint16_t bat = batteryInk(c.batteryPct, INK);
   miniBattery(s, 104, 36, 16, 8, c.batteryPct, bat);
+  if (c.charging) gfx::chargeBolt(s, 97, 40, 10, bat);
   gfx::text(s, buf, 141, 40, type::SMALL, bat);
 
   gfx::TimeLayout tl = gfx::timeLayout(CX, 70 + 26, 52);
@@ -266,6 +267,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   char buf[8];
   percentText(buf, sizeof buf, c.batteryPct, false);
   gfx::text(s, buf, CX, 72, type::SMALL, batteryInk(c.batteryPct, SILVER));
+  if (c.charging) gfx::chargeBolt(s, CX + 22, 72, 10, batteryInk(c.batteryPct, SEC));
   dateWindow(s, c, 166, 112, 25, 17, WINDOW, DIM, SILVER);
   if (!c.timeValid) dialNoTime(s, c, col::N300, col::CYAN, col::N400);
 }
@@ -317,6 +319,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   percentText(buf, sizeof buf, c.batteryPct, true);
   uint16_t bat = batteryInk(c.batteryPct, INK);
   miniBattery(s, 98, 52, 14, 7, c.batteryPct, bat);
+  if (c.charging) gfx::chargeBolt(s, 91, 56, 9, bat);
   gfx::text(s, buf, 119, 56, type::SMALL, bat, ML_DATUM);
 
   if (c.timeValid) {
@@ -363,6 +366,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   char buf[8];
   percentText(buf, sizeof buf, c.batteryPct, false);
   gfx::text(s, buf, CX, 164, type::SMALL, batteryInk(c.batteryPct, PLUM));
+  if (c.charging) gfx::chargeBolt(s, CX + 21, 164, 10, batteryInk(c.batteryPct, ROSE));
   if (!c.timeValid) dialNoTime(s, c, PLUM, ROSE, HINT);
 }
 
@@ -430,6 +434,7 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
     if (i < shown) s.fillRect(x0, 46, 9, 9, on);
     else s.drawRect(x0, 46, 9, 9, DIM);
   }
+  if (c.charging) gfx::chargeBolt(s, 82, 50, 10, on);
   // The status line appears whole at 400 ms.
   if (e < 400) return;
   if (!c.timeValid) {
@@ -496,6 +501,7 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
   char buf[8];
   percentText(buf, sizeof buf, c.batteryPct, false);
   gfx::text(s, buf, CX, 166, type::SMALL, batteryInk(c.batteryPct, CREAM));
+  if (c.charging) gfx::chargeBolt(s, CX + 25, 166, 10, batteryInk(c.batteryPct, AMBER));
   if (c.timeValid) {
     hands(s, c, CREAM, CREAM, BG, 5.5f, 4.0f);
     needle(s, c.now.tm_sec * 6, 98, 16, 1.6f, AMBER, BG);

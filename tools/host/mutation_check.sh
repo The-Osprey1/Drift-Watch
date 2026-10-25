@@ -23,6 +23,12 @@ apostrophe-fallback-skipped|DriftWatch/net.cpp|  if (!hasCurly \&\& !hasStraight
 entrance-outlives-touch|DriftWatch/ui.cpp|  cancelEntrance(true);  // a new touch ends a running entrance, never queues behind it|  (void)0;|interface
 entrance-on-wake|DriftWatch/ui.cpp|  wristDrop.reset();\n  // Draw the current time first|  wristDrop.reset();\n  startEntrance(currentFace());\n  // Draw the current time first|interface
 petal-crosses-time|DriftWatch/faces_themed.cpp|    x = x > CX ? PROTECT_X1 + m : PROTECT_X0 - m;|    (void)m;|faces
+watchdog-not-fed|DriftWatch/ui.cpp|  hal::watchdogFeed();|  (void)0;|interface
+auto-zone-not-restored|DriftWatch/net.cpp|  if (settings.tz.isEmpty() \&\& !settings.autoTz.isEmpty()) {|  if (false) {|network
+zone-rules-unchecked|DriftWatch/net.cpp|offsetIn(rules, hal::now()) == a.offset)) return rules;|offsetIn(rules, hal::now()) != 99999)) return rules;|network
+join-not-retried|DriftWatch/net.cpp|      } else if (elapsed > CONNECT_TIMEOUT_MS \&\& !joinRetried) {|      } else if (false) {|network
+resync-no-backoff|DriftWatch/ui.cpp|min<uint32_t>(RESYNC_MS, RETRY_SYNC_MS << (failsInARow - 1))|RETRY_SYNC_MS|interface_network
+low-battery-repeats|DriftWatch/battery.cpp|  if (!toldSoon_ \&\& level < SOON) {|  if (level < SOON) {|interface
 LIST
 )
 
@@ -30,7 +36,7 @@ build() {  # test name -> binary in $WORK/bin
   local t=$1 d=$WORK/src
   local ui="$d/DriftWatch/ui.cpp $d/DriftWatch/screens.cpp $d/DriftWatch/faces.cpp $d/DriftWatch/faces_themed.cpp $d/DriftWatch/gfx.cpp $d/DriftWatch/settings.cpp \
 $d/DriftWatch/raise.cpp $d/DriftWatch/orient.cpp $d/DriftWatch/phone.cpp $d/DriftWatch/timekeep.cpp $d/DriftWatch/battery.cpp \
-$d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp"
+$d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp $d/DriftWatch/qrcodegen.c"
   local cxx="g++ -std=c++17 -O1 -w -I $d/tools/host -I $d/DriftWatch -isystem $TFT"
   mkdir -p "$WORK/bin"
   case $t in
@@ -39,6 +45,8 @@ $d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp"
     power) $cxx $d/tools/host/power_test.cpp $d/DriftWatch/power.cpp $d/DriftWatch/qmi8658.cpp -o "$WORK/bin/$t" ;;
     faces) $cxx $d/tools/host/tft_shim.cpp $d/tools/host/render_faces.cpp $d/DriftWatch/faces.cpp \
              $d/DriftWatch/faces_themed.cpp $d/DriftWatch/gfx.cpp -o "$WORK/bin/$t" ;;
+    interface_network) $cxx -I $d/tools/host/net $d/tools/host/tft_shim.cpp $d/tools/host/sim_stubs.cpp $d/tools/host/net/netsim.cpp \
+                         $d/tools/host/simulate_network.cpp $d/DriftWatch/net.cpp $ui -o "$WORK/bin/$t" ;;
     interface) $cxx $d/tools/host/tft_shim.cpp $d/tools/host/sim_stubs.cpp $d/tools/host/sim_net_fake.cpp \
                  $d/tools/host/simulate.cpp $ui -o "$WORK/bin/$t" ;;
   esac

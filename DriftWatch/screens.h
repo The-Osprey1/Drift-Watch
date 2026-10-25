@@ -65,6 +65,7 @@ struct View {
   net::JoinWhy joinWhy;     // why the latest join failed
   int joinCode;             // the radio's reason number, 0 if none
   int syncStep;
+  int joinTry;              // 2 on the second try at joining Wi-Fi
   net::Portal portal;
   uint32_t secondsLeft;     // hotspot time left
   const char *lastSyncText; // e.g. "14:02", or "" if never synced
@@ -94,6 +95,8 @@ struct View {
   const char *syncAgo;      // e.g. "3 h ago", "" if never
   uint32_t imuLine1, imuLine2;  // edges seen on the motion sensor's interrupt lines
   const char *version;
+  const char *startReason;  // why the watch last started, nullptr after a normal power-on
+  uint32_t restarts;        // restarts the watch did by itself on this charge
   const char *diag;         // diagnostics line, or nullptr
   Button pressed;
   uint32_t ms;              // drives the progress spinner
@@ -119,6 +122,9 @@ Button settingsItem(int i);
 // Where phone sync is.
 enum class PhonePhase : uint8_t { Waiting, Connected, TimeSet, Closed, Failed };
 PhonePhase phonePhase(const View &v);
+
+// The low battery notice, drawn over the bottom of the face for a few seconds.
+void drawLowBattery(TFT_eSprite &s, int pct, bool urgent);
 
 // Startup sequence, t from 0 to 1.
 void drawBoot(TFT_eSprite &s, float t, const char *version);

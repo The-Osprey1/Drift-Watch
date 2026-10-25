@@ -75,7 +75,12 @@ If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then tr
 
 After the startup sequence the **touch check** appears: tap the dot at the top, then the one on the right. That lines touch up with the screen, whichever way the panel turns. BOOT skips it. Then the watch shows the face. It never opens Wi-Fi setup by itself; with no clock set, the face says **SET TIME** and "Swipe up: set time".
 
-To set the clock, use any one of: **Phone sync** (quickest), **Wi-Fi setup** (keeps itself right from then on), or **Set time** by hand.
+There are four ways to set or sync the clock:
+
+1. **Wi-Fi NTP (Automatic)**: Once connected to a 2.4 GHz network via **Wi-Fi setup** or Phone sync, the watch keeps time autonomously via NTP (`pool.ntp.org`) in the background—no phones, browsers, or Bluetooth required.
+2. **Phone sync (Web companion)**: Fastest way to send time, time zone rules, and Wi-Fi credentials in one tap from a browser over Bluetooth.
+3. **USB Serial**: When plugged into a computer via USB-C, send a one-line serial command to set the clock or Wi-Fi instantly.
+4. **Set time by hand**: Swipe up into settings and pick **Set time** to adjust the date and time directly on screen.
 
 ## Phone sync
 
@@ -83,7 +88,26 @@ To set the clock, use any one of: **Phone sync** (quickest), **Wi-Fi setup** (ke
 2. On the watch, open settings, then **Phone sync**. It shows its name, such as Drift-1A2B, for 3 minutes.
 3. On the page, tap **Connect to the watch**, pick the name, then **Sync time**. The page sends your time zone (with its summer time rules) and the time. You can also send a Wi-Fi network and password (for an iPhone Personal Hotspot, turn on **Maximize Compatibility** in Settings > Personal Hotspot and keep that screen open while the watch joins).
 
-Bluetooth is only on while that screen is open. The link is not encrypted, so only send a Wi-Fi password with the watch close to you. Generic Bluetooth apps that use the standard Current Time Service can set the clock too.
+> **Windows Bluetooth note:** Connect directly from Chrome or Edge. Do **not** pair the watch in the Windows OS Bluetooth Settings (`Bluetooth & other devices`). Because Drift-Watch is a BLE GATT peripheral without standard PC profiles (audio, mouse, keyboard), Windows will repeatedly connect and drop the link every second, causing `GATT Server is disconnected` errors in the browser. If you already paired it in Windows Settings, click **Remove device** first.
+
+Bluetooth is only on while that screen is open. The link is not encrypted, so only send a Wi-Fi password with the watch close to you. Generic Bluetooth apps that use the standard Current Time Service (CTS, `0x1805`) can set the clock too.
+
+## USB Serial sync
+
+When plugged into a computer over USB-C, the watch accepts commands on the serial port at **115200 baud**:
+
+- **Set time**: `TIME:<unix_seconds>` (e.g. `TIME:1729828800`)
+- **Set Wi-Fi**: `WIFI:<network>,<password>`
+
+**PowerShell 1-liner:**
+```powershell
+$p = New-Object System.IO.Ports.SerialPort "COM6", 115200; $p.Open(); $p.WriteLine("TIME:" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()); $p.Close()
+```
+
+**Bash / Linux 1-liner:**
+```bash
+echo "TIME:$(date +%s)" > /dev/ttyACM0
+```
 
 ## Wi-Fi setup
 

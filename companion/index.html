@@ -58,6 +58,7 @@
       <li>Swipe up on the watch face to open Settings.</li>
       <li>Find <b>Phone sync</b> (page 2) and tap it. The watch shows its name, such as Drift-1A2B, for 3 minutes.</li>
     </ol>
+    <p class="note"><b>Windows users:</b> Connect directly from this page. Do <i>not</i> pair the watch in Windows Bluetooth Settings (if paired, click "Remove device" in Windows Settings first, or Windows will disconnect the link every second).</p>
     <button id="connect" class="primary">Connect to the watch</button>
     <p id="connMsg" class="msg" role="status"></p>
   </section>
@@ -200,7 +201,13 @@ async function connect() {
   } catch (err) {
     command = null;
     connected(false);
-    say("connMsg", err.name === "NotFoundError" ? "No watch chosen. Is Phone sync open on the watch?" : "Could not connect: " + err.message, "err");
+    let msg = "Could not connect: " + err.message;
+    if (err.name === "NotFoundError") {
+      msg = "No watch chosen. Is Phone sync open on the watch?";
+    } else if (/GATT|disconnect/i.test(err.message)) {
+      msg += ". If on Windows, remove the watch from Windows Bluetooth Settings (do not pair there) and ensure Phone sync is active on the watch.";
+    }
+    say("connMsg", msg, "err");
   }
 }
 

@@ -36,4 +36,9 @@ bool entrancePlaying();
 uint32_t entrancesStarted();
 uint32_t entrancesFinished();
 bool markerMoving();
+bool timerActive();
+bool timerAlarming();
+uint32_t timerTotalMs();
+void startTimer(uint32_t ms);
+void resetTimer();
 }

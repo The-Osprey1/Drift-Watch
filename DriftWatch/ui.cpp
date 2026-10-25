@@ -229,6 +229,11 @@ bool entrancePlaying() { return entrance.playing; }
 uint32_t entrancesStarted() { return entrance.started; }
 uint32_t entrancesFinished() { return entrance.finished; }
 bool markerMoving() { return marker.moving; }
+bool timerActive() { return timer.active; }
+bool timerAlarming() { return timer.alarming; }
+uint32_t timerTotalMs() { return timer.totalMs; }
+void startTimer(uint32_t ms) { uiparts::startTimer(ms); }
+void resetTimer() { uiparts::resetTimer(); }
 
 const char *screenName() {
   static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone", "drawer", "flashlight"};
@@ -348,10 +353,10 @@ void stepTimer() {
       hal::backlight(on ? 255 : 40);
       cur->fillSprite(on ? col::WARN : col::BG);
       const GFXfont *f = gfx::font(type::Role::Title, true);
-      gfx::text(*cur, "TIMER", CX, 90, f, on ? col::BG : col::WARN, MC_DATUM);
-      gfx::text(*cur, "UP!", CX, 130, f, on ? col::BG : col::WARN, MC_DATUM);
+      gfx::text(*cur, "TIMER", layout::CX, 90, f, on ? col::BG : col::WARN, MC_DATUM);
+      gfx::text(*cur, "UP!", layout::CX, 130, f, on ? col::BG : col::WARN, MC_DATUM);
       const GFXfont *fb = gfx::font(type::Role::Body, false);
-      gfx::text(*cur, "Tap to dismiss", CX, 175, fb, on ? col::BG : col::TEXT, MC_DATUM);
+      gfx::text(*cur, "Tap to dismiss", layout::CX, 175, fb, on ? col::BG : col::TEXT, MC_DATUM);
       present(*cur);
     }
   }

@@ -2872,13 +2872,13 @@ void quickDrawerScenarios() {
   CHECK(find(screens::Button::Timer1m, c), "Timer1m control found in drawer");
   tapButton(screens::Button::Timer1m);
   settle(100);
-  CHECK(uiparts::timer.active, "1m timer is active");
-  CHECK(uiparts::timer.totalMs == 60000, "timer total is 60000 ms");
+  CHECK(ui::timerActive(), "1m timer is active");
+  CHECK(ui::timerTotalMs() == 60000, "timer total is 60000 ms");
 
   CHECK(find(screens::Button::TimerReset, c), "TimerReset control found");
   tapButton(screens::Button::TimerReset);
   settle(100);
-  CHECK(!uiparts::timer.active, "timer reset");
+  CHECK(!ui::timerActive(), "timer reset");
 
   CHECK(find(screens::Button::Flashlight, c), "Flashlight control found");
   tapButton(screens::Button::Flashlight);
@@ -2890,12 +2890,12 @@ void quickDrawerScenarios() {
   CHECK(screen() == "face", "tap in flashlight returns to face, got %s", screen().c_str());
   CHECK(lastBacklight() == backlightLevel(), "backlight restored");
 
-  uiparts::startTimer(1000);
+  ui::startTimer(1000);
   runFor(2000);
-  CHECK(uiparts::timer.alarming, "timer is alarming");
+  CHECK(ui::timerAlarming(), "timer is alarming");
   tap(120, 120);
   settle(100);
-  CHECK(!uiparts::timer.alarming, "tap dismisses alarm");
+  CHECK(!ui::timerAlarming(), "tap dismisses alarm");
 }
 
 int main(int argc, char **argv) {

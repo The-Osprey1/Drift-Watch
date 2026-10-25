@@ -1014,7 +1014,7 @@ void drawQrPage(TFT_eSprite &s, const View &v, int pages) {
       gfx::text(s, "Scan to", CX, 160, f, col::TEXT, MC_DATUM);
       gfx::text(s, "open sync", CX, 186, f, col::TEXT, MC_DATUM);
     } else {
-      gfx::text(s, "Scan to open sync page", CX, 184, f, col::TEXT, MC_DATUM);
+      gfx::text(s, "Scan to open sync", CX, 184, f, col::TEXT, MC_DATUM);
     }
   } else if (v.large) {
     gfx::text(s, "Scan to", CX, 160, f, col::TEXT, MC_DATUM);

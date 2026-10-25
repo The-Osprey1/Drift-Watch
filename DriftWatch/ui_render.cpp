@@ -220,6 +220,16 @@ screens::View view(Mode m, int page) {
   v.syncAgo = ago;
   v.imuLine1 = imu::lineEdges(0);
   v.imuLine2 = imu::lineEdges(1);
+  v.tempC = -99.0f;
+  v.chipTempC = -99.0f;
+  if (m == Mode::Details && v.imuPresent) {
+    imu::readTemp(v.tempC);
+#if defined(ARDUINO)
+    v.chipTempC = temperatureRead();
+#else
+    v.chipTempC = 36.0f;
+#endif
+  }
   static char nowBuf[8];
   {
     time_t t = hal::now();

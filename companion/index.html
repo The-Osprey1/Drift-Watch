@@ -417,11 +417,19 @@ function connected(on) {
 }
 
 async function connect() {
-  say("connMsg", "Choose the watch in the list that opens...");
+  say("connMsg", "Connecting to the watch...");
   try {
-    // The 128-bit service UUID is in the primary advertisement (the name is in the scan response),
-    // so listing the service filter first lets iPhones spot the watch straight away.
-    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
+    let dev = null;
+    if (navigator.bluetooth.getDevices) {
+      const devices = await navigator.bluetooth.getDevices().catch(() => []);
+      dev = devices.find(d => d.name && d.name.startsWith("Drift")) || null;
+    }
+    if (!dev) {
+      // The 128-bit service UUID is in the primary advertisement (the name is in the scan response),
+      // so listing the service filter first lets iPhones spot the watch straight away.
+      dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
+    }
+    device = dev;
     device.addEventListener("gattserverdisconnected", () => {
       command = null;
       connected(false);

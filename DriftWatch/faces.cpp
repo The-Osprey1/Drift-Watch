@@ -123,18 +123,6 @@ void digitalLive(TFT_eSprite &s, const FaceContext &c) {
   if (!c.timeValid) return;
   Pt a = gfx::polar(c.now.tm_sec * 6, 104), b = gfx::polar(c.now.tm_sec * 6, 116);
   s.drawWideLine(a.x, a.y, b.x, b.y, 2.5f, col::CYAN, col::BG);
-  if (c.animate) {
-    // Subtle breathing glow on the colon dots between hours and minutes
-    float pulse = 0.5f + 0.5f * sinf(c.ms * 0.006283f);
-    uint16_t colonCol = gfx::blend(col::YELLOW, col::YELLOW_DIM, pulse);
-    s.fillCircle(117, 78, 2, colonCol);
-    s.fillCircle(117, 98, 2, colonCol);
-    // Subtle authentic CRT micro-flicker scanline once every ~3 seconds
-    if ((c.animMs % 3200) < 50) {
-      int y = 70 + (int)((c.animMs / 10) % 40);
-      s.drawFastHLine(45, y, 150, col::CYAN_DIM);
-    }
-  }
 }
 
 // ---- Dials -------------------------------------------------------------------
@@ -573,7 +561,7 @@ const char *faceName(Face f) {
 bool faceAnimates(Face f, bool expressive) {
   if (f == FACE_RADAR || f == FACE_PHANTOM) return true;
   if (!expressive) return false;
-  return f == FACE_DIGITAL || f == FACE_ORBIT || f == FACE_LUNAR || f == FACE_YOZAKURA;
+  return f == FACE_ORBIT || f == FACE_LUNAR || f == FACE_YOZAKURA;
 }
 
 uint32_t faceEntranceMs(Face f) {

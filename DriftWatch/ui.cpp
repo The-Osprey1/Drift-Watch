@@ -37,7 +37,6 @@ constexpr uint32_t IMU_AWAKE_MS = 80;                  // motion samples while t
 constexpr uint32_t CHECK_RESULT_MS = 1400;             // touch check result stays up this long
 constexpr uint32_t BOOT_CHECK_MS = 4000;               // holding BOOT this long opens the touch check anywhere
 constexpr uint32_t KNOWN_TIME_SAVE_S = 3600;           // remember the clock in flash at most hourly
-constexpr uint32_t SPRING_MAX_MS = 450;                // a spring slide always ends by then
 constexpr uint32_t TOUCH_DROPOUT_MS = 50;              // failed touch reads this long end a touch, without acting
 constexpr int SERIAL_BYTES_PER_POLL = 256;             // bounds the time one poll spends on serial input
 constexpr int SWIPE_PX = 40;
@@ -68,6 +67,24 @@ bool cacheValid = false, dirty = true;
 int shownSecond = -1, lastMinute = -1;
 bool faceMoving = false;    // the face animates between seconds: the radar beam, Phantom's movement
 uint32_t sweepStart = 0;
+
+// A face's entrance (faces.h): played once when a slide lands on a face other than the one last
+// shown settled, never on wake. A touch, BOOT, settings or sleep ends it at once, and the face is
+// drawn in its final state. Nothing queues: a new choice starts a new entrance.
+struct {
+  bool playing = false;
+  Face face = FACE_DIGITAL;
+  uint32_t start = 0, length = 0;  // length in real time, after the Expressive stretch
+  uint32_t started = 0, finished = 0;
+} entrance;
+Face settledFace = FACE_DIGITAL;  // the face last shown in its final state, or entering
+// Orbit's minute marker moving on to a new minute.
+struct {
+  bool moving = false;
+  uint32_t start = 0;
+  int minute = -1;  // minute of the day it was last drawn at, -1 = draw the next one without moving
+} marker;
+uint32_t releaseUntil = 0;  // a tapped control keeps its pressed look until then
 
 int batteryPct = -1, batteryMv = -1;
 battery::Estimate batteryLife;
@@ -145,19 +162,21 @@ struct Transition {
   uint32_t start = 0, duration = 0;
   int neighbour = -1;      // face drawn in `nb`
   int toPage = 0;          // page drawn in `nb` during a page slide
-  bool spring = false;     // animate with the spring from velocity v0 (px per ms) instead of easing
-  float v0 = 0;
 } tr;
 
 #if DRIFT_DIAG
 struct {
   uint32_t frames = 0, renderUs = 0, pushUs = 0, worstUs = 0, lastLog = 0;
+  // Entrance and minute-marker frames, drawing and pushing together.
+  uint32_t motionFrames = 0, motionUs = 0, motionWorstUs = 0;
   char line[48] = "";
 } diag;
 #endif
 
 // ---- Small helpers ---------------------------------------------------------------
-bool motionOn() { return !settings.reducedMotion; }
+bool motionOn() { return settings.motion != MOTION_OFF; }
+// Entrances need the slide buffers and the cached dial; the low-memory fallback changes instantly.
+bool entrancesOn() { return motionOn() && haveSpare && haveCache; }
 uint32_t since(uint32_t t) { return hal::ms() - t; }
 Face currentFace() { return (Face)(settings.face % FACE_COUNT); }
 Face faceAt(int step) { return (Face)((settings.face + FACE_COUNT + step) % FACE_COUNT); }
@@ -248,12 +267,35 @@ FaceContext faceContext(bool withSweep) {
   return c;
 }
 
-// Draws a face into `dst`. The current face reuses its cached static layer.
-void renderFace(TFT_eSprite &dst, Face f, bool withSweep) {
+// Where the entrance is on the face's own timeline. Expressive plays it slower.
+uint32_t entranceTimeline() {
+  uint32_t t = since(entrance.start);
+  if (settings.motion == MOTION_EXPRESSIVE) t = t * motion::EXPRESSIVE_DEN / motion::EXPRESSIVE_NUM;
+  return min(t, faceEntranceMs(entrance.face));
+}
+
+// A face that will play its entrance when a slide lands on it is drawn as the entrance starts,
+// so its decoration never shows first and then disappears.
+bool entersOnLanding(Face f) { return entrancesOn() && faceEntranceMs(f) && f != settledFace; }
+
+// Draws a face into `dst`. The current face reuses its cached static layer. `entranceStart`
+// draws it as its entrance's first frame (a face sliding in).
+void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart = false) {
 #if DRIFT_DIAG
   uint32_t t = micros();
 #endif
   FaceContext c = faceContext(withSweep);
+  if (entranceStart) {
+    c.entering = true;
+    c.entranceMs = 0;
+  } else if (entrance.playing && f == entrance.face && f == currentFace()) {
+    c.entering = true;
+    c.entranceMs = entranceTimeline();
+  }
+  if (marker.moving && f == currentFace()) {
+    c.markerMoving = true;
+    c.markerMs = min(since(marker.start), motion::MARKER_MS);
+  }
   if (haveCache && f == currentFace()) {
     uint32_t key = faceStaticKey(f, c);
     if (!cacheValid || key != cacheKey) {
@@ -322,7 +364,8 @@ screens::View view(Mode m, int page) {
                                   : screens::Screen::Settings;
   v.page = page;
   v.large = settings.largeText;
-  v.reducedMotion = settings.reducedMotion;
+  v.reducedMotion = !motionOn();
+  v.motion = settings.motion;
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
@@ -403,8 +446,8 @@ uint32_t screenKey() {
   k = k * 31 + (uint32_t)net::portalState();
   k = k * 31 + (uint32_t)net::failReason();
   k = k * 31 + (uint32_t)pressed;
-  k = k * 31 + settings.brightnessLevel * 16 + settings.use12h * 8 + settings.reducedMotion * 4 + settings.largeText * 2 +
-      net::timeIsValid();
+  k = k * 31 + settings.brightnessLevel * 16 + settings.use12h * 8 + settings.largeText * 2 + net::timeIsValid();
+  k = k * 7 + settings.motion;
   k = k * 131 + (uint32_t)(batteryPct + 1);
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
@@ -451,6 +494,40 @@ int firstSettingsPage() {
   return screens::pageOf(*cur, view(Mode::Panel, 0), fix);
 }
 
+// ---- Entrances ----------------------------------------------------------------------
+void startEntrance(Face f) {
+  if (!entrancesOn() || !faceEntranceMs(f)) return;
+  entrance.playing = true;
+  entrance.face = f;
+  entrance.start = hal::ms();
+  entrance.length = faceEntranceMs(f);
+  if (settings.motion == MOTION_EXPRESSIVE) entrance.length = entrance.length * motion::EXPRESSIVE_NUM / motion::EXPRESSIVE_DEN;
+  entrance.started++;
+  marker.moving = false;  // the entrance brings the marker in itself
+  dirty = true;
+}
+
+// Ends a running entrance. With `redraw` the face is drawn in its final state straight away, on
+// the same poll as the touch or press that ended it.
+void cancelEntrance(bool redraw) {
+  if (!entrance.playing) return;
+  entrance.playing = false;
+  dirty = true;
+  if (redraw && awake && mode == Mode::Face && tr.kind == Slide::None) {
+    renderFace(*cur, currentFace(), true);
+    present(*cur);
+    dirty = false;
+  }
+}
+
+// A face slide has come to rest. If it rests on a face other than the one shown before, that
+// face plays its entrance once.
+void landed() {
+  if (currentFace() == settledFace) return;
+  settledFace = currentFace();
+  startEntrance(settledFace);
+}
+
 // ---- Transitions ------------------------------------------------------------------
 void animateTo(float target, uint32_t fullDuration, float fullDistance) {
   tr.dragging = false;
@@ -462,40 +539,30 @@ void animateTo(float target, uint32_t fullDuration, float fullDistance) {
   // snap-back still reads as motion rather than a jump.
   float part = fabsf(target - tr.pos) / fullDistance;
   tr.duration = motionOn() ? (uint32_t)(fullDuration * max(0.35f, min(1.0f, part))) : 0;
-  tr.spring = false;
 }
 
-// After a swipe the slide carries on at the finger's speed (`v` px per ms, + = towards larger
-// positions) and settles with a critically damped spring, so a hard flick lands quickly and a
-// gentle one glides. A finger moving the other way, or barely moving, gets a small push
-// towards the target so the slide never starts with a stall.
-void springTo(float target, float v) {
-  constexpr float MIN_PUSH = 0.5f;  // px per ms
-  float dir = target > tr.pos ? 1.0f : target < tr.pos ? -1.0f : 0.0f;
-  if (v * dir < MIN_PUSH) v = dir * MIN_PUSH;
+// After a release the slide settles with ease-out and no bounce, in a time set by the distance
+// left and the release speed `v` (px per ms): see motion::settleMs. A face dragged back where
+// it started returns in motion::CANCEL_MS; the panel uses its own, slightly longer range.
+void settleTo(float target, float v) {
+  float remaining = fabsf(target - tr.pos);
+  bool flick = fabsf(v) > motion::FLICK_PX_PER_MS;
+  uint32_t ms = tr.kind == Slide::PanelOpen || tr.kind == Slide::PanelClose ? motion::panelSettleMs(remaining)
+                : tr.kind == Slide::Face && target == 0                    ? motion::CANCEL_MS
+                                                                           : motion::settleMs(remaining, flick);
   tr.dragging = false;
   tr.animating = true;
   tr.from = tr.pos;
   tr.to = target;
   tr.start = hal::ms();
-  tr.spring = true;
-  tr.v0 = v;
-  tr.duration = motionOn() ? SPRING_MAX_MS : 0;
-}
-
-// Spring position at `t` ms; sets `done` once it has settled.
-float springPos(uint32_t t, bool &done) {
-  float w = motion::SPRING_OMEGA, x0 = tr.from - tr.to, b = tr.v0 + w * x0, e = expf(-w * t);
-  float x = (x0 + b * t) * e, v = (b - w * (x0 + b * t)) * e;
-  done = t >= tr.duration || (t > 30 && fabsf(x) < 0.5f && fabsf(v) < 0.02f);
-  return done ? tr.to : tr.to + x;
+  tr.duration = motionOn() ? ms : 0;
 }
 
 // Makes sure `nb` holds the face on the side the current one is moving away from.
 void prepareNeighbour(float pos) {
   int want = pos < 0 ? faceAt(+1) : faceAt(-1);
   if (tr.neighbour == want) return;
-  renderFace(*nb, (Face)want, false);
+  renderFace(*nb, (Face)want, false, entersOnLanding((Face)want));
   tr.neighbour = want;
 }
 
@@ -514,7 +581,7 @@ void changePage(int dir, float v = 0) {
   tr = Transition{};
   tr.kind = Slide::Page;
   tr.toPage = to;
-  if (v) springTo(dir > 0 ? -W : W, v);
+  if (v) settleTo(dir > 0 ? -W : W, v);
   else animateTo(dir > 0 ? -W : W, motion::FACE_MS, W);
 }
 
@@ -534,30 +601,35 @@ void commitFace(int step) {
   lastMinute = -1;
   tr = Transition{};
   faceMoving = false;  // stepFace starts the beam on the radar face
+  marker.minute = -1;
 }
 
 // Mid-drag arrival on the neighbour: it becomes current and the drag continues.
 void landOn(int step) {
-  if (tr.neighbour != faceAt(step)) renderFace(*nb, faceAt(step), false);
+  if (tr.neighbour != faceAt(step)) renderFace(*nb, faceAt(step), false, entersOnLanding(faceAt(step)));
   settings.face = faceAt(step);
   markSettingsChanged();
   std::swap(cur, nb);
   tr.neighbour = faceAt(-step);  // the face just left is now the neighbour
   cacheValid = false;
   faceMoving = false;
+  marker.minute = -1;
 }
 
-// Instant face change, used with reduced motion or without the spare buffer.
+// Instant face change, used with Motion Off or without the spare buffer: no entrance either.
 void cutToFace(int step) {
   settings.face = faceAt(step);
+  settledFace = currentFace();
   markSettingsChanged();
   cacheValid = false;
   dirty = true;
   faceMoving = false;
+  marker.minute = -1;
   tr = Transition{};
 }
 
 void openPanel(float v = 0) {
+  cancelEntrance(false);
   pressed = screens::Button::None;
   settingsPage = firstSettingsPage();
   if (!haveSpare || !motionOn()) {
@@ -570,8 +642,21 @@ void openPanel(float v = 0) {
   tr = Transition{};
   tr.kind = Slide::PanelOpen;
   tr.pos = 0;
-  if (v) springTo(H, v);
+  if (v) settleTo(H, v);
   else animateTo(H, motion::PANEL_MS, H);
+}
+
+// An upward drag on a face pulls the settings panel up under the finger.
+void startPanelDrag() {
+  cancelEntrance(false);
+  pressed = screens::Button::None;
+  settingsPage = firstSettingsPage();
+  renderFace(*cur, currentFace(), false);  // without the hold ring
+  drawScreen(*nb, Mode::Panel, settingsPage);
+  tr = Transition{};
+  tr.kind = Slide::PanelOpen;
+  tr.dragging = true;
+  tr.pos = 0;
 }
 
 void closeToFace(float v = 0) {
@@ -585,25 +670,18 @@ void closeToFace(float v = 0) {
   tr = Transition{};
   tr.kind = Slide::PanelClose;
   tr.pos = H;
-  if (v) springTo(0, v);
+  if (v) settleTo(0, v);
   else animateTo(0, motion::PANEL_MS, H);
 }
 
 void stepTransition() {
   if (tr.kind == Slide::None) return;
   if (tr.animating) {
-    if (tr.spring) {
-      bool done;
-      tr.pos = springPos(since(tr.start), done);
-      if (tr.kind == Slide::Face) tr.pos = constrain(tr.pos, (float)-W, (float)W);
-      if (done) tr.animating = false;
-    } else {
-      float t = tr.duration ? since(tr.start) / (float)tr.duration : 1;
-      tr.pos = tr.from + (tr.to - tr.from) * motion::easeOut(t);
-      if (t >= 1) {
-        tr.pos = tr.to;
-        tr.animating = false;
-      }
+    float t = tr.duration ? since(tr.start) / (float)tr.duration : 1;
+    tr.pos = tr.from + (tr.to - tr.from) * motion::easeOut(t);
+    if (t >= 1) {
+      tr.pos = tr.to;
+      tr.animating = false;
     }
     // A flick can carry a face past centre to the other side.
     if (tr.kind == Slide::Face && tr.pos != 0) prepareNeighbour(tr.pos);
@@ -631,8 +709,14 @@ void stepTransition() {
         tr = Transition{};
         dirty = true;
       }
+      landed();
       break;
     case Slide::PanelOpen:
+      if (tr.pos <= 0) {  // dragged up a little and let go: back to the face
+        tr = Transition{};
+        dirty = true;
+        break;
+      }
       std::swap(cur, nb);
       tr = Transition{};
       mode = Mode::Panel;
@@ -682,6 +766,10 @@ void sleepScreen() {
   pressed = screens::Button::None;
   tr = Transition{};
   faceMoving = false;
+  entrance.playing = false;  // decoration never moves with the screen off
+  marker.moving = false;
+  marker.minute = -1;
+  releaseUntil = 0;
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
   if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
@@ -957,7 +1045,8 @@ void activate(screens::Button b) {
       markSettingsChanged();
       break;
     case Button::Motion:
-      settings.reducedMotion = !settings.reducedMotion;
+      // Subtle, Expressive, Off, and round again.
+      settings.motion = (settings.motion + 1) % MOTION_LEVELS;
       markSettingsChanged();
       break;
     case Button::SyncNow:
@@ -1108,6 +1197,8 @@ void onFingerDown(const TouchSample &s) {
     finger.ignore = true;
     return;
   }
+  releaseUntil = 0;
+  cancelEntrance(true);  // a new touch ends a running entrance, never queues behind it
   if (tr.kind == Slide::Face) {
     // Catch a moving face where it is. A slide that was already committing
     // counts as done, so each quick swipe moves one more face.
@@ -1167,7 +1258,10 @@ void onFingerMove(const TouchSample &s) {
       tr.dragging = true;
       dirty = true;  // clears any hold ring
     }
+    if (mode == Mode::Face && finger.axis == Axis::Vertical && dy < 0 && haveSpare && motionOn()) startPanelDrag();
   }
+
+  if (tr.kind == Slide::PanelOpen && tr.dragging) tr.pos = constrain((float)-dy, 0.0f, (float)H);  // pinned to the finger
 
   if (tr.kind == Slide::Face && tr.dragging) {
     // Dragging a whole screen width lands on the neighbour and carries on, so
@@ -1194,7 +1288,13 @@ void onFingerUp() {
     else if (vx > motion::FLICK_PX_PER_MS) target = W;
     else if (tr.pos < -motion::COMMIT_PX) target = -W;
     else if (tr.pos > motion::COMMIT_PX) target = W;
-    springTo(target, vx);
+    settleTo(target, vx);
+    return;
+  }
+  if (tr.kind == Slide::PanelOpen && tr.dragging) {
+    // Same rule as before the panel followed the finger: far enough up, or flicked up, opens.
+    bool open = (dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS) && vy <= motion::FLICK_PX_PER_MS;
+    settleTo(open ? H : 0, -vy);
     return;
   }
   // Sideways swipes are scoped to the mode: faces on a face, pages on a paged
@@ -1215,9 +1315,22 @@ void onFingerUp() {
   if (finger.axis == Axis::None && pressed != screens::Button::None) {
     screens::Button b = pressed;
     pressed = screens::Button::None;
-    if (finger.repeats) refreshScreen(true);  // a held - or + already stepped; release adds nothing
-    else if (hitTest(finger.x, finger.y) == b) activate(b);
-    else refreshScreen(true);
+    if (finger.repeats) {
+      refreshScreen(true);  // a held - or + already stepped; release adds nothing
+    } else if (hitTest(finger.x, finger.y) == b) {
+      // The control keeps its accent briefly after acting (unless Motion is Off or the tap
+      // moved to another screen), drawn in the same frame as the change it made.
+      if (motionOn()) pressed = b;
+      Mode before = mode;
+      activate(b);
+      if (pressed == b && mode == before) releaseUntil = hal::ms() + motion::RELEASE_MS;
+      else if (pressed == b) {
+        pressed = screens::Button::None;
+        refreshScreen(true);
+      }
+    } else {
+      refreshScreen(true);
+    }
   }
 }
 
@@ -1227,7 +1340,7 @@ void onFingerUp() {
 void cancelFinger() {
   finger.down = false;
   if (finger.ignore) return;
-  if (tr.kind == Slide::Face && tr.dragging) springTo(0, 0);
+  if ((tr.kind == Slide::Face || tr.kind == Slide::PanelOpen) && tr.dragging) settleTo(0, 0);
   if (pressed != screens::Button::None) {
     pressed = screens::Button::None;
     refreshScreen(true);
@@ -1289,6 +1402,7 @@ void pollBoot() {
     boot.used = true;
     boot.checkOpened = false;
     noteLooking();
+    if (awake) cancelEntrance(true);
     if (!awake) wakeScreen();  // the waking press does nothing else
     else if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
     else if (mode == Mode::Face) boot.used = tr.kind != Slide::None;  // decided on release or at the hold time
@@ -1407,10 +1521,44 @@ void stepFace() {
     dirty = true;
   }
   uint32_t frameMs = currentFace() == FACE_RADAR ? motion::RADAR_FRAME_MS : motion::PHANTOM_FRAME_MS;
-  bool due = dirty || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
+
+  // The entrance runs at the slide frame rate and ends on its exact final state.
+  if (entrance.playing && (entrance.face != currentFace() || since(entrance.start) >= entrance.length)) {
+    if (entrance.face == currentFace()) entrance.finished++;
+    entrance.playing = false;
+    dirty = true;
+  }
+  // Orbit's marker moves on to a new minute only when the clock ticked into it with the face
+  // on screen; any other jump (wake, a sync, setting the time) just redraws it there.
+  if (faceMovesMarker(currentFace()) && c.timeValid) {
+    int minute = c.now.tm_hour * 60 + c.now.tm_min;
+    if (marker.minute >= 0 && minute == (marker.minute + 1) % 1440 && entrancesOn() && !entrance.playing) {
+      marker.moving = true;
+      marker.start = hal::ms();
+    }
+    marker.minute = minute;
+  }
+  if (marker.moving && (!faceMovesMarker(currentFace()) || since(marker.start) >= motion::MARKER_MS)) {
+    marker.moving = false;
+    dirty = true;
+  }
+  bool stepping = (entrance.playing || marker.moving) && since(lastPresent) >= motion::ENTRANCE_FRAME_MS;
+
+  bool due = dirty || stepping || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
   if (!due) return;
+#if DRIFT_DIAG
+  uint32_t t0 = micros();
+#endif
   renderFace(*cur, currentFace(), true);
   present(*cur);
+#if DRIFT_DIAG
+  if (entrance.playing || marker.moving) {
+    uint32_t used = micros() - t0;
+    diag.motionFrames++;
+    diag.motionUs += used;
+    diag.motionWorstUs = max(diag.motionWorstUs, used);
+  }
+#endif
   shownSecond = c.now.tm_sec;
   dirty = false;
 }
@@ -1528,7 +1676,11 @@ void stepDiag() {
   hal::log("diag: frames %lu, draw avg %lu us worst %lu us, push avg %lu us, heap %lu, psram %lu",
            (unsigned long)diag.frames, (unsigned long)(diag.renderUs / n), (unsigned long)diag.worstUs,
            (unsigned long)(diag.pushUs / n), (unsigned long)hal::freeHeap(), (unsigned long)hal::freePsram());
+  if (diag.motionFrames)
+    hal::log("diag: entrance and marker frames %lu, draw and push avg %lu us worst %lu us", (unsigned long)diag.motionFrames,
+             (unsigned long)(diag.motionUs / diag.motionFrames), (unsigned long)diag.motionWorstUs);
   diag.frames = diag.renderUs = diag.pushUs = diag.worstUs = 0;
+  diag.motionFrames = diag.motionUs = diag.motionWorstUs = 0;
   diag.lastLog = hal::ms();
 }
 #endif
@@ -1557,6 +1709,10 @@ int controls(screens::Control *out, int max) { return pagedMode() ? screens::con
 int page() { return pageFor(mode); }
 float beamAngle() { return faceContext(true).beamDeg; }
 const power::Controller &standbyController() { return standby; }
+bool entrancePlaying() { return entrance.playing; }
+uint32_t entrancesStarted() { return entrance.started; }
+uint32_t entrancesFinished() { return entrance.finished; }
+bool markerMoving() { return marker.moving; }
 
 const char *screenName() {
   static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone"};
@@ -1581,6 +1737,10 @@ void begin() {
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
+  settledFace = currentFace();
+  entrance.playing = marker.moving = false;
+  marker.minute = -1;
+  releaseUntil = 0;
 
   tft.init();
   applyTurn();  // sprites stay 240 x 240: the panel turns the picture as it is written
@@ -1673,13 +1833,19 @@ void loop() {
     refreshScreen(false);
   } else {
     stepRepeat();
+    if (releaseUntil && (int32_t)(hal::ms() - releaseUntil) >= 0) {
+      releaseUntil = 0;
+      if (!finger.down) pressed = screens::Button::None;  // the accent after a tap ends
+    }
     refreshScreen(false);
   }
+  if (mode != Mode::Face) entrance.playing = marker.moving = false;
 #if DRIFT_DIAG
   stepDiag();
 #endif
 
-  bool busy = tr.kind != Slide::None || fading || faceMoving || mode == Mode::Boot || finger.down || boot.down;
+  bool busy = tr.kind != Slide::None || fading || faceMoving || entrance.playing || marker.moving || mode == Mode::Boot ||
+              finger.down || boot.down || releaseUntil;
   hal::idle(busy ? 1 : 10);
 }
 

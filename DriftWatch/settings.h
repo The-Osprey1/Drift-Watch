@@ -9,8 +9,14 @@ constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
 // which stored no version; version 2 (v0.8.0) adds large text; version 3 (v0.9.0) adds
 // raise-to-wake and which way the screen faces relative to the motion sensor; version 4
 // (v0.10.0) adds the screen turn, the checked touch map, night mode, the learned clock drift
-// and the last time the clock was known.
-constexpr uint8_t SETTINGS_VERSION = 4;
+// and the last time the clock was known; version 5 (v0.12.0) turns the two-way Motion setting
+// into three levels.
+constexpr uint8_t SETTINGS_VERSION = 5;
+
+// How much the interface moves. Off: instant changes, no entrances, hands and the radar step once
+// a second. Subtle (the default): slides, settles and one short entrance after choosing a face.
+// Expressive: as Subtle, with each entrance played half as long again.
+enum MotionLevel : uint8_t { MOTION_OFF, MOTION_SUBTLE, MOTION_EXPRESSIVE, MOTION_LEVELS };
 
 // Night mode windows, in hours: raise-to-wake is off inside the window. Index 0 = night mode off.
 constexpr uint8_t NIGHT_FROM[] = {0, 22, 23, 0};
@@ -23,7 +29,7 @@ struct Settings {
   bool use12h = false;
   uint8_t face = 0;
   uint8_t brightnessLevel = 2;  // index into BRIGHTNESS_LEVELS
-  bool reducedMotion = false;   // slides and sweeps become instant cuts
+  uint8_t motion = MOTION_SUBTLE;  // MotionLevel; Off makes slides and sweeps instant cuts
   bool largeText = false;       // bigger text on the settings and setup screens; faces are unchanged
   bool raiseToWake = true;      // lifting the wrist turns the screen on
   bool twistToWake = true;      // so does a quick wrist twist out and back

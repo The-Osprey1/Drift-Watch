@@ -50,19 +50,32 @@ void cutBox(TFT_eSprite &s, int x, int y, int w, int h, int cut, uint16_t c, boo
   else strokePoly(s, p, 6, c);
 }
 
-void arc(TFT_eSprite &s, int r, int ir, float fromDeg, float toDeg, uint16_t c, bool smooth) {
+namespace {
+void arcAround(TFT_eSprite &s, int cx, int cy, int r, int ir, float fromDeg, float toDeg, uint16_t c, bool smooth,
+               uint16_t bg) {
   float span = toDeg - fromDeg;
   if (span <= 0) return;
   // TFT_eSPI measures from 6 o'clock, hence the 180 offset.
   if (span >= 360) {
-    s.drawArc(CX, CY, r, ir, 0, 360, c, col::BG, smooth);
+    s.drawArc(cx, cy, r, ir, 0, 360, c, bg, smooth);
     return;
   }
   uint32_t a = (uint32_t)lroundf(fmodf(fromDeg + 180 + 720, 360));
   uint32_t b = (uint32_t)lroundf(fmodf(toDeg + 180 + 720, 360));
   if (a == b) return;
-  s.drawArc(CX, CY, r, ir, a, b, c, col::BG, smooth);
+  s.drawArc(cx, cy, r, ir, a, b, c, bg, smooth);
 }
+}  // namespace
+
+void arc(TFT_eSprite &s, int r, int ir, float fromDeg, float toDeg, uint16_t c, bool smooth, uint16_t bg) {
+  arcAround(s, CX, CY, r, ir, fromDeg, toDeg, c, smooth, bg);
+}
+
+void arcAt(TFT_eSprite &s, int cx, int cy, int r, int ir, float fromDeg, float toDeg, uint16_t c, uint16_t bg) {
+  arcAround(s, cx, cy, r, ir, fromDeg, toDeg, c, true, bg);
+}
+
+void dot(TFT_eSprite &s, float x, float y, float r, uint16_t c, uint32_t bg) { s.drawWedgeLine(x, y, x, y, r, r, c, bg); }
 
 // ---- Segment digits --------------------------------------------------------
 // Unscaled digit cell is 34 x 64 units, leaning right.
@@ -92,10 +105,13 @@ void segment(TFT_eSprite &s, float ox, float oy, float sc, int seg, uint16_t c) 
   fillPoly(s, p, 6, c);
 }
 
-void digit(TFT_eSprite &s, float x, float y, float sc, int d, uint16_t c) {
-  uint8_t bits = d < 0 ? 0x40 : DIGIT_SEGS[d];  // -1 draws a dash
-  for (int i = 0; i < 7; i++)
+// d = -1 draws a dash, -2 nothing (a blank leading zero). Unlit segments get `ghost` if >= 0.
+void digit(TFT_eSprite &s, float x, float y, float sc, int d, uint16_t c, int32_t ghost) {
+  uint8_t bits = d == -2 ? 0 : d < 0 ? 0x40 : DIGIT_SEGS[d];
+  for (int i = 0; i < 7; i++) {
     if (bits & (1 << i)) segment(s, x, y, sc, i, c);
+    else if (ghost >= 0) segment(s, x, y, sc, i, (uint16_t)ghost);
+  }
 }
 }  // namespace
 
@@ -105,13 +121,15 @@ TimeLayout timeLayout(float cx, float cy, float height) {
   return {cx - total / 2, cy - height / 2, height, total, w, sc};
 }
 
-void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c) {
+void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c,
+              int32_t ghost) {
   const float sc = l.scale, w = l.digitW, sp = 6 * sc, cg = 6 * sc, cw = 8 * sc;
   const float xs[] = {l.x, l.x + w + sp, l.x + 2 * w + sp + 2 * cg + cw, l.x + 3 * w + 2 * sp + 2 * cg + cw};
   int ds[] = {hh / 10, hh % 10, mm / 10, mm % 10};
   for (int i = 0; i < 4; i++) {
-    if (i == 0 && valid && blankLeadingZero && ds[0] == 0) continue;
-    digit(s, xs[i], l.y, sc, valid ? ds[i] : -1, c);
+    bool blank = i == 0 && valid && blankLeadingZero && ds[0] == 0;
+    if (blank && ghost < 0) continue;
+    digit(s, xs[i], l.y, sc, blank ? -2 : valid ? ds[i] : -1, c, ghost);
   }
   // Colon: two diamonds, centred in the gap and following the lean.
   float colonX = l.x + 2 * w + sp + cg;

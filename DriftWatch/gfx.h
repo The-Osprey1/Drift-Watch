@@ -20,8 +20,12 @@ void strokePoly(TFT_eSprite &s, const Pt *p, int n, uint16_t c);
 void radialBar(TFT_eSprite &s, float deg, float r0, float r1, float w, uint16_t c);
 // Box with the top-left and bottom-right corners cut off.
 void cutBox(TFT_eSprite &s, int x, int y, int w, int h, int cut, uint16_t c, bool filled);
-// Ring segment clockwise from 12 o'clock.
-void arc(TFT_eSprite &s, int r, int ir, float fromDeg, float toDeg, uint16_t c, bool smooth = true);
+// Ring segment clockwise from 12 o'clock. `bg` is what its smoothed edges blend into.
+void arc(TFT_eSprite &s, int r, int ir, float fromDeg, float toDeg, uint16_t c, bool smooth = true, uint16_t bg = col::BG);
+// The same around any centre.
+void arcAt(TFT_eSprite &s, int cx, int cy, int r, int ir, float fromDeg, float toDeg, uint16_t c, uint16_t bg);
+// Smooth round dot at a fractional position. bg = 0x00FFFFFF blends with what is already there.
+void dot(TFT_eSprite &s, float x, float y, float r, uint16_t c, uint32_t bg = 0x00FFFFFF);
 
 // Segment-style time digits. Every digit cell has the same width, so the time
 // never shifts as it changes. `height` is in pixels.
@@ -29,7 +33,9 @@ struct TimeLayout {
   float x, y, height, width, digitW, scale;
 };
 TimeLayout timeLayout(float cx, float cy, float height);
-void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c);
+// `ghost` >= 0 also draws every unlit segment in that colour, like a phosphor display.
+void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c,
+              int32_t ghost = -1);
 
 // Battery: outline icon plus percentage text, centred on (cx, cy).
 // pct < 0 means the reading is unavailable.

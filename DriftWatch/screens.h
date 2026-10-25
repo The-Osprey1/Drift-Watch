@@ -52,7 +52,8 @@ struct View {
   Screen screen;
   int page;                 // clamped to the screen's page count
   bool large;               // large text
-  bool reducedMotion;
+  bool reducedMotion;       // Motion Off
+  uint8_t motion;           // MotionLevel, see settings.h
   int batteryPct;           // < 0 if unreadable
   int batteryMv;
   uint8_t brightnessLevel;  // 0..3

@@ -905,17 +905,17 @@ void scenarios() {
   touchDown(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
   moveTo(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2 + 24, 100);  // slides off: a drag is never a tap
   touchUp();
-  CHECK(!settings.reducedMotion, "a press that drags away does not toggle Motion");
+  CHECK(settings.motion == MOTION_SUBTLE, "a press that drags away does not change Motion");
   touchDown(c.hit.x + c.hit.w - 10, c.hit.y + c.hit.h / 2);
   moveTo(c.hit.x - 40, c.hit.y + c.hit.h / 2, 90);  // a page swipe that starts on a control
   touchUp();
   settle();
-  CHECK(!settings.reducedMotion && ui::page() == motionPage + 1, "a swipe that starts on a control changes page only (page %d)", ui::page() + 1);
+  CHECK(settings.motion == MOTION_SUBTLE && ui::page() == motionPage + 1, "a swipe that starts on a control changes page only (page %d)", ui::page() + 1);
   swipeRight();
   settle();
-  CHECK(tapButton(screens::Button::Motion) && settings.reducedMotion, "Motion switches to Reduced");
-  tapButton(screens::Button::Motion);
-  CHECK(!settings.reducedMotion, "and back to Full");
+  CHECK(tapButton(screens::Button::Motion) && settings.motion == MOTION_EXPRESSIVE, "Motion goes from Subtle to Expressive");
+  CHECK(tapButton(screens::Button::Motion) && settings.motion == MOTION_OFF, "then Off");
+  CHECK(tapButton(screens::Button::Motion) && settings.motion == MOTION_SUBTLE, "and back to Subtle");
 
   printf("Sync now: one sync at a time, and other settings keep working\n");
   int syncs = sim::syncsStarted;
@@ -1168,17 +1168,17 @@ void scenarios() {
   runFor(1000);
   frames = (ui::display().pixelsPushed - p0) / (240 * 240);
   CHECK(frames >= 25 && frames <= 31, "Phantom is drawn at about 30 frames a second (%llu)", (unsigned long long)frames);
-  pressBoot();  // Phantom is last: on to Digital
-  runFor(motion::FACE_MS + 300);
-  CHECK(settings.face == FACE_DIGITAL, "on Digital (face %d)", settings.face);
+  pressBoot();  // on to Orbit (v0.12.0), and past its half-second entrance
+  runFor(motion::FACE_MS + 300 + 600);
+  CHECK(settings.face == FACE_ORBIT, "on Orbit (face %d)", settings.face);
   p0 = ui::display().pixelsPushed;
   runFor(500);
   uint64_t perHalfSecond = ui::display().pixelsPushed - p0;
   CHECK(perHalfSecond <= 240 * 240, "an idle face pushes at most one frame per second (%llu px in 0.5 s)",
         (unsigned long long)perHalfSecond);
 
-  printf("Reduced motion\n");
-  settings.reducedMotion = true;
+  printf("Motion Off\n");
+  settings.motion = MOTION_OFF;
   int face6 = settings.face;
   touchDown(190, 120);
   moveTo(120, 120, 80);
@@ -1198,7 +1198,7 @@ void scenarios() {
   settle(1500);
   pressBoot();
   CHECK(screen() == "face", "and closes at once");
-  settings.reducedMotion = false;
+  settings.motion = MOTION_SUBTLE;
 
   printf("Warm restart skips the startup sequence\n");
   sim::cold = false;
@@ -1218,9 +1218,9 @@ void scenarios() {
   swipeLeft();
   CHECK(screen() == "panel" && ui::page() == 1, "pages change with a cut");
   goTo(screens::Button::Motion);
-  bool lessMotion = settings.reducedMotion;  // as loaded from the simulated flash by begin()
-  CHECK(tapButton(screens::Button::Motion) && settings.reducedMotion != lessMotion, "controls work");
-  tapButton(screens::Button::Motion);
+  uint8_t level = settings.motion;  // as loaded from the simulated flash by begin()
+  CHECK(tapButton(screens::Button::Motion) && settings.motion != level, "controls work");
+  while (settings.motion != level) tapButton(screens::Button::Motion);
   snap("lowmem_settings");
   pressBoot();
   settle();
@@ -1383,8 +1383,8 @@ void migration() {
   settings.largeText = true;  // must be replaced by the default, not kept from memory
   loadSettings();
   CHECK(!strcmp(settings.tz.c_str(), "GMT0BST,M3.5.0/1,M10.5.0") && settings.use12h && settings.face == 3 &&
-            settings.brightnessLevel == 1 && settings.reducedMotion,
-        "all v0.7.0 choices are kept");
+            settings.brightnessLevel == 1 && settings.motion == MOTION_OFF,
+        "all v0.7.0 choices are kept (reduced motion becomes Motion Off)");
   CHECK(!settings.largeText, "large text starts off");
   CHECK(settings.raiseToWake && settings.screenFacing == 0, "raise to wake starts on, screen direction not yet known");
   saveSettings();
@@ -1399,7 +1399,42 @@ void migration() {
   sim::flash.clear();
   settings = Settings{};
   loadSettings();
-  CHECK(settings.brightnessLevel == 2 && !settings.largeText && !settings.use12h, "a blank watch gets the defaults");
+  CHECK(settings.brightnessLevel == 2 && !settings.largeText && !settings.use12h && settings.motion == MOTION_SUBTLE,
+        "a blank watch gets the defaults, Motion Subtle");
+
+  printf("Saved settings from v0.11 move to the three motion levels (v0.12.0)\n");
+  for (bool less : {false, true}) {
+    sim::flash.clear();
+    p.begin("watch", false);
+    p.putUChar("ver", 4);
+    p.putUChar("face", FACE_PHANTOM);
+    p.putBool("lessmo", less);
+    p.end();
+    settings = Settings{};
+    loadSettings();
+    CHECK(settings.motion == (less ? MOTION_OFF : MOTION_SUBTLE) && settings.face == FACE_PHANTOM,
+          "v0.11 motion %s becomes %s (got %d)", less ? "Reduced" : "Full", less ? "Off" : "Subtle", settings.motion);
+  }
+  settings.motion = MOTION_EXPRESSIVE;
+  saveSettings();
+  settings = Settings{};
+  loadSettings();
+  p.begin("watch", true);
+  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == 5 && !p.getBool("lessmo", true),
+        "Expressive is kept, and older firmware flashed back would read full motion");
+  p.end();
+  settings.motion = MOTION_OFF;
+  saveSettings();
+  p.begin("watch", true);
+  CHECK(p.getBool("lessmo", false), "Off is also saved as reduced motion for older firmware");
+  p.end();
+  p.begin("watch", false);
+  p.putUChar("motion", 7);  // damaged
+  p.end();
+  loadSettings();
+  CHECK(settings.motion == MOTION_SUBTLE, "an out-of-range motion level becomes Subtle");
+  sim::flash.clear();
+  settings = Settings{};
 }
 
 // Interface flows added in v0.10.0: the touch check when the panel turns the other way, the
@@ -1861,7 +1896,7 @@ void touchDropoutScenarios() {
   printf("Touch: a dropped touch read is not a finger lift\n");
   sim::cold = false;
   ui::begin();
-  settings.reducedMotion = false;  // slides, so a drag can be caught mid-way
+  settings.motion = MOTION_SUBTLE;  // slides, so a drag can be caught mid-way
   settle(2500);
   CHECK(screen() == "face", "starts on the face, got %s", screen().c_str());
 
@@ -2242,11 +2277,11 @@ void phantomScenarios() {
   CHECK(f >= 25 && f <= 31, "awake: about 30 frames a second (%llu)", (unsigned long long)f);
   snap("phantom_awake");
 
-  settings.reducedMotion = true;
+  settings.motion = MOTION_OFF;
   runFor(1100);
   f = framesIn(3000);
   CHECK(f >= 2 && f <= 4, "reduced motion: one frame a second, the seconds step (%llu in 3 s)", (unsigned long long)f);
-  settings.reducedMotion = false;
+  settings.motion = MOTION_SUBTLE;
 
   sim::batteryMv = 3600;  // 15%
   runFor(61000);           // the next battery reading
@@ -2285,8 +2320,8 @@ void phantomScenarios() {
   pressBoot();
   settle();
 
-  // Six faces now: a swipe from Phantom wraps round to the first.
-  CHECK(FACE_COUNT == 6, "six faces (%d)", FACE_COUNT);
+  // Twelve faces since v0.12.0: a swipe from Phantom goes on to Orbit, and round to the first.
+  CHECK(FACE_COUNT == 12 && FACE_ORBIT == FACE_PHANTOM + 1, "twelve faces, the new ones after Phantom (%d)", FACE_COUNT);
   int seen = 0;
   for (int i = 0; i < FACE_COUNT; i++) {
     seen |= 1 << settings.face;
@@ -2395,6 +2430,243 @@ void noMemoryScenario() {
   spriteBudget16 = spriteBudget8 = -1;
 }
 
+// ---- Motion (v0.12.0) ----------------------------------------------------------------------
+// Waits for the face to come to rest; returns how long that took after the call.
+uint32_t untilFace(uint32_t limit = 2000) {
+  uint32_t t0 = sim::clockMs;
+  while (screen() != "face" && sim::clockMs - t0 < limit) ui::loop();
+  return sim::clockMs - t0;
+}
+
+void startOn(Face f) {
+  sim::cold = false;
+  settings = Settings{};
+  settings.touchCheckedTurn = settings.screenTurn = DISPLAY_ROTATION;
+  settings.touchMap = orient::expectedTouchMap(DISPLAY_ROTATION);
+  settings.face = f;
+  saveSettings();
+  ui::begin();
+  settle(2500);
+}
+
+void motionScenarios() {
+  printf("Motion: a released face settles by distance and speed, with no bounce\n");
+  startOn(FACE_STEALTH);
+  touchDown(200, 120);
+  moveTo(100, 120, 400, 20);  // a slow 100 px drag
+  runFor(150);                // the finger stops before lifting: not a flick
+  touchUp();
+  uint32_t ms = untilFace();
+  uint32_t want = motion::settleMs(140, false);
+  CHECK(settings.face == FACE_CORPO && ms >= want - 5 && ms <= want + 20, "slow drag lands in %u ms (expected %u)", ms, want);
+  swipe(200, 120, 140, 120, 40);  // a 60 px flick at about 1.5 px per ms
+  ms = untilFace();
+  CHECK(settings.face == FACE_HOLO && ms <= motion::SETTLE_FLICK_MS + 20, "a flick lands in %u ms (at most %u)", ms,
+        motion::SETTLE_FLICK_MS);
+  touchDown(150, 120);
+  moveTo(190, 120, 400, 20);  // 40 px, under the 70 px commit distance
+  runFor(150);
+  touchUp();
+  ms = untilFace();
+  CHECK(settings.face == FACE_HOLO && ms >= motion::CANCEL_MS - 5 && ms <= motion::CANCEL_MS + 20,
+        "a 40 px drag returns in %u ms (expected %u)", ms, motion::CANCEL_MS);
+  // While the finger is down the face is pinned to it: no easing, no lag.
+  touchDown(200, 120);
+  moveTo(150, 120, 100);
+  TFT_eSPI &d = ui::display();
+  std::vector<uint16_t> pinned = d.buf;
+  runFor(200);  // the finger holds still
+  CHECK(screen() == "face+slide" && d.buf == pinned, "a still finger holds the face exactly where it is");
+  touchUp();
+  untilFace();
+
+  printf("Motion: the settings panel follows the finger up\n");
+  touchDown(120, 200);
+  moveTo(120, 140, 200);
+  CHECK(screen() == "face+slide", "the panel is coming up under the finger, got %s", screen().c_str());
+  snap("panel_drag_60px");
+  moveTo(120, 190, 200);  // back down most of the way
+  runFor(150);
+  touchUp();
+  settle();
+  CHECK(screen() == "face", "let go low, it drops back to the face, got %s", screen().c_str());
+  swipeUp();
+  settle();
+  CHECK(screen() == "panel", "a full swipe up opens it, got %s", screen().c_str());
+
+  printf("Motion: a tapped control keeps its accent briefly\n");
+  goTo(screens::Button::Brightness);
+  screens::Control c;
+  find(screens::Button::Brightness, c);
+  touchDown(c.hit.x + c.hit.w / 2, c.hit.y + c.hit.h / 2);
+  runFor(60);
+  uint32_t p0 = d.pushes;
+  touchUp();
+  CHECK(d.pushes == p0 + 1, "the change and the accent are one frame (%u)", d.pushes - p0);
+  runFor(70);
+  CHECK(d.pushes == p0 + 1, "the accent stays for a moment");
+  runFor(60);
+  CHECK(d.pushes == p0 + 2, "then the control is drawn normally again (%u pushes)", d.pushes - p0);
+  pressBoot();
+  settle();
+
+  printf("Motion: entrances play once after choosing a face\n");
+  settings.face = FACE_PHANTOM;  // put straight on Phantom, as if it had been chosen before
+  runFor(1100);
+  uint32_t started = ui::entrancesStarted(), finished = ui::entrancesFinished();
+  swipeLeft();
+  untilFace();
+  CHECK(currentFaceForTest() == FACE_ORBIT && ui::entrancePlaying() && ui::entrancesStarted() == started + 1,
+        "landing on Orbit starts its entrance (face %d)", currentFaceForTest());
+  runFor(120);
+  snap("entrance_orbit_120ms");
+  uint64_t frames = framesIn(300);
+  CHECK(frames >= 14, "the entrance runs at the slide frame rate (%llu frames in 0.3 s)", (unsigned long long)frames);
+  runFor(200);
+  CHECK(!ui::entrancePlaying() && ui::entrancesFinished() == finished + 1, "and ends after 500 ms");
+  runFor(1000);
+  frames = framesIn(3000);
+  CHECK(frames <= 4, "afterwards the face draws at most once a second (%llu frames in 3 s)", (unsigned long long)frames);
+  CHECK(ui::entrancesStarted() == started + 1, "the entrance is not replayed");
+  // Its last frame is the settled face that Motion Off draws directly.
+  std::vector<uint16_t> entered = d.buf;
+  settings.motion = MOTION_OFF;
+  swipeUp();
+  pressBoot();
+  runFor(30);
+  CHECK(screen() == "face" && d.buf == entered, "the final entrance frame equals the Motion Off face");
+  settings.motion = MOTION_SUBTLE;
+
+  printf("Motion: a touch, BOOT, settings or sleep end an entrance at once\n");
+  swipeLeft();
+  untilFace();
+  runFor(100);
+  CHECK(currentFaceForTest() == FACE_LUNAR && ui::entrancePlaying(), "Lunar's entrance is playing");
+  finished = ui::entrancesFinished();
+  touchDown(120, 120);
+  CHECK(!ui::entrancePlaying(), "touch-down ends it on the same poll");
+  std::vector<uint16_t> cut = d.buf;
+  touchUp();
+  runFor(30);
+  CHECK(ui::entrancesFinished() == finished && d.buf == cut, "it is not finished later, and the face is already final");
+  started = ui::entrancesStarted();
+  runFor(1000);
+  CHECK(ui::entrancesStarted() == started, "nothing is queued behind it");
+
+  swipeLeft();
+  untilFace();
+  runFor(100);
+  CHECK(currentFaceForTest() == FACE_YOZAKURA && ui::entrancePlaying(), "Yozakura's entrance is playing");
+  sim::bootDown = true;
+  ui::loop();
+  CHECK(!ui::entrancePlaying(), "BOOT down ends it on the same poll");
+  runFor(700);  // held: settings open
+  sim::bootDown = false;
+  settle();
+  CHECK(screen() == "panel", "settings open, got %s", screen().c_str());
+  started = ui::entrancesStarted();
+  pressBoot();
+  settle(1000);
+  CHECK(screen() == "face" && ui::entrancesStarted() == started, "back from settings, the face is final with no replay");
+
+  // Sleep: a steady look arms wrist-down sleep, then BOOT (not a touch, which would hold it off)
+  // changes the face, and the arm drops during the entrance.
+  settings.motion = MOTION_EXPRESSIVE;  // a longer entrance, so the sleep lands inside it
+  sim::accel = LOOKING;
+  runFor(600);
+  pressBoot();
+  untilFace();
+  CHECK(currentFaceForTest() == FACE_HANAMI && ui::entrancePlaying(), "Hanami's entrance is playing");
+  sim::accel = HANGING;
+  bool sleptWhilePlaying = false;
+  for (int i = 0; i < 2000 && screen() != "asleep"; i++) {
+    sleptWhilePlaying = ui::entrancePlaying();
+    ui::loop();
+  }
+  CHECK(screen() == "asleep" && sleptWhilePlaying && !ui::entrancePlaying(), "going to sleep ends it");
+  p0 = d.pushes;
+  runFor(2000);
+  CHECK(d.pushes == p0, "and nothing is drawn with the screen off");
+
+  printf("Motion: waking never plays an entrance\n");
+  started = ui::entrancesStarted();
+  int face = settings.face;
+  swipe(200, 120, 80, 120, 90);  // a swipe that wakes the screen
+  settle(1000);
+  CHECK(screen() == "face" && settings.face == face && ui::entrancesStarted() == started,
+        "the waking swipe neither changes the face nor plays its entrance");
+  sim::accel = FLAT;
+  settings.motion = MOTION_SUBTLE;
+
+  printf("Motion: three fast swipes play one entrance, on the last face\n");
+  settings.face = FACE_PHANTOM;
+  runFor(1100);
+  started = ui::entrancesStarted();
+  for (int i = 0; i < 3; i++) {
+    if (i) runFor(60);
+    swipe(200, 120, 110, 120, 70);
+  }
+  untilFace();
+  CHECK(currentFaceForTest() == FACE_PHANTOM + 3 && ui::entrancesStarted() == started + 1 && ui::entrancePlaying(),
+        "one entrance, on face %d (started %u)", currentFaceForTest(), ui::entrancesStarted() - started);
+
+  printf("Motion: Expressive plays entrances half as long again\n");
+  settle(1500);
+  settings.motion = MOTION_EXPRESSIVE;
+  swipeLeft();  // to Hanami: 600 ms, 900 ms in Expressive
+  untilFace();
+  runFor(800);
+  CHECK(currentFaceForTest() == FACE_HANAMI && ui::entrancePlaying(), "still playing at 800 ms (face %d)", currentFaceForTest());
+  runFor(150);
+  CHECK(!ui::entrancePlaying(), "done by 950 ms");
+  settings.motion = MOTION_SUBTLE;
+
+  printf("Motion: Off changes faces with no entrance\n");
+  settings.motion = MOTION_OFF;
+  started = ui::entrancesStarted();
+  swipeLeft();
+  CHECK(currentFaceForTest() == FACE_WASTELAND && !ui::entrancePlaying() && ui::entrancesStarted() == started,
+        "Wasteland is shown final at once (face %d)", currentFaceForTest());
+  settings.motion = MOTION_SUBTLE;
+  swipeLeft();
+  untilFace();
+  CHECK(currentFaceForTest() == FACE_MOJAVE && ui::entrancePlaying(), "back on Subtle, Mojave plays its entrance");
+  pressBoot();  // BOOT goes on to Digital, which has no entrance
+  untilFace();
+  CHECK(currentFaceForTest() == FACE_DIGITAL && !ui::entrancePlaying(), "the older faces have none");
+
+  printf("Motion: Orbit's marker moves at a new minute\n");
+  settings.face = FACE_ORBIT;
+  runFor(1100);
+  int64_t into = (sim::wallAtZeroMs + sim::clockMs) % 60000;
+  sim::wallAtZeroMs += 58000 - into;  // two seconds before the next minute, the same minute
+  runFor(500);
+  CHECK(!ui::markerMoving(), "still before the minute");
+  uint32_t t0 = sim::clockMs;
+  while (!ui::markerMoving() && sim::clockMs - t0 < 2500) ui::loop();
+  int64_t at = (sim::wallAtZeroMs + sim::clockMs) % 60000;
+  CHECK(ui::markerMoving() && at < 50, "it starts as the minute turns (%lld ms in)", (long long)at);
+  frames = framesIn(170);
+  CHECK(frames >= 8, "and moves smoothly (%llu frames in 170 ms)", (unsigned long long)frames);
+  runFor(30);
+  CHECK(!ui::markerMoving(), "for 180 ms");
+  into = (sim::wallAtZeroMs + sim::clockMs) % 60000;
+  sim::wallAtZeroMs += 5 * 60000LL + 58000 - into;  // a jump of several minutes (a sync)
+  runFor(3000);
+  CHECK(!ui::markerMoving(), "a jump redraws it in place, then the next minute...");
+  into = (sim::wallAtZeroMs + sim::clockMs) % 60000;
+  settings.motion = MOTION_OFF;
+  sim::wallAtZeroMs += 59000 - into;
+  t0 = sim::clockMs;
+  bool moved = false;
+  while (sim::clockMs - t0 < 2000) {
+    ui::loop();
+    moved |= ui::markerMoving();
+  }
+  CHECK(!moved, "with Motion Off it steps");
+  settings.motion = MOTION_SUBTLE;
+}
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -2411,6 +2683,7 @@ int main(int argc, char **argv) {
   scenarios();
   touchDropoutScenarios();
   phantomScenarios();
+  motionScenarios();
   serialScenarios();
   powerScenarios();
   noMemoryScenario();  // last: it leaves the first frame 8-bit

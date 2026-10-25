@@ -78,11 +78,14 @@ constexpr float BOLD = 3.0f;
 
 namespace motion {
 // Durations in milliseconds. Everything is timed from elapsed time, not frames.
+// Three layers, in strict priority: interaction (drag, settle, panel, press), then a face's one
+// entrance after it is chosen, then data (seconds, Orbit's minute marker, battery, sync state).
 constexpr uint32_t PRESS_MS = 0;        // pressed states draw on the touch-down poll
+constexpr uint32_t RELEASE_MS = 100;    // a tapped control keeps its accent this long after release
 constexpr uint32_t STATE_MS = 140;      // small state changes
-constexpr uint32_t FACE_MS = 220;       // face-to-face slide
-constexpr uint32_t PANEL_MS = 260;      // status panel slide
-constexpr uint32_t WAKE_MS = 120;       // backlight fade-in after the time is already drawn
+constexpr uint32_t FACE_MS = 220;       // face-to-face slide started by BOOT
+constexpr uint32_t PANEL_MS = 220;      // status panel slide
+constexpr uint32_t WAKE_MS = 160;       // backlight fade-in after the time is already drawn
 constexpr uint32_t BOOT_MS = 900;       // cold-boot sequence
 // Radar: one turn of the beam every 3.6 s (16.7 turns a minute), like a real plan position
 // indicator, with a phosphor trail that fades exponentially behind it.
@@ -93,6 +96,12 @@ constexpr uint32_t RADAR_FRAME_MS = 33; // about 30 frames a second: 3.3 degrees
 constexpr int LOW_BATTERY_PCT = 20;     // below this the beam only moves with the seconds
 // Phantom: the balance wheel and seconds hand at about 30 frames a second while it is on screen.
 constexpr uint32_t PHANTOM_FRAME_MS = 33;
+// Entrances and Orbit's minute marker run at the slide frame rate, then the face drops back to
+// one frame a second.
+constexpr uint32_t ENTRANCE_FRAME_MS = 16;
+constexpr uint32_t MARKER_MS = 180;     // Orbit's minute marker moves 6 degrees at each new minute
+// Expressive plays each entrance this much longer (as a fraction: 3 / 2).
+constexpr uint32_t EXPRESSIVE_NUM = 3, EXPRESSIVE_DEN = 2;
 
 // Touch thresholds.
 constexpr int SLOP_PX = 10;             // movement before a touch counts as a drag
@@ -100,9 +109,21 @@ constexpr int COMMIT_PX = 70;           // drag distance that completes a face c
 constexpr float FLICK_PX_PER_MS = 0.45f; // or a quick flick
 constexpr uint32_t LONG_PRESS_MS = 600;
 
-// Spring used for slides after a swipe: it starts at the finger's speed and settles on the
-// target without bouncing (critically damped). OMEGA sets how quickly, per millisecond.
-constexpr float SPRING_OMEGA = 0.03f;   // half way in about 50 ms, settled in about 200 ms
+// After a release the face (or page) settles with ease-out, no bounce. The time depends on the
+// distance left: 120 ms plus 100 ms for a whole screen width, between 120 and 220 ms, and a
+// flick lands in at most 140 ms. Cancelling a short drag returns in 150 ms. The panel takes
+// 180 to 240 ms the same way.
+constexpr uint32_t SETTLE_MIN_MS = 120, SETTLE_MAX_MS = 220, SETTLE_FLICK_MS = 140, CANCEL_MS = 150;
+constexpr uint32_t PANEL_MIN_MS = 180, PANEL_MAX_MS = 240;
+inline uint32_t settleMs(float remainingPx, bool flick) {
+  float ms = SETTLE_MIN_MS + 100.0f * remainingPx / 240.0f;
+  uint32_t t = ms < SETTLE_MIN_MS ? SETTLE_MIN_MS : ms > SETTLE_MAX_MS ? SETTLE_MAX_MS : (uint32_t)(ms + 0.5f);
+  return flick && t > SETTLE_FLICK_MS ? SETTLE_FLICK_MS : t;
+}
+inline uint32_t panelSettleMs(float remainingPx) {
+  float ms = PANEL_MIN_MS + 60.0f * remainingPx / 240.0f;
+  return ms > PANEL_MAX_MS ? PANEL_MAX_MS : (uint32_t)(ms + 0.5f);
+}
 
 // Ease-out cubic: fast start, decisive stop, no overshoot.
 inline float easeOut(float t) {

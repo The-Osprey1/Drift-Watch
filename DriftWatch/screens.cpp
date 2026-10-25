@@ -407,7 +407,7 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       break;
     case Button::Motion:
       it.label = "Motion";
-      it.value = v.reducedMotion ? "Reduced" : "Full";
+      it.value = v.motion == MOTION_OFF ? "Off" : v.motion == MOTION_EXPRESSIVE ? "Expressive" : "Subtle";
       break;
     case Button::SetTime:
       // Like Sync now: the label is the state, the value is what a tap does.

@@ -5,18 +5,23 @@
 //   Hologram - cyan throughout, white inlays, magenta seconds hand.
 //   Radar    - yellow time, cyan hour ring, magenta seconds dot, phosphor green beam.
 //   Phantom  - black and silver, a crimson jewel in the movement, the seconds hand eclipsed.
+// The themed faces added in v0.12.0 (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave) are in
+// faces_themed.cpp.
 // Without a set clock no face shows a warning: the time is dashed, and a calm line says how
 // to set it (or what the sync is doing).
 #include "faces.h"
 #include <math.h>
+#include "face_parts.h"
 #include "gfx.h"
 #include "theme.h"
 
 using namespace layout;
 
+namespace faceparts {
 namespace {
 const char *DAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
 const char *MONTHS[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+}  // namespace
 
 int displayHour(const FaceContext &c) {
   if (!c.use12h) return c.now.tm_hour;
@@ -24,7 +29,6 @@ int displayHour(const FaceContext &c) {
   return h == 0 ? 12 : h;
 }
 
-// Shown while the clock is not set: what is happening, or what to do about it.
 const char *noTimeHint(const FaceContext &c) {
   if (c.sync == SyncView::Syncing) {
     static const char *stages[] = {"Syncing", "Joining Wi-Fi  1/3", "Finding zone  2/3", "Setting time  3/3"};
@@ -36,6 +40,43 @@ const char *noTimeHint(const FaceContext &c) {
 void dateText(const FaceContext &c, char *buf, size_t n) {
   snprintf(buf, n, "%s %d %s", DAYS[c.now.tm_wday], c.now.tm_mday, MONTHS[c.now.tm_mon]);
 }
+
+namespace {
+void swordShape(Pt *p, float deg, float len, float tail, float w) {
+  p[0] = gfx::alongHand(deg, -tail, -w * 0.55f);
+  p[1] = gfx::alongHand(deg, -tail, w * 0.55f);
+  p[2] = gfx::alongHand(deg, len * 0.72f, w);
+  p[3] = gfx::alongHand(deg, len, 0);
+  p[4] = gfx::alongHand(deg, len * 0.72f, -w);
+}
+}  // namespace
+
+void swordHand(TFT_eSprite &s, float deg, float len, float tail, float w, uint16_t fill, uint16_t inlay,
+               uint16_t edge, bool halo, uint16_t face) {
+  Pt p[5];
+  if (halo) {
+    swordShape(p, deg, len + 1.5f, tail + 1.5f, w + 1.6f);
+    gfx::fillPoly(s, p, 5, face);
+  }
+  if (edge) {
+    swordShape(p, deg, len, tail, w);
+    gfx::fillPoly(s, p, 5, edge);
+    swordShape(p, deg, len - 3.5f, tail - 2, w - 2);
+  } else {
+    swordShape(p, deg, len, tail, w);
+  }
+  gfx::fillPoly(s, p, 5, fill);
+  Pt in[] = {gfx::alongHand(deg, len * 0.30f, -w * 0.32f), gfx::alongHand(deg, len * 0.30f, w * 0.32f),
+             gfx::alongHand(deg, len * 0.70f, w * 0.42f), gfx::alongHand(deg, len * 0.84f, 0),
+             gfx::alongHand(deg, len * 0.70f, -w * 0.42f)};
+  gfx::fillPoly(s, in, 5, inlay);
+}
+}  // namespace faceparts
+
+namespace {
+using faceparts::dateText;
+using faceparts::displayHour;
+using faceparts::noTimeHint;
 
 // ---- Digital -----------------------------------------------------------------
 constexpr int DIGI_TIME_Y = 104;
@@ -121,34 +162,9 @@ const DialStyle HOLO = {
 
 const DialStyle &styleFor(Face f) { return f == FACE_CORPO ? CORPO : f == FACE_HOLO ? HOLO : STEALTH; }
 
-// Sword-shaped hand: narrow at the pivot, widest at 72% of its length, pointed tip.
-void swordShape(Pt *p, float deg, float len, float tail, float w) {
-  p[0] = gfx::alongHand(deg, -tail, -w * 0.55f);
-  p[1] = gfx::alongHand(deg, -tail, w * 0.55f);
-  p[2] = gfx::alongHand(deg, len * 0.72f, w);
-  p[3] = gfx::alongHand(deg, len, 0);
-  p[4] = gfx::alongHand(deg, len * 0.72f, -w);
-}
-
 void hand(TFT_eSprite &s, const DialStyle &st, float deg, float len, float tail, float w,
           uint16_t fill, uint16_t inlay, bool halo) {
-  Pt p[5];
-  if (halo) {
-    swordShape(p, deg, len + 1.5f, tail + 1.5f, w + 1.6f);
-    gfx::fillPoly(s, p, 5, st.face);
-  }
-  if (st.handEdge) {
-    swordShape(p, deg, len, tail, w);
-    gfx::fillPoly(s, p, 5, st.handEdge);
-    swordShape(p, deg, len - 3.5f, tail - 2, w - 2);
-  } else {
-    swordShape(p, deg, len, tail, w);
-  }
-  gfx::fillPoly(s, p, 5, fill);
-  Pt in[] = {gfx::alongHand(deg, len * 0.30f, -w * 0.32f), gfx::alongHand(deg, len * 0.30f, w * 0.32f),
-             gfx::alongHand(deg, len * 0.70f, w * 0.42f), gfx::alongHand(deg, len * 0.84f, 0),
-             gfx::alongHand(deg, len * 0.70f, -w * 0.42f)};
-  gfx::fillPoly(s, in, 5, inlay);
+  faceparts::swordHand(s, deg, len, tail, w, fill, inlay, st.handEdge, halo, st.face);
 }
 
 void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
@@ -491,7 +507,7 @@ void drawFaceStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
     case FACE_HOLO: dialStatic(s, f, c); break;
     case FACE_RADAR: radarStatic(s, c); break;
     case FACE_PHANTOM: ph::phantomStatic(s, c); break;
-    default: break;
+    default: faceparts::themedStatic(s, f, c); break;
   }
 }
 
@@ -503,7 +519,7 @@ void drawFaceLive(TFT_eSprite &s, Face f, const FaceContext &c) {
     case FACE_HOLO: dialLive(s, f, c); break;
     case FACE_RADAR: radarLive(s, c); break;
     case FACE_PHANTOM: ph::phantomLive(s, c); break;
-    default: break;
+    default: faceparts::themedLive(s, f, c); break;
   }
 }
 
@@ -521,12 +537,27 @@ uint32_t faceStaticKey(Face f, const FaceContext &c) {
 }
 
 const char *faceName(Face f) {
-  static const char *names[] = {"DIGITAL", "STEALTH", "CORPO", "HOLOGRAM", "RADAR", "Phantom"};
+  static const char *names[] = {"DIGITAL", "STEALTH", "CORPO",     "HOLOGRAM", "RADAR",     "Phantom",
+                                "Orbit",   "Lunar",   "Yozakura", "Hanami",   "Wasteland", "Mojave"};
   static_assert(sizeof names / sizeof names[0] == FACE_COUNT, "a name for every face");
   return f < FACE_COUNT ? names[f] : "?";
 }
 
 bool faceAnimates(Face f) { return f == FACE_RADAR || f == FACE_PHANTOM; }
+
+uint32_t faceEntranceMs(Face f) {
+  switch (f) {
+    case FACE_ORBIT: return orbit::ENTRANCE_MS;
+    case FACE_LUNAR: return 300;
+    case FACE_YOZAKURA: return yozakura::ENTRANCE_MS;
+    case FACE_HANAMI: return 600;
+    case FACE_WASTELAND: return 420;
+    case FACE_MOJAVE: return 600;
+    default: return 0;  // the six faces before v0.12.0 have no entrance
+  }
+}
+
+bool faceMovesMarker(Face f) { return f == FACE_ORBIT; }
 
 namespace phantom {
 namespace {

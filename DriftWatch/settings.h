@@ -1,6 +1,7 @@
 // Settings kept in flash (NVS) so they survive power loss and re-flashing the app.
 #pragma once
 #include <Arduino.h>
+#include "face_id.h"
 
 constexpr uint8_t BRIGHTNESS_LEVELS[] = {40, 100, 170, 255};
 constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
@@ -10,16 +11,12 @@ constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
 // raise-to-wake and which way the screen faces relative to the motion sensor; version 4
 // (v0.10.0) adds the screen turn, the checked touch map, night mode, the learned clock drift
 // and the last time the clock was known; version 5 (v0.12.0) turns the two-way Motion setting
-<<<<<<< HEAD
-// into three levels.
-=======
 // into three levels; version 6 (v0.13.0) keeps the zone Auto last found.
->>>>>>> origin/main
 constexpr uint8_t SETTINGS_VERSION = 6;
 
 // How much the interface moves. Off: instant changes, no entrances, hands and the radar step once
 // a second. Subtle (the default): slides, settles and one short entrance after choosing a face.
-// Expressive: as Subtle, with each entrance played half as long again.
+// Expressive: as Subtle, with each entrance played half as long again and ambient face touches.
 enum MotionLevel : uint8_t { MOTION_OFF, MOTION_SUBTLE, MOTION_EXPRESSIVE, MOTION_LEVELS };
 
 // Night mode windows, in hours: raise-to-wake is off inside the window. Index 0 = night mode off.
@@ -46,7 +43,7 @@ struct Settings {
   uint8_t night = 0;            // index into NIGHT_FROM / NIGHT_TO
   int32_t driftPpb = 0;         // learned clock error in parts per billion, + = the watch runs fast
   int64_t lastKnownTime = 0;    // wall clock when last saved, a starting point for Set time after power loss
-  uint16_t activeFaces = 0x0FFF; // Bitmask of enabled faces in hot swap (bits 0..11)
+  uint16_t activeFaces = ALL_FACES_MASK;  // bitmask of enabled faces in hot swap (0 .. FACE_COUNT - 1)
 };
 
 extern Settings settings;

@@ -412,17 +412,17 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       break;
     case Button::HotSwap: {
       it.label = "Hot swap";
-      uint16_t mask = v.activeFaces & 0x0FFF;
+      uint16_t mask = v.activeFaces & ALL_FACES_MASK;
       int count = 0;
       for (int i = 0; i < FACE_COUNT; i++) {
-        if (mask & (1 << i)) count++;
+        if (mask & (1u << i)) count++;
       }
       if (count >= FACE_COUNT || count == 0) {
-        it.value = "All (12)";
+        it.value = d.fmt("All (%d)", FACE_COUNT);
       } else if (count == 2) {
         int other = -1;
         for (int i = 0; i < FACE_COUNT; i++) {
-          if (mask & (1 << i)) {
+          if (mask & (1u << i)) {
             if (other == -1) other = i;
             else if (i != (int)(settings.face % FACE_COUNT)) other = i;
           }
@@ -525,7 +525,10 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
 }
 
 int settingsPerPage(const View &v) { return v.large ? 1 : 2; }
-int settingsPages(const View &v) { return SETTINGS_ITEMS / settingsPerPage(v); }
+int settingsPages(const View &v) {
+  int per = settingsPerPage(v);
+  return (SETTINGS_ITEMS + per - 1) / per;
+}
 
 int settingsControls(const View &v, int page, Control *out, int max) {
   int per = settingsPerPage(v), n = 0;
@@ -1045,7 +1048,7 @@ Button settingsItem(int i) {
                                                 Button::PhoneSync,  Button::SyncNow,    Button::WifiSetup,
                                                 Button::RaiseWake,  Button::Night,      Button::Motion,
                                                 Button::HotSwap,    Button::ScreenTurn, Button::TouchCheck,
-                                                Button::Details,    Button::None};
+                                                Button::Details};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
 }
 

@@ -570,7 +570,11 @@ const char *faceName(Face f) {
   return f < FACE_COUNT ? names[f] : "?";
 }
 
-bool faceAnimates(Face f) { (void)f; return true; }
+bool faceAnimates(Face f, bool expressive) {
+  if (f == FACE_RADAR || f == FACE_PHANTOM) return true;
+  if (!expressive) return false;
+  return f == FACE_DIGITAL || f == FACE_ORBIT || f == FACE_LUNAR || f == FACE_YOZAKURA;
+}
 
 uint32_t faceEntranceMs(Face f) {
   switch (f) {

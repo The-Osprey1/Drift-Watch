@@ -21,7 +21,7 @@ pmf-disabled|DriftWatch/net.cpp|  conf.sta.pmf_cfg.capable = true;|  conf.sta.pm
 wpa3-sae-h2e-disabled|DriftWatch/net.cpp|  conf.sta.sae_pwe_h2e = WPA3_SAE_PWE_BOTH;|  conf.sta.sae_pwe_h2e = WPA3_SAE_PWE_UNSPECIFIED;|network
 apostrophe-fallback-skipped|DriftWatch/net.cpp|  if (!hasCurly \&\& !hasStraight) return false;|  return false;|network
 entrance-outlives-touch|DriftWatch/ui.cpp|  cancelEntrance(true);  // a new touch ends a running entrance, never queues behind it|  (void)0;|interface
-entrance-on-wake|DriftWatch/ui.cpp|  wristDrop.reset();\n  // Draw the current time first|  wristDrop.reset();\n  startEntrance(currentFace());\n  // Draw the current time first|interface
+entrance-on-wake|DriftWatch/ui.cpp|  wristDrop.reset();\n  showLowNotice();|  wristDrop.reset();\n  startEntrance(currentFace());\n  showLowNotice();|interface
 petal-crosses-time|DriftWatch/faces_themed.cpp|    x = x > CX ? PROTECT_X1 + m : PROTECT_X0 - m;|    (void)m;|faces
 watchdog-not-fed|DriftWatch/ui.cpp|  hal::watchdogFeed();|  (void)0;|interface
 auto-zone-not-restored|DriftWatch/net.cpp|  if (settings.tz.isEmpty() \&\& !settings.autoTz.isEmpty()) {|  if (false) {|network

@@ -217,6 +217,13 @@ void screenVariants() {
     screens::View v = baseView();
     v.large = large;
     bad += renderAll(s, v, "settings");
+    int sp = screens::pageCount(s, v);
+    CHECK(sp == (large ? screens::SETTINGS_ITEMS : (screens::SETTINGS_ITEMS + 1) / 2),
+          "settings has %d pages in %s text", sp, large ? "large" : "normal");
+    v.page = sp - 1;
+    screens::Control lastCtl[2];
+    CHECK(screens::controls(s, v, lastCtl, 2) >= 1, "the last settings page is never blank (%s)", large ? "large" : "normal");
+    v.page = 0;
 
     // Clock and sync combinations on the settings screen (the sync control sits on the second page).
     struct C { const char *name; bool valid; net::Sync stage; net::Result result; net::Fail fail; const char *synced; };
@@ -865,7 +872,7 @@ void scenarios() {
   swipeLeft();
   settle();
   CHECK(ui::page() == 2, "and page 3 (page %d)", ui::page() + 1);
-  int lastPage = screens::SETTINGS_ITEMS / 2 - 1;
+  int lastPage = (screens::SETTINGS_ITEMS + 1) / 2 - 1;
   for (int i = 3; i <= lastPage; i++) {
     swipeLeft();
     settle();
@@ -1441,6 +1448,18 @@ void migration() {
   p.end();
   loadSettings();
   CHECK(settings.motion == MOTION_SUBTLE, "an out-of-range motion level becomes Subtle");
+  p.begin("watch", false);
+  p.putUShort("faces", 0);  // damaged: no face selected
+  p.end();
+  loadSettings();
+  CHECK(settings.activeFaces == ALL_FACES_MASK, "an empty face mask restores all faces");
+  phone::begin();
+  settings.face = FACE_CORPO;
+  CHECK(!strcmp(phone::apply("H=0x0041"), "ok") && settings.activeFaces == 0x0041 && settings.face == FACE_DIGITAL,
+        "phone H= saves the active face mask and moves off a hidden face");
+  settings = Settings{};
+  loadSettings();
+  CHECK(settings.activeFaces == 0x0041, "active faces survive a restart");
   sim::flash.clear();
   settings = Settings{};
 }
@@ -2726,6 +2745,29 @@ void motionScenarios() {
     moved |= ui::markerMoving();
   }
   CHECK(!moved, "with Motion Off it steps");
+  settings.motion = MOTION_SUBTLE;
+
+  printf("Motion: Expressive ambient touches run only on Expressive and pause on low battery\n");
+  sim::batteryMv = 3950;
+  startOn(FACE_ORBIT);
+  frames = framesIn(2000);
+  CHECK(frames <= 3, "Subtle Orbit draws once a second (%llu frames in 2 s)", (unsigned long long)frames);
+  settings.motion = MOTION_EXPRESSIVE;
+  runFor(100);
+  frames = framesIn(1000);
+  CHECK(frames >= 18 && frames <= 22, "Expressive Orbit runs its 20 fps twinkle (%llu frames in 1 s)", (unsigned long long)frames);
+  startOn(FACE_HANAMI);
+  settings.motion = MOTION_EXPRESSIVE;
+  runFor(100);
+  frames = framesIn(2000);
+  CHECK(frames <= 3, "Expressive faces with no ambient layer still draw once a second (%llu frames in 2 s)", (unsigned long long)frames);
+  sim::batteryMv = 3550;  // 10%: low battery pauses ambient motion and iris transitions
+  startOn(FACE_ORBIT);
+  settings.motion = MOTION_EXPRESSIVE;
+  runFor(100);
+  frames = framesIn(2000);
+  CHECK(frames <= 3, "low battery pauses Expressive ambient redraws (%llu frames in 2 s)", (unsigned long long)frames);
+  sim::batteryMv = 3950;
   settings.motion = MOTION_SUBTLE;
 }
 

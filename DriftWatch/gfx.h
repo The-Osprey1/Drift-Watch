@@ -39,13 +39,16 @@ void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, b
 
 // Battery: outline icon plus percentage text, centred on (cx, cy).
 // pct < 0 means the reading is unavailable.
-void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink);
+void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink, bool charging = false);  // bolt on the left when charging
 // Battery as a ring gauge with the percentage inside, for dials.
-void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink);
+void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink,
+                  bool charging = false);  // bolt in the gauge's opening when charging
 
 // Status icons drawn as shapes, so meaning never depends on colour alone.
 void iconCheck(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 void iconCross(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
+// A small lightning bolt, `h` pixels tall, centred on (cx, cy): the charging mark on the faces.
+void chargeBolt(TFT_eSprite &s, int cx, int cy, int h, uint16_t c);
 void iconAlert(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 
 // Small clock symbol: "in progress" without motion, used instead of a spinner with reduced motion.

@@ -43,7 +43,7 @@ run() {  # name, command...: runs one test, keeps its whole output in the output
   local name=$1; shift
   echo "== $name"
   if "$@" >"$OUT/$name.log" 2>"$OUT/$name.stderr.log"; then :; else status=1; fi
-  grep -E "FAIL|LAYOUT|EDGE|STATE|PHANTOM|ENTRANCE|checks passed|problems|ERROR|runtime error" "$OUT/$name.log" "$OUT/$name.stderr.log" \
+  grep -E "FAIL|LAYOUT|EDGE|STATE|PHANTOM|ENTRANCE|CHARGE|checks passed|problems|ERROR|runtime error" "$OUT/$name.log" "$OUT/$name.stderr.log" \
     | sed -E 's/^[^:]*:/  /' || true
 }
 run faces            "$BIN/render_faces" "$OUT"

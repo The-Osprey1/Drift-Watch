@@ -92,7 +92,7 @@ void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
     s.drawWideLine(a.x, a.y, b.x, b.y, major ? 2.0f : 1.2f, major ? col::N500 : col::N700, col::BG);
   }
 
-  gfx::battery(s, CX, 46, c.batteryPct, col::N100);
+  gfx::battery(s, CX, 46, c.batteryPct, col::N100, c.charging);
 
   gfx::TimeLayout tl = gfx::timeLayout(CX, DIGI_TIME_Y, type::TIME_HERO);
   gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
@@ -208,7 +208,7 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
   else strcpy(buf, "--");
   gfx::text(s, buf, wx + ww / 2, wy + wh / 2 + 1, type::MEDIUM, st.dateInk);
 
-  gfx::batteryGauge(s, CX, 168, 19, c.batteryPct, st.gaugeTrack, st.gaugeFill, st.gaugeInk);
+  gfx::batteryGauge(s, CX, 168, 19, c.batteryPct, st.gaugeTrack, st.gaugeFill, st.gaugeInk, c.charging);
 
   if (!c.timeValid) {
     // No hands without a time. Syncing is progress, not a fault, so it gets no warning sign.
@@ -296,7 +296,7 @@ void radarLive(TFT_eSprite &s, const FaceContext &c) {
     s.fillSmoothCircle(d.x, d.y, 3, glow > 0.5f ? col::WHITE : col::MAGENTA, col::BG);
   }
 
-  gfx::battery(s, CX, 72, c.batteryPct, col::N300);
+  gfx::battery(s, CX, 72, c.batteryPct, col::N300, c.charging);
   gfx::TimeLayout tl = gfx::timeLayout(CX, 114, type::TIME_INSET);
   gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
 
@@ -406,7 +406,7 @@ void phantomStatic(TFT_eSprite &s, const FaceContext &c) {
   if (c.timeValid) snprintf(buf, sizeof buf, "%d", c.now.tm_mday);
   else strcpy(buf, "--");
   gfx::text(s, buf, wx + ww / 2, wy + wh / 2 + 1, type::MEDIUM, col::N100);
-  gfx::batteryGauge(s, CX, 170, 18, c.batteryPct, RING_DIM, RING, col::N100);
+  gfx::batteryGauge(s, CX, 170, 18, c.batteryPct, RING_DIM, RING, col::N100, c.charging);
 
   if (!c.timeValid) {
     bool syncing = c.sync == SyncView::Syncing;
@@ -533,6 +533,7 @@ uint32_t faceStaticKey(Face f, const FaceContext &c) {
   k = k * 5 + (uint32_t)c.sync;
   k = k * 5 + c.syncStage;
   k = k * 2 + c.noWifi;
+  k = k * 2 + c.charging;
   return k;
 }
 

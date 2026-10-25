@@ -276,6 +276,7 @@ FaceContext faceContext(bool withSweep) {
   c.timeValid = net::timeIsValid();
   c.use12h = settings.use12h;
   c.batteryPct = batteryPct;
+  c.charging = batteryLife.charging();
   if (syncBusy()) c.sync = SyncView::Syncing;
   else if (net::lastResult() == net::Result::Failed) c.sync = SyncView::Failed;
   else c.sync = net::lastSync() ? SyncView::Synced : SyncView::Never;

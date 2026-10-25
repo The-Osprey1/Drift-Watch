@@ -28,12 +28,8 @@ constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estima
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
-<<<<<<< HEAD
-constexpr uint32_t BOOT_HOLD_MS = 350;                 // hero hold + smooth implosion at end of boot
-=======
 constexpr uint32_t LOW_NOTICE_MS = 5000;               // the low battery notice stays this long on the face
-constexpr uint32_t BOOT_HOLD_MS = 250;                 // name stays up briefly after the sequence
->>>>>>> origin/main
+constexpr uint32_t BOOT_HOLD_MS = 350;                 // hero hold + smooth implosion at end of boot
 constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts showing the hold ring
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
 constexpr uint32_t REPEAT_DELAY_MS = 450;               // holding - or + starts repeating after this
@@ -197,12 +193,12 @@ bool entrancesOn() { return motionOn() && haveSpare && haveCache; }
 uint32_t since(uint32_t t) { return hal::ms() - t; }
 Face currentFace() { return (Face)(settings.face % FACE_COUNT); }
 Face nextActiveFace(int cur, int dir) {
-  uint16_t mask = settings.activeFaces & 0x0FFF;
-  if (!mask) mask = 0x0FFF;
+  uint16_t mask = settings.activeFaces & ALL_FACES_MASK;
+  if (!mask) mask = ALL_FACES_MASK;
   int f = cur;
   for (int i = 0; i < FACE_COUNT; i++) {
     f = (f + FACE_COUNT + dir) % FACE_COUNT;
-    if (mask & (1 << f)) return (Face)f;
+    if (mask & (1u << f)) return (Face)f;
   }
   return (Face)cur;
 }
@@ -506,6 +502,8 @@ uint32_t screenKey() {
   k = k * 31 + (uint32_t)pressed;
   k = k * 31 + settings.brightnessLevel * 16 + settings.use12h * 8 + settings.largeText * 2 + net::timeIsValid();
   k = k * 7 + settings.motion;
+  k = k * 31 + (settings.activeFaces & ALL_FACES_MASK);
+  k = k * 31 + (uint32_t)currentFace();
   k = k * 131 + (uint32_t)(batteryPct + 1);
   k = k * 1031 + net::portalSecondsLeft();
   k = k * 31 + (uint32_t)net::lastSync();
@@ -871,7 +869,7 @@ void sleepScreen() {
 
 void startSleep() {
   if (!awake || sleeping) return;
-  if (!motionOn() || !haveSpare || tr.kind != Slide::None) {
+  if (!motionOn() || lowPower() || !haveSpare || tr.kind != Slide::None) {
     sleepScreen();
     return;
   }
@@ -897,9 +895,9 @@ void wakeScreen() {
   sleeping = false;
   lastActivity = hal::ms();
   wristDrop.reset();
-<<<<<<< HEAD
+  showLowNotice();
   // Render the clean target into `nb` and bloom outward with a smooth iris + backlight ramp.
-  if (motionOn() && haveSpare) {
+  if (motionOn() && !lowPower() && haveSpare) {
     if (mode == Mode::Face) {
       renderFace(*nb, currentFace(), false);
       shownSecond = faceContext(false).now.tm_sec;
@@ -909,19 +907,6 @@ void wakeScreen() {
       uiKey = screenKey();
     }
     irisWaking = true;
-=======
-  // Draw the current time first, then fade the light up over it.
-  showLowNotice();
-  if (mode == Mode::Face) {
-    renderFace(*cur, currentFace(), false);
-    present(*cur);
-    shownSecond = faceContext(false).now.tm_sec;
-    dirty = false;
-  } else {
-    refreshScreen(true);
-  }
-  if (motionOn()) {
->>>>>>> origin/main
     fading = true;
     irisStart = fadeStart = hal::ms();
     gfx::irisTransition(*cur, *nb, 0.04f, faceTheme(currentFace()).primary, true);
@@ -1242,13 +1227,13 @@ void activate(screens::Button b) {
       openSetup();
       return;
     case Button::HotSwap: {
-      uint16_t mask = settings.activeFaces & 0x0FFF;
-      if (mask != 0x0FFF) {
-        settings.activeFaces = 0x0FFF;  // restore all 12
+      uint16_t mask = settings.activeFaces & ALL_FACES_MASK;
+      if (mask != ALL_FACES_MASK) {
+        settings.activeFaces = ALL_FACES_MASK;  // restore all faces
       } else {
         // default 2-face pair: current face + Orbit (or Digital if currently on Orbit)
         int pair = (settings.face % FACE_COUNT == FACE_ORBIT) ? FACE_DIGITAL : FACE_ORBIT;
-        settings.activeFaces = (1 << (settings.face % FACE_COUNT)) | (1 << pair);
+        settings.activeFaces = (uint16_t)((1u << (settings.face % FACE_COUNT)) | (1u << pair));
       }
       saveSettings();
       markSettingsChanged();
@@ -1733,11 +1718,12 @@ void stepBoot() {
 void stepFace() {
   FaceContext c = faceContext(false);
   lastMinute = c.now.tm_min;
-  // The radar beam and Phantom's movement run all the time their face is on screen, unless
-  // motion is reduced, the battery is low, or memory is short and there is no cached dial to
-  // draw over (then they step with the seconds, drawn once a second). With the screen off or
-  // another screen up this is not called at all.
-  bool moving = faceAnimates(currentFace()) && motionOn() && !lowPower() && haveCache;
+  // The radar beam and Phantom's movement run all the time their face is on screen (and
+  // Expressive adds ambient touches on Digital, Orbit, Lunar and Yozakura), unless motion is
+  // off, the battery is low, or memory is short and there is no cached dial to draw over (then
+  // they step with the seconds, drawn once a second). With the screen off or another screen up
+  // this is not called at all.
+  bool moving = faceAnimates(currentFace(), settings.motion == MOTION_EXPRESSIVE) && motionOn() && !lowPower() && haveCache;
   if (moving != faceMoving) {
     faceMoving = moving;
     sweepStart = hal::ms();
@@ -2041,11 +2027,7 @@ void begin() {
     fading = true;
     fadeStart = hal::ms();
   }
-<<<<<<< HEAD
-=======
-  hal::backlight(backlightLevel());
   hal::log("boot: done, %s", sequence ? "startup sequence" : "face");
->>>>>>> origin/main
 }
 
 void loop() {

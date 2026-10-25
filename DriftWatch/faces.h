@@ -4,16 +4,8 @@
 #pragma once
 #include <TFT_eSPI.h>
 #include <time.h>
+#include "face_id.h"
 #include "theme.h"
-
-// Swipe order. The numbers are stored in the settings, so new faces only ever go at the end.
-// v0.12.0 adds three pairs of themed faces, a digital and an analog one each: Space (Orbit,
-// Lunar), Sakura (Yozakura, Hanami) and Fallout (Wasteland, Mojave).
-enum Face : uint8_t {
-  FACE_DIGITAL, FACE_STEALTH, FACE_CORPO, FACE_HOLO, FACE_RADAR, FACE_PHANTOM,
-  FACE_ORBIT, FACE_LUNAR, FACE_YOZAKURA, FACE_HANAMI, FACE_WASTELAND, FACE_MOJAVE,
-  FACE_COUNT
-};
 
 enum class SyncView : uint8_t { Synced, Syncing, Failed, Never };
 
@@ -51,8 +43,9 @@ void drawFaceLive(TFT_eSprite &s, Face f, const FaceContext &c);
 uint32_t faceStaticKey(Face f, const FaceContext &c);
 const char *faceName(Face f);
 FaceTheme faceTheme(Face f);
-// Faces that need frames between seconds while `animate` is on.
-bool faceAnimates(Face f);
+// Faces that need frames between seconds while `animate` is on. `expressive` adds the ambient
+// touches (colon pulse, scan line, star twinkle, petal shimmer) to Subtle's Radar and Phantom.
+bool faceAnimates(Face f, bool expressive = false);
 // Length of the face's entrance, played once after the face is chosen (never on wake), or 0 if
 // it has none. Only the decoration moves: the time is correct from its first frame.
 uint32_t faceEntranceMs(Face f);

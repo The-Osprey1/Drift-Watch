@@ -10,6 +10,8 @@ uint8_t migrateSettings(Settings &s, uint8_t storedVersion) {
   // Version 2 to 3: raise-to-wake is new and starts on; the screen direction is not known yet.
   // Version 3 to 4: the screen turn starts at the board default (loadSettings), so the touch
   // check runs once on the first start; night mode starts off and no drift is known.
+  // Version 4 to 5: Motion Reduced becomes Off and Full becomes Subtle (loadSettings reads the
+  // old key when the new one is missing).
   // Values are range-checked for every version, so a damaged entry cannot crash a face lookup.
   (void)storedVersion;
   if (s.brightnessLevel >= BRIGHTNESS_LEVEL_COUNT) s.brightnessLevel = 2;
@@ -20,6 +22,7 @@ uint8_t migrateSettings(Settings &s, uint8_t storedVersion) {
     s.touchCheckedTurn = TOUCH_NOT_CHECKED;
   }
   if (s.night >= NIGHT_CHOICES) s.night = 0;
+  if (s.motion >= MOTION_LEVELS) s.motion = MOTION_SUBTLE;
   if (s.driftPpb > 30000000 || s.driftPpb < -30000000) s.driftPpb = 0;  // over 3%: not a real clock error
   return SETTINGS_VERSION;
 }
@@ -32,7 +35,9 @@ void loadSettings() {
   settings.use12h = p.getBool("h12", false);
   settings.face = p.getUChar("face", 0);
   settings.brightnessLevel = p.getUChar("blevel", 2);
-  settings.reducedMotion = p.getBool("lessmo", false);
+  // v0.11 and earlier kept only "lessmo" (reduced motion on or off).
+  if (p.isKey("motion")) settings.motion = p.getUChar("motion", MOTION_SUBTLE);
+  else settings.motion = p.getBool("lessmo", false) ? MOTION_OFF : MOTION_SUBTLE;
   settings.largeText = p.isKey("bigtext") && p.getBool("bigtext", false);
   settings.raiseToWake = !p.isKey("raise") || p.getBool("raise", true);
   settings.twistToWake = !p.isKey("twist") || p.getBool("twist", true);
@@ -55,7 +60,8 @@ void saveSettings() {
   p.putBool("h12", settings.use12h);
   p.putUChar("face", settings.face);
   p.putUChar("blevel", settings.brightnessLevel);
-  p.putBool("lessmo", settings.reducedMotion);
+  p.putUChar("motion", settings.motion);
+  p.putBool("lessmo", settings.motion == MOTION_OFF);  // so older firmware flashed back keeps the choice
   p.putBool("bigtext", settings.largeText);
   p.putBool("raise", settings.raiseToWake);
   p.putBool("twist", settings.twistToWake);

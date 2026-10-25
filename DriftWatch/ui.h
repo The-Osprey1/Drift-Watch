@@ -5,7 +5,7 @@
 // Controls
 //   on a face
 //     swipe left / right     next / previous face (the face follows your finger)
-//     swipe up, or hold      open settings (a ring grows while you hold)
+//     swipe up, or hold      open settings (the panel follows the finger up; a ring grows while you hold)
 //     BOOT, short press      next face (on release)
 //     BOOT, hold 0.6 s       open settings
 //   on settings, details, setup or set time
@@ -31,4 +31,9 @@ int controls(screens::Control *out, int max);
 int page();
 float beamAngle();  // the radar beam's angle now, < 0 when there is none
 const power::Controller &standbyController();  // the screen-off waits, for the simulation and the log
+// Entrances and Orbit's minute marker, for the simulation.
+bool entrancePlaying();
+uint32_t entrancesStarted();
+uint32_t entrancesFinished();
+bool markerMoving();
 }

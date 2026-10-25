@@ -6,7 +6,13 @@
 #include <time.h>
 
 // Swipe order. The numbers are stored in the settings, so new faces only ever go at the end.
-enum Face : uint8_t { FACE_DIGITAL, FACE_STEALTH, FACE_CORPO, FACE_HOLO, FACE_RADAR, FACE_PHANTOM, FACE_COUNT };
+// v0.12.0 adds three pairs of themed faces, a digital and an analog one each: Space (Orbit,
+// Lunar), Sakura (Yozakura, Hanami) and Fallout (Wasteland, Mojave).
+enum Face : uint8_t {
+  FACE_DIGITAL, FACE_STEALTH, FACE_CORPO, FACE_HOLO, FACE_RADAR, FACE_PHANTOM,
+  FACE_ORBIT, FACE_LUNAR, FACE_YOZAKURA, FACE_HANAMI, FACE_WASTELAND, FACE_MOJAVE,
+  FACE_COUNT
+};
 
 enum class SyncView : uint8_t { Synced, Syncing, Failed, Never };
 
@@ -25,6 +31,12 @@ struct FaceContext {
   uint32_t animMs;    // monotonic time for decorative motion that is not the time of day
   bool animate;       // smooth motion allowed now: off with reduced motion, low battery or no
                       // cached dial, when hands step once a second and mechanisms stand still
+  // v0.12.0. Left at zero, both mean settled: the face is drawn in its final state, which is
+  // exactly what Motion Off shows and where every entrance ends.
+  bool entering;      // the face's entrance is playing
+  uint32_t entranceMs;  // time into the entrance, on the face's own timeline (see faceEntranceMs)
+  bool markerMoving;  // Orbit: the minute marker is moving on to the new minute
+  uint32_t markerMs;  // time since that minute began, 0 .. motion::MARKER_MS
 };
 
 // Draws the parts that only change once a minute (or when the date, battery
@@ -37,6 +49,11 @@ uint32_t faceStaticKey(Face f, const FaceContext &c);
 const char *faceName(Face f);
 // Faces that need frames between seconds while `animate` is on.
 bool faceAnimates(Face f);
+// Length of the face's entrance, played once after the face is chosen (never on wake), or 0 if
+// it has none. Only the decoration moves: the time is correct from its first frame.
+uint32_t faceEntranceMs(Face f);
+// Faces whose minute marker moves at a new minute (Orbit), instead of jumping.
+bool faceMovesMarker(Face f);
 
 // Phantom: a dark dial with an opening at 12 o'clock (328 to 32 degrees) onto a movement with a
 // 4 Hz balance wheel. The seconds hand slips under the opening's lip and is hidden from 58 s to
@@ -64,4 +81,30 @@ Needle needleAt(float s, bool smooth);
 float reboundDeg(float s);           // the rebound alone, 0 outside 5 s .. 5 s + REBOUND_S
 float balanceDeg(uint32_t animMs);   // balance wheel angle; 0 is its rest position
 bool inAperture(float deg);
+}
+
+// Yozakura's entrance: two petals fall on curved paths beside the time and date, which they never
+// cross. Pure functions, so the tests can check every millisecond of both paths.
+namespace yozakura {
+constexpr int PROTECT_X0 = 38, PROTECT_Y0 = 72, PROTECT_X1 = 202, PROTECT_Y1 = 164;  // time and date
+constexpr uint32_t ENTRANCE_MS = 900;
+constexpr int PETALS = 2;
+struct Petal {
+  bool visible;
+  float x, y;    // centre, px
+  float rot;     // degrees
+  float size;    // half length, px
+  float alpha;   // 0..1, fading near the end of its fall
+};
+Petal petalAt(int i, uint32_t ms);
+}
+
+// Orbit: the minute marker on the orbit track, in degrees clockwise from 12.
+namespace orbit {
+constexpr float TRACK_R = 104;
+constexpr uint32_t ENTRANCE_MS = 500;
+// `minuteDeg` is the true minute (6 degrees a minute). In the entrance the marker eases through
+// its last 25 degrees; at a new minute it moves the last 6 over motion::MARKER_MS.
+float markerDeg(float minuteDeg, const FaceContext &c);
+bool markerShown(const FaceContext &c);
 }

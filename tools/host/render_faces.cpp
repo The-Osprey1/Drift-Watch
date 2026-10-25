@@ -194,6 +194,140 @@ int main(int argc, char **argv) {
     writePpm(path, frame);
   }
 
+  // ---- Entrances (v0.12.0) ----------------------------------------------------------------
+  auto ent = [&](bool ok, const char *fmt, auto... args) {
+    if (!ok) {
+      printf("  ENTRANCE ");
+      if constexpr (sizeof...(args) == 0) fputs(fmt, stdout);
+      else printf(fmt, args...);
+      printf("\n");
+      problems++;
+    }
+  };
+  TFT_eSprite other(&screen);
+  other.createSprite(240, 240);
+  auto draw = [&](TFT_eSprite &into, Face f, FaceContext ctx) {
+    drawFaceStatic(into, f, ctx);
+    drawFaceLive(into, f, ctx);
+  };
+  auto at = [&](tm t, bool entering, uint32_t ms) {
+    FaceContext ctx{t, true, false, 64, SyncView::Synced, 0, false, -1};
+    ctx.entering = entering;
+    ctx.entranceMs = ms;
+    return ctx;
+  };
+  const uint32_t SPEC_MS[] = {0, 0, 0, 0, 0, 0, 500, 300, 900, 600, 420, 600};
+  static_assert(sizeof SPEC_MS / sizeof SPEC_MS[0] == FACE_COUNT, "a length for every face");
+  tm A = makeTime(10, 9, 30), B = makeTime(14, 48, 30);  // hands clear of the lower dial, seconds alike
+  std::vector<uint16_t> settledA, settledB;
+  for (int fi = 0; fi < FACE_COUNT; fi++) {
+    Face f = (Face)fi;
+    uint32_t len = faceEntranceMs(f);
+    ent(len == SPEC_MS[fi], "%s entrance is %u ms (spec %u)", faceName(f), len, SPEC_MS[fi]);
+    if (!len) continue;
+    draw(frame, f, at(A, false, 0));
+    settledA = frame.buf;
+    draw(frame, f, at(B, false, 0));
+    settledB = frame.buf;
+    // The time's pixels: inside 96 px of the centre, where 10:09 and 14:48 differ. Orbit's
+    // marker on its track (104 px) is outside, and moves in the entrance by design.
+    std::vector<int> timePx;
+    for (int i = 0; i < 240 * 240; i++)
+      if (settledA[i] != settledB[i] && hypotf(i % 240 - 120, i / 240 - 120) < 96) timePx.push_back(i);
+    ent(timePx.size() > 40, "%s: the time covers %zu px", faceName(f), timePx.size());
+    // Every entrance frame, from the first, shows exactly the settled time.
+    int wrong = 0, worstMs = -1;
+    for (uint32_t ms = 0; ms <= len; ms += 10) {
+      draw(frame, f, at(A, true, ms));
+      int bad = 0;
+      for (int i : timePx) bad += frame.buf[i] != settledA[i];
+      if (bad > wrong) wrong = bad, worstMs = ms;
+    }
+    ent(wrong == 0, "%s: %d time pixels differ from the settled face at %d ms", faceName(f), wrong, worstMs);
+    // The last frame is the settled face (what Motion Off draws), pixel for pixel.
+    for (uint32_t ms : {len, len + 1, len + 5000}) {
+      draw(frame, f, at(A, true, ms));
+      int diff = 0;
+      for (int i = 0; i < 240 * 240; i++) diff += frame.buf[i] != settledA[i];
+      ent(diff == 0, "%s: the frame at %u ms differs from the settled face in %d px", faceName(f), ms, diff);
+    }
+    // Something does move: halfway through is not the settled face.
+    draw(frame, f, at(A, true, len / 2));
+    int moved = 0;
+    for (int i = 0; i < 240 * 240; i++) moved += frame.buf[i] != settledA[i];
+    ent(moved > 50, "%s: halfway through, the entrance differs from the end in only %d px", faceName(f), moved);
+    // Storyboard: 0 ms, a quarter, half, three quarters, and the final state.
+    for (int k = 0; k <= 4; k++) {
+      uint32_t ms = len * k / 4;
+      draw(frame, f, at(A, k < 4, ms));
+      char path[256];
+      snprintf(path, sizeof path, "%s/storyboard_%s_%d_%04ums.ppm", outDir, faceName(f), k, k < 4 ? ms : len);
+      writePpm(path, frame);
+    }
+  }
+  // Old faces are untouched by entrance fields.
+  for (int fi = 0; fi < FACE_PHANTOM; fi++) {
+    draw(frame, (Face)fi, at(A, false, 0));
+    draw(other, (Face)fi, at(A, true, 0));
+    ent(frame.buf == other.buf, "%s changes with entrance fields it does not use", faceName((Face)fi));
+  }
+
+  // Yozakura: no petal ever enters the time and date block, checked on the pure paths every
+  // millisecond (with the petal's reach in any rotation) and on the drawn pixels every 2 ms.
+  {
+    using namespace yozakura;
+    int inside = 0, firstMs = -1;
+    for (uint32_t ms = 0; ms <= ENTRANCE_MS + 50; ms++)
+      for (int i = 0; i < PETALS; i++) {
+        Petal p = petalAt(i, ms);
+        if (!p.visible) continue;
+        float reach = p.size * 1.05f + 1;
+        if (p.x + reach > PROTECT_X0 && p.x - reach < PROTECT_X1 && p.y + reach > PROTECT_Y0 && p.y - reach < PROTECT_Y1) {
+          if (firstMs < 0) firstMs = ms;
+          inside++;
+        }
+      }
+    ent(inside == 0, "Yozakura: a petal reaches into the protected block %d times, first at %d ms", inside, firstMs);
+    bool any = false;
+    for (int i = 0; i < PETALS; i++) any |= petalAt(i, 400).visible;
+    ent(any && !petalAt(0, ENTRANCE_MS).visible && !petalAt(1, ENTRANCE_MS).visible, "Yozakura: petals fall, and are gone at the end");
+    draw(frame, FACE_YOZAKURA, at(A, false, 0));
+    settledA = frame.buf;
+    int px = 0;
+    for (uint32_t ms = 0; ms <= ENTRANCE_MS; ms += 2) {
+      draw(frame, FACE_YOZAKURA, at(A, true, ms));
+      for (int y = PROTECT_Y0; y <= PROTECT_Y1; y++)
+        for (int x = PROTECT_X0; x <= PROTECT_X1; x++) px += frame.buf[y * 240 + x] != settledA[y * 240 + x];
+    }
+    ent(px == 0, "Yozakura: %d decorative pixels drawn inside the time and date block", px);
+  }
+
+  // Orbit's marker: eases its last 25 degrees into the true minute, never past it, and moves 6
+  // degrees at a new minute.
+  {
+    FaceContext c = at(A, true, 150);
+    float m = 9 * 6, last = -1e9f;
+    bool mono = true;
+    for (uint32_t ms = 150; ms <= 600; ms++) {
+      c.entranceMs = ms;
+      float d = orbit::markerDeg(m, c);
+      mono &= d >= last && d <= m;
+      last = d;
+    }
+    c.entranceMs = 150;
+    ent(fabsf(orbit::markerDeg(m, c) - (m - 25)) < 0.01f && mono && last == m && !orbit::markerShown(at(A, true, 149)),
+        "Orbit: the marker appears at 150 ms 25 degrees back and eases forward into the minute");
+    c = at(A, false, 0);
+    c.markerMoving = true;
+    c.markerMs = 0;
+    float d0 = orbit::markerDeg(m, c);
+    c.markerMs = 90;
+    float d1 = orbit::markerDeg(m, c);
+    c.markerMs = motion::MARKER_MS;
+    ent(fabsf(d0 - (m - 6)) < 0.01f && d1 > m - 6 && d1 < m && orbit::markerDeg(m, c) == m,
+        "Orbit: at a new minute the marker moves 6 degrees");
+  }
+
   printf("%d text edge or state problems\n", problems);
   return problems ? 1 : 0;
 }

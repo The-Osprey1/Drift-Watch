@@ -22,13 +22,18 @@ namespace {
 constexpr uint32_t SCREEN_TIMEOUT_MS = 15000;
 constexpr uint32_t RESULT_TIMEOUT_MS = 30000;          // a setup result stays up longer, to be read and acted on
 constexpr uint32_t RESYNC_MS = 6UL * 60 * 60 * 1000;   // every 6 hours
-constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync
+constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync; doubles with each failure in a row
 constexpr uint32_t BATTERY_READ_MS = 10000;
 constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estimate needs no more, and the sleeps get longer
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
+<<<<<<< HEAD
 constexpr uint32_t BOOT_HOLD_MS = 350;                 // hero hold + smooth implosion at end of boot
+=======
+constexpr uint32_t LOW_NOTICE_MS = 5000;               // the low battery notice stays this long on the face
+constexpr uint32_t BOOT_HOLD_MS = 250;                 // name stays up briefly after the sequence
+>>>>>>> origin/main
 constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts showing the hold ring
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
 constexpr uint32_t REPEAT_DELAY_MS = 450;               // holding - or + starts repeating after this
@@ -93,9 +98,16 @@ uint32_t releaseUntil = 0;  // a tapped control keeps its pressed look until the
 
 int batteryPct = -1, batteryMv = -1;
 battery::Estimate batteryLife;
+battery::LowWarning lowWarning;
+// The low battery notice: waiting for the face to be on screen, then shown until `until`.
+struct LowNotice {
+  bool pending = false, urgent = false;
+  uint32_t until = 0;  // 0 = not showing
+} lowNotice;
 uint32_t lastBatteryRead = 0;
 uint32_t nextSyncAt = 0;
 uint16_t seenAttempts = 0;
+uint8_t failsInARow = 0;  // syncs that failed since the last one that worked
 net::Sync seenSync = net::Sync::Idle;
 net::Portal seenPortal = net::Portal::Off;
 uint32_t uiKey = 0;
@@ -249,6 +261,20 @@ void readBattery() {
   batteryPct = battery::percentFromMilliVolts(batteryMv);
   batteryLife.add(hal::ms(), batteryPct);
   lastBatteryRead = hal::ms();
+  if (int level = lowWarning.update(batteryPct < 0 ? -1 : batteryLife.smoothed(), batteryLife.charging())) {
+    lowNotice.pending = true;
+    lowNotice.urgent = level == battery::LowWarning::NOW;
+    hal::log("battery: below %d%%", level);
+  }
+}
+
+// Shows a waiting low battery notice once the face is on screen; called before the face is drawn.
+void showLowNotice() {
+  if (!lowNotice.pending || !awake || mode != Mode::Face) return;
+  lowNotice.pending = false;
+  lowNotice.until = hal::ms() + LOW_NOTICE_MS;
+  if (!lowNotice.until) lowNotice.until = 1;  // 0 means none
+  dirty = true;
 }
 
 // Below 20% and not charging, the radar beam only moves with the seconds.
@@ -279,6 +305,7 @@ FaceContext faceContext(bool withSweep) {
   c.timeValid = net::timeIsValid();
   c.use12h = settings.use12h;
   c.batteryPct = batteryPct;
+  c.charging = batteryLife.charging();
   if (syncBusy()) c.sync = SyncView::Syncing;
   else if (net::lastResult() == net::Result::Failed) c.sync = SyncView::Failed;
   else c.sync = net::lastSync() ? SyncView::Synced : SyncView::Never;
@@ -333,6 +360,7 @@ void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart = f
     drawFaceStatic(dst, f, c);
   }
   drawFaceLive(dst, f, c);
+  if (lowNotice.until && f == currentFace() && mode == Mode::Face) screens::drawLowBattery(dst, batteryPct, lowNotice.urgent);
 #if DRIFT_DIAG
   uint32_t used = micros() - t;
   diag.renderUs += used;
@@ -402,6 +430,7 @@ screens::View view(Mode m, int page) {
   v.result = net::lastResult();
   v.fail = net::failReason();
   v.syncStep = net::syncStep();
+  v.joinTry = net::joinTry();
   v.portal = net::portalState();
   v.secondsLeft = net::portalSecondsLeft();
   v.lastSyncText = synced;
@@ -447,6 +476,8 @@ screens::View view(Mode m, int page) {
   }
   v.nowText = nowBuf;
   v.version = "v" FW_VERSION;
+  v.startReason = hal::startReason();
+  v.restarts = hal::unexpectedRestarts();
 #if DRIFT_DIAG
   v.diag = diag.line;
 #else
@@ -814,6 +845,7 @@ void sleepScreen() {
   marker.moving = false;
   marker.minute = -1;
   releaseUntil = 0;
+  lowNotice.until = 0;  // a notice cut short is not shown again
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
   if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
@@ -865,6 +897,7 @@ void wakeScreen() {
   sleeping = false;
   lastActivity = hal::ms();
   wristDrop.reset();
+<<<<<<< HEAD
   // Render the clean target into `nb` and bloom outward with a smooth iris + backlight ramp.
   if (motionOn() && haveSpare) {
     if (mode == Mode::Face) {
@@ -876,6 +909,19 @@ void wakeScreen() {
       uiKey = screenKey();
     }
     irisWaking = true;
+=======
+  // Draw the current time first, then fade the light up over it.
+  showLowNotice();
+  if (mode == Mode::Face) {
+    renderFace(*cur, currentFace(), false);
+    present(*cur);
+    shownSecond = faceContext(false).now.tm_sec;
+    dirty = false;
+  } else {
+    refreshScreen(true);
+  }
+  if (motionOn()) {
+>>>>>>> origin/main
     fading = true;
     irisStart = fadeStart = hal::ms();
     gfx::irisTransition(*cur, *nb, 0.04f, faceTheme(currentFace()).primary, true);
@@ -1722,6 +1768,11 @@ void stepFace() {
     dirty = true;
   }
   bool stepping = (entrance.playing || marker.moving) && since(lastPresent) >= motion::ENTRANCE_FRAME_MS;
+  showLowNotice();
+  if (lowNotice.until && (int32_t)(hal::ms() - lowNotice.until) >= 0) {
+    lowNotice.until = 0;
+    dirty = true;
+  }
 
   bool due = dirty || stepping || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
   if (!due) return;
@@ -1747,7 +1798,12 @@ void stepNetwork() {
   if (net::attempts() != seenAttempts) {
     seenAttempts = net::attempts();
     // With no network saved there is nothing to retry; the clock may have been set by hand.
-    nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + (net::lastResult() == net::Result::Ok ? RESYNC_MS : RETRY_SYNC_MS);
+    // Failures in a row wait 30 minutes, then 1, 2 and 4 hours, then every 6 hours like a working
+    // sync: away from the saved network, the radio is not switched on every half hour for nothing.
+    bool ok = net::lastResult() == net::Result::Ok;
+    failsInARow = ok ? 0 : failsInARow < 8 ? failsInARow + 1 : 8;
+    uint32_t wait = ok ? RESYNC_MS : min<uint32_t>(RESYNC_MS, RETRY_SYNC_MS << (failsInARow - 1));
+    nextSyncAt = !net::hasSavedWifi() ? 0 : hal::ms() + wait;
     if (net::hasSavedWifi() && !nextSyncAt) nextSyncAt = 1;  // 0 means none; millis() can wrap onto it
     dirty = true;
   }
@@ -1903,6 +1959,8 @@ const char *screenName() {
 
 void begin() {
   hal::begin();
+  // Each start-up step is logged before it runs, so a start that stalls shows where.
+  hal::watchdogStart(DRIFT_WATCHDOG_S);
   // Start from a clean interface state (the simulation calls begin() more than once).
   cur = &spriteA;
   nb = &spriteB;
@@ -1914,6 +1972,7 @@ void begin() {
   standby = power::Controller{};
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = 0;
+  failsInARow = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
@@ -1922,6 +1981,8 @@ void begin() {
   marker.minute = -1;
   releaseUntil = 0;
 
+  hal::log("boot: settings v%u, face %u", (unsigned)SETTINGS_VERSION, (unsigned)settings.face);
+  hal::log("boot: screen");
   tft.init();
   applyTurn();  // sprites stay 240 x 240: the panel turns the picture as it is written
   tft.fillScreen(TFT_BLACK);
@@ -1945,16 +2006,21 @@ void begin() {
     return;
   }
 
+  hal::log("boot: touch");
   touch::begin();
+  hal::log("boot: motion sensor");
   imu::begin();
   wristRaise = RaiseDetector{};
   wristDrop = DropDetector{};
   check = {};
   batteryLife = battery::Estimate{};
+  lowWarning = battery::LowWarning{};
+  lowNotice = LowNotice{};
   faceMoving = false;
   phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);
   readBattery();
+  hal::log("boot: battery %d mV, network", batteryMv);
   net::begin();
   if (net::hasSavedWifi()) net::startSync();  // runs alongside the startup sequence
 
@@ -1975,9 +2041,15 @@ void begin() {
     fading = true;
     fadeStart = hal::ms();
   }
+<<<<<<< HEAD
+=======
+  hal::backlight(backlightLevel());
+  hal::log("boot: done, %s", sequence ? "startup sequence" : "face");
+>>>>>>> origin/main
 }
 
 void loop() {
+  hal::watchdogFeed();
   if (!haveFrame) {
     hal::idle(100);  // nothing can be drawn; the notice from begin() stays up
     return;

@@ -115,10 +115,39 @@ void digit(TFT_eSprite &s, float x, float y, float sc, int d, uint16_t c, int32_
 }
 }  // namespace
 
-TimeLayout timeLayout(float cx, float cy, float height) {
+// Upright, tabular instrument numerals. A tiny vector alphabet, no font allocation.
+// Coordinates are stroke centres in a 28 x 58 cell; round joins come from wide lines.
+namespace {
+struct Numeral { uint8_t n; Pt p[16]; };
+const Numeral NUMERALS[10] = {
+  {9, {{6,0},{22,0},{28,6},{28,52},{22,58},{6,58},{0,52},{0,6},{6,0}}},
+  {3, {{6,8},{16,0},{16,58}}},
+  {8, {{0,8},{6,0},{22,0},{28,6},{28,19},{0,48},{0,58},{28,58}}},
+  {11,{{0,0},{22,0},{28,6},{28,22},{22,29},{10,29},{22,29},{28,36},{28,52},{22,58},{0,58}}},
+  {4, {{22,58},{22,0},{0,37},{28,37}}},
+  {8, {{28,0},{0,0},{0,27},{22,27},{28,33},{28,52},{22,58},{0,58}}},
+  {10,{{26,0},{8,0},{0,8},{0,52},{6,58},{22,58},{28,52},{28,35},{22,29},{0,29}}},
+  {3, {{0,0},{28,0},{8,58}}},
+  {16,{{6,29},{0,22},{0,6},{6,0},{22,0},{28,6},{28,22},{22,29},{6,29},{0,36},{0,52},{6,58},{22,58},{28,52},{28,36},{22,29}}},
+  {10,{{28,29},{6,29},{0,23},{0,6},{6,0},{22,0},{28,6},{28,50},{20,58},{2,58}}}
+};
+void instrumentDigit(TFT_eSprite &s, float x, float y, float sc, int digit, uint16_t ink) {
+  constexpr float WIDTH = 5.2f;
+  if (digit < 0) {
+    s.drawWideLine(x + 5 * sc, y + 32 * sc, x + 29 * sc, y + 32 * sc, WIDTH * sc, ink);
+    return;
+  }
+  const Numeral &g = NUMERALS[digit];
+  for (int i = 1; i < g.n; ++i)
+    s.drawWideLine(x + (g.p[i-1].x + 3) * sc, y + (g.p[i-1].y + 3) * sc,
+                   x + (g.p[i].x + 3) * sc, y + (g.p[i].y + 3) * sc, WIDTH * sc, ink);
+}
+}  // namespace
+
+TimeLayout timeLayout(float cx, float cy, float height, TimeStyle style) {
   float sc = height / DH, w = DW * sc;
-  float total = 4 * w + 2 * (6 * sc) + 2 * (6 * sc) + 8 * sc + DH * SKEW * sc;
-  return {cx - total / 2, cy - height / 2, height, total, w, sc};
+  float total = 4 * w + 2 * (6 * sc) + 2 * (6 * sc) + 8 * sc + (style == TimeStyle::Segment ? DH * SKEW * sc : 0);
+  return {cx - total / 2, cy - height / 2, height, total, w, sc, style};
 }
 
 void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c,
@@ -129,20 +158,23 @@ void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, b
   for (int i = 0; i < 4; i++) {
     bool blank = i == 0 && valid && blankLeadingZero && ds[0] == 0;
     if (blank && ghost < 0) continue;
-    digit(s, xs[i], l.y, sc, blank ? -2 : valid ? ds[i] : -1, c, ghost);
+    if (l.style == TimeStyle::Instrument) {
+      if (!blank) instrumentDigit(s, xs[i], l.y, sc, valid ? ds[i] : -1, c);
+    } else digit(s, xs[i], l.y, sc, blank ? -2 : valid ? ds[i] : -1, c, ghost);
   }
-  // Colon: two diamonds, centred in the gap and following the lean.
+  // Instrument: two round dots. Segment: two diamonds following the lean.
   float colonX = l.x + 2 * w + sp + cg;
   for (float fy : {DH * 0.3f, DH * 0.7f}) {
-    float cx = colonX + cw / 2 + (DH - fy) * SKEW * sc;
+    float cx = colonX + cw / 2 + (l.style == TimeStyle::Segment ? (DH - fy) * SKEW * sc : 0);
     float cy = l.y + fy * sc, r = 3.5f * sc;
+    if (l.style == TimeStyle::Instrument) { dot(s, cx, cy, 2.1f * sc, c); continue; }
     Pt p[] = {{cx, cy - r}, {cx + r, cy}, {cx, cy + r}, {cx - r, cy}};
     fillPoly(s, p, 4, c);
   }
 }
 
 // ---- Battery ---------------------------------------------------------------
-void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink) {
+void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink, bool charging) {
   char buf[16];
   if (pct < 0) strcpy(buf, "--");
   else snprintf(buf, sizeof buf, "%d%%", pct);
@@ -158,9 +190,10 @@ void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink) {
   if (pct > 0) s.fillRect(x + 2, y + 2, max(1, (bw - 4) * pct / 100), bh - 4, c);
   if (pct < 0) s.drawFastHLine(x + 6, cy, bw - 12, c);
   text(s, buf, x + bw + capW + gap, cy, type::SMALL, c, ML_DATUM);
+  if (charging) chargeBolt(s, x - 7, cy, 11, c);
 }
 
-void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink) {
+void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink, bool charging) {
   // 270-degree gauge, open at the bottom.
   bool low = pct >= 0 && pct <= 15;
   s.drawArc(cx, cy, r, r - 3, 45, 315, track, col::BG, true);
@@ -169,9 +202,17 @@ void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track
   if (pct < 0) strcpy(buf, "--");
   else snprintf(buf, sizeof buf, "%d", pct);
   text(s, buf, cx, cy, type::SMALL, low ? col::WARN : ink);
+  if (charging) chargeBolt(s, cx, cy + r - 3, 9, low ? col::WARN : fill);
 }
 
 // ---- Icons -----------------------------------------------------------------
+void chargeBolt(TFT_eSprite &s, int cx, int cy, int h, uint16_t c) {
+  // Two triangles that overlap across the middle make the zigzag.
+  float u = h / 10.0f;
+  s.fillTriangle(cx + 1 * u, cy - 5 * u, cx - 3 * u, cy + 1 * u, cx + 1 * u, cy + 1 * u, c);
+  s.fillTriangle(cx - 1 * u, cy + 5 * u, cx + 3 * u, cy - 1 * u, cx - 1 * u, cy - 1 * u, c);
+}
+
 void iconCheck(TFT_eSprite &s, int cx, int cy, int size, uint16_t c) {
   float u = size / 10.0f;
   s.drawWideLine(cx - 4 * u, cy, cx - 1 * u, cy + 3 * u, 2.5f * u, c);

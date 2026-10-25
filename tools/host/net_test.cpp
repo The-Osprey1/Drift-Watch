@@ -18,6 +18,7 @@
 #include <netsim.h>
 #include <WiFi.h>
 #include "settings.h"
+#include "zones.h"
 
 // ---- Hardware layer stand-ins -------------------------------------------------------------
 namespace sim {
@@ -90,6 +91,7 @@ int failures = 0, checks = 0;
 
 constexpr const char *PACIFIC = "PST8PDT,M3.2.0,M11.1.0";
 constexpr const char *LONDON_REPLY = "{\"status\":\"success\",\"timezone\":\"Europe/London\",\"offset\":3600}";
+constexpr const char *LONDON_RULES = "GMT0BST,M3.5.0/1,M10.5.0";
 
 std::string envTz() {
   const char *tz = getenv("TZ");
@@ -167,11 +169,20 @@ void timeZoneKept() {
   CHECK(netsim::tasksStarted == 1 && netsim::httpGets == 1, "Auto looks the zone up (%d lookups)", netsim::httpGets);
   CHECK(netsim::httpUrl.find("ip-api.com") != std::string::npos, "from the lookup service (%s)", netsim::httpUrl.c_str());
   CHECK(!strcmp(net::zoneName(), "Europe/London"), "the zone name is kept for Details (%s)", net::zoneName());
-  CHECK(netsim::configuredTz == "<+0100>-1:00", "the time server is set to the found zone (%s)", netsim::configuredTz.c_str());
-  CHECK(settings.tz.isEmpty() && (!savedTz(tz) || tz.empty()), "a found zone is not saved, so Auto stays Auto");
+  CHECK(netsim::configuredTz == LONDON_RULES, "the time server is set to the found zone, with its summer time rules (%s)",
+        netsim::configuredTz.c_str());
+  CHECK(settings.tz.isEmpty() && (!savedTz(tz) || tz.empty()), "a found zone is not saved as a typed one, so Auto stays Auto");
+  CHECK(settings.autoTz == LONDON_RULES && settings.autoZone == "Europe/London", "it is kept as Auto's last zone (%s)",
+        settings.autoTz.c_str());
+
+  int saves = sim::settingsSaves;
+  syncOnce();
+  CHECK(sim::settingsSaves == saves, "finding the same zone again writes nothing to flash (%d writes)", sim::settingsSaves - saves);
 
   restart();
   CHECK(settings.tz.isEmpty(), "after a restart it is still Auto");
+  CHECK(envTz() == LONDON_RULES && !strcmp(net::zoneName(), "Europe/London"),
+        "and shows London time straight away, not Pacific (TZ %s, %s)", envTz().c_str(), net::zoneName());
   int before = netsim::httpGets;
   syncOnce();
   CHECK(netsim::httpGets == before + 1, "and the next sync looks the zone up again");
@@ -312,13 +323,33 @@ void joining() {
     net::startSync();
     runFor(500);
     if (c.reason) netsim::dropConnection(c.reason);
+    int begins = netsim::begins;
+    runFor(15000);
+    CHECK(net::syncRunning() && net::joinTry() == 2 && netsim::begins == begins + 1,
+          "reason %d: after 15 s it tries once more instead of failing (try %d)", c.reason, net::joinTry());
     runFor(15000);
     CHECK(net::lastResult() == net::Result::Failed && net::failReason() == net::Fail::JoinFailed,
-          "reason %d: the join fails after its time (fail %d)", c.reason, (int)net::failReason());
+          "reason %d: the join fails after its second try (fail %d)", c.reason, (int)net::failReason());
     CHECK(net::joinWhy() == c.why && net::joinCode() == c.reason, "reason %d: grouped as %d (got %d, code %d)", c.reason,
           (int)c.why, (int)net::joinWhy(), net::joinCode());
     CHECK(netsim::mode == WIFI_OFF && !net::radioOn(), "reason %d: the radio is off again", c.reason);
   }
+
+  printf("Wi-Fi: a router that turns the watch away once lets it in on the second try\n");
+  freshBoard();
+  net::startSync();
+  runFor(500);
+  netsim::dropConnection(2);
+  runFor(15000);
+  CHECK(net::joinTry() == 2, "second try under way");
+  netsim::status = WL_CONNECTED;
+  runFor(200);
+  netsim::sntpAnswer(truthMs());
+  runFor(100);
+  CHECK(net::lastResult() == net::Result::Ok && net::joinTry() == 1, "the sync succeeds (result %d)", (int)net::lastResult());
+  net::startSync();
+  CHECK(net::joinTry() == 1, "and the next sync starts on its first try again");
+  net::cancelSync();
 
   freshBoard();
   netsim::status = WL_CONNECTED;
@@ -398,7 +429,7 @@ void joining() {
         "curly apostrophe not found: tries the straight one (%s)", netsim::flashSsid.c_str());
   // Neither exists on the air: fails as NotFound and keeps what the person typed.
   netsim::dropConnection(WIFI_REASON_NO_AP_FOUND);
-  runFor(15500);
+  runFor(30500);  // two 15 s tries
   CHECK(net::lastResult() == net::Result::Failed && net::joinWhy() == net::JoinWhy::NotFound &&
             !strcmp(net::ssid(), "Alex\xe2\x80\x99s Router") && netsim::flashSsid == "Alex\xe2\x80\x99s Router",
         "if neither is found, the original name stays saved (%s)", net::ssid());
@@ -567,6 +598,43 @@ void timeServer() {
   CHECK(net::driftPpb() == 0, "and learns no drift from a clock that was never set (%ld)", (long)net::driftPpb());
 }
 
+// Every rule in zones.h against this computer's own time zone database, hour by hour over two
+// years, when the database is installed (skipped when it is not).
+int localMinuteAt(const char *posix, time_t utc) {
+  setenv("TZ", posix, 1);
+  tzset();
+  struct tm t;
+  localtime_r(&utc, &t);
+  return t.tm_mday * 1440 + t.tm_hour * 60 + t.tm_min;
+}
+
+void zoneTable() {
+  int compared = 0, wrong = 0;
+  std::string firstWrong;
+  for (const zones::Rule &r : zones::RULES) {
+    std::string file = std::string("/usr/share/zoneinfo/") + r.name;
+    if (access(file.c_str(), R_OK) != 0) continue;
+    std::string db = std::string(":") + r.name;
+    for (time_t t = 1767225600; t < 1830297600; t += 3600) {  // 2026-01-01 to 2028-01-01
+      if (localMinuteAt(r.posix, t) != localMinuteAt(db.c_str(), t)) {
+        wrong++;
+        if (firstWrong.empty()) firstWrong = r.name;
+        break;
+      }
+    }
+    compared++;
+  }
+  if (!compared) {
+    printf("  (no time zone database here: the table check is skipped)\n");
+    return;
+  }
+  printf("  %d zones compared with the time zone database\n", compared);
+  CHECK(wrong == 0, "every summer time rule matches the time zone database over 2026 and 2027 (%d of %d differ, first %s)",
+        wrong, compared, firstWrong.c_str());
+  CHECK(zones::rulesFor("Europe/London") && !zones::rulesFor("Asia/Tokyo") && !zones::rulesFor("") && !zones::rulesFor(nullptr),
+        "the table finds listed zones only");
+}
+
 void daylightSaving() {
   printf("Time zone: summer time rules against the fixed offsets Auto uses\n");
   // Europe/London leaves summer time on 2026-10-25 at 01:00 UTC.
@@ -577,18 +645,32 @@ void daylightSaving() {
         "a typed rule goes from 01:59:59 back to 01:00:00 by itself (%d, %d)", localHourAt(rule, beforeChange),
         localHourAt(rule, afterChange));
   CHECK(localHourAt(rule, afterChange + 11 * 3600) == 12, "and shows 12:00 at noon UTC afterwards");
-  // Auto: the lookup gives today's offset only. The fixed zone keeps summer time until the next sync.
+  // Auto: the lookup gives the zone's name and today's offset; the watch uses the zone's own rules.
   freshBoard();
   netsim::httpBody = LONDON_REPLY;
   syncOnce();
   std::string autoTz = netsim::configuredTz;
-  CHECK(localHourAt(autoTz.c_str(), afterChange + 11 * 3600) == 13,
-        "Auto's fixed +01:00 still shows summer time after the change (%d), until it syncs again",
+  CHECK(autoTz == LONDON_RULES && localHourAt(autoTz.c_str(), afterChange + 11 * 3600) == 12,
+        "Auto goes back to winter time by itself, with no sync after the change (%s shows %02d:00)", autoTz.c_str(),
         localHourAt(autoTz.c_str(), afterChange + 11 * 3600));
-  netsim::httpBody = "{\"status\":\"success\",\"timezone\":\"Europe/London\",\"offset\":0}";
+  // A rule that does not give the offset the service sees is not trusted: the fixed offset is used.
+  freshBoard();
+  netsim::httpBody = "{\"status\":\"success\",\"timezone\":\"Europe/London\",\"offset\":7200}";
   syncOnce();
-  CHECK(netsim::configuredTz == "<+0000>-0:00" && localHourAt(netsim::configuredTz.c_str(), afterChange + 11 * 3600) == 12,
-        "the next sync (at most 6 hours later on the watch) picks up winter time (%s)", netsim::configuredTz.c_str());
+  CHECK(netsim::configuredTz == "<+0200>-2:00", "a rule that disagrees with the service's offset is not used (%s)",
+        netsim::configuredTz.c_str());
+  // With the clock not set yet, the rule cannot be checked and is used as it is.
+  freshBoard();
+  watchMs = 5000;
+  netsim::httpBody = LONDON_REPLY;
+  syncOnce();
+  CHECK(netsim::configuredTz == LONDON_RULES, "with no clock yet the zone's rules are used (%s)", netsim::configuredTz.c_str());
+  // Zones the table does not list keep the fixed offset, which is right all year for them.
+  freshBoard();
+  netsim::httpBody = "{\"status\":\"success\",\"timezone\":\"Asia/Tokyo\",\"offset\":32400}";
+  syncOnce();
+  CHECK(netsim::configuredTz == "<+0900>-9:00", "a zone with no summer time keeps its fixed offset (%s)", netsim::configuredTz.c_str());
+  zoneTable();
   // The Pacific default is a rule, so it changes on its own on 2026-11-01 at 09:00 UTC.
   CHECK(localHourAt(PACIFIC, 1793523599) == 1 && localHourAt(PACIFIC, 1793523600) == 1,
         "the Pacific default goes from 01:59:59 back to 01:00 by itself");
@@ -663,10 +745,10 @@ void rollover() {
   freshBoard();
   upNear(0x100000000ULL - 5000);
   net::startSync();
-  runFor(14000);
-  CHECK(net::syncRunning(), "a join that started 5 s before the rollover is still trying 14 s later");
+  runFor(29000);
+  CHECK(net::syncRunning(), "a join that started 5 s before the rollover is still trying 29 s later");
   runFor(1500);
-  CHECK(net::failReason() == net::Fail::JoinFailed && !net::syncRunning(), "and gives up at 15 s, across the rollover");
+  CHECK(net::failReason() == net::Fail::JoinFailed && !net::syncRunning(), "and gives up after two 15 s tries, across the rollover");
   upNear(0x100000000ULL - 200);
   syncOnce();
   CHECK(net::lastResult() == net::Result::Ok && llabs(watchErrorMs()) <= 1, "a sync across the rollover sets the clock");
@@ -705,8 +787,8 @@ void parsing() {
        "<+0100>-1:00", "Europe/London"},
       {"lines and tabs", "{\n\t\"status\":\t\"success\",\n\t\"timezone\": \"Asia/Kolkata\",\n\t\"offset\": 19800\n}\n",
        "<+0530>-5:30", "Asia/Kolkata"},
-      {"keys in another order", "{\"offset\":-18000,\"timezone\":\"America/New_York\",\"status\":\"success\"}",
-       "<-0500>+5:00", "America/New_York"},
+      {"keys in another order", "{\"offset\":-18000,\"timezone\":\"America/Panama\",\"status\":\"success\"}",
+       "<-0500>+5:00", "America/Panama"},
       {"+14:00, the furthest ahead", "{\"status\":\"success\",\"timezone\":\"Pacific/Kiritimati\",\"offset\":50400}",
        "<+1400>-14:00", "Pacific/Kiritimati"},
       {"-12:00, the furthest behind", "{\"status\":\"success\",\"timezone\":\"Etc/GMT+12\",\"offset\":-43200}",
@@ -824,13 +906,13 @@ int rebootStage(const char *stage, const char *path) {
     restart();
     std::string tz;
     CHECK(settings.tz.isEmpty() && (!savedTz(tz) || tz.empty()), "after a power cycle: still Auto (\"%s\")", tz.c_str());
-    CHECK(envTz() == PACIFIC && !strcmp(net::zoneName(), ""), "Pacific until the first lookup, and no zone name kept in RAM (TZ %s)",
-          envTz().c_str());
+    CHECK(envTz() == LONDON_RULES && !strcmp(net::zoneName(), "Europe/London"),
+          "the zone Auto found last is in use from the start, with its name (TZ %s, %s)", envTz().c_str(), net::zoneName());
     CHECK(llabs(net::driftPpb() - 50000) < 1000, "the learned drift is back (%ld ppb)", (long)net::driftPpb());
     CHECK(!strcmp(net::ssid(), "HomeNet"), "the saved network is back (%s)", net::ssid());
     netsim::httpBody = LONDON_REPLY;
     syncOnce();
-    CHECK(netsim::httpGets == 1 && netsim::configuredTz == "<+0100>-1:00", "and the first sync looks the zone up again");
+    CHECK(netsim::httpGets == 1 && netsim::configuredTz == LONDON_RULES, "and the first sync looks the zone up again");
     saveFlash(path);
   } else if (!strcmp(stage, "typed-save")) {
     loadFlash(path);

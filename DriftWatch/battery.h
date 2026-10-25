@@ -30,4 +30,17 @@ class Estimate {
   float anchorLevel_ = 0;
   float ratePerHour_ = -1; // % per hour, < 0 = not known yet
 };
+// Says once when the battery falls below 15% and once more below 5%. A level is said again only
+// after the battery has been charged 5 points above it, so a reading wavering on the line does
+// not repeat it. Fed the smoothed level, so one low reading (the radio drawing current) does not
+// set it off. Nothing is said while charging.
+class LowWarning {
+ public:
+  static constexpr int SOON = 15, NOW = 5, MARGIN = 5;
+  // The level just crossed (SOON or NOW; NOW when both were crossed at once), or 0.
+  int update(float level, bool charging);
+
+ private:
+  bool toldSoon_ = false, toldNow_ = false;
+};
 }  // namespace battery

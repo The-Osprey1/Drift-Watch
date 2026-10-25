@@ -63,8 +63,8 @@ constexpr uint8_t MEDIUM = 4;   // date
 //   Title   12 pt    18 pt  (values and headlines; 144%)
 enum class Role : uint8_t { Body, Title };
 // Segment time digits, height in pixels.
-constexpr float TIME_HERO = 56;   // digital face
-constexpr float TIME_INSET = 44;  // radar face
+constexpr float TIME_HERO = 64;   // digital face
+constexpr float TIME_INSET = 50;  // radar face
 }  // namespace type
 
 namespace layout {
@@ -107,7 +107,7 @@ constexpr uint32_t PHANTOM_FRAME_MS = 33;
 constexpr uint32_t AMBIENT_FRAME_MS = 50;  // 20 fps ambient animation for lively faces
 // Entrances and Orbit's minute marker run at the slide frame rate, then the face drops back to
 // one frame a second.
-constexpr uint32_t ENTRANCE_FRAME_MS = 16;
+constexpr uint32_t ENTRANCE_FRAME_MS = 33;
 constexpr uint32_t MARKER_MS = 180;     // Orbit's minute marker moves 6 degrees at each new minute
 // Expressive plays each entrance this much longer (as a fraction: 3 / 2).
 constexpr uint32_t EXPRESSIVE_NUM = 3, EXPRESSIVE_DEN = 2;

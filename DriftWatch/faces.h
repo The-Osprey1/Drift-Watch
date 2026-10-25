@@ -38,6 +38,8 @@ struct FaceContext {
   uint32_t entranceMs;  // time into the entrance, on the face's own timeline (see faceEntranceMs)
   bool markerMoving;  // Orbit: the minute marker is moving on to the new minute
   uint32_t markerMs;  // time since that minute began, 0 .. motion::MARKER_MS
+  // v0.13.0
+  bool charging;      // on the charger, as far as the battery level shows (see battery.h): a small bolt by the battery
 };
 
 // Draws the parts that only change once a minute (or when the date, battery

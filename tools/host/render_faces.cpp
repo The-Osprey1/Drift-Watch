@@ -3,6 +3,7 @@
 // safe circle (using the ink of the drawn glyphs) and that the four
 // clock/sync combinations show the right words. Output: one PPM per case plus
 // a report on stdout.
+#include <algorithm>
 #include <TFT_eSPI.h>
 #include <map>
 #include <string.h>
@@ -56,7 +57,7 @@ int main(int argc, char **argv) {
   TFT_eSprite frame(&screen);
   frame.createSprite(240, 240);
 
-  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float beamDeg; uint8_t stage = 0; bool noWifi = false; };
+  struct Case { const char *name; tm t; bool valid, h12; int bat; SyncView sync; float beamDeg; uint8_t stage = 0; bool noWifi = false; bool charging = false; };
   std::vector<Case> cases = {
       {"2048", makeTime(20, 48, 37), true, false, 86, SyncView::Synced, -1},
       {"1111", makeTime(11, 11, 11), true, false, 52, SyncView::Synced, -1},
@@ -75,12 +76,15 @@ int main(int argc, char **argv) {
       {"notime_nowifi", makeTime(0, 0, 0), false, false, 70, SyncView::Failed, -1, 0, true},
       {"beam", makeTime(20, 48, 2), true, false, 86, SyncView::Synced, 126},
       {"beam_low", makeTime(20, 48, 40), true, false, 15, SyncView::Synced, 240},
+      {"charging", makeTime(10, 9, 31), true, false, 64, SyncView::Synced, -1, 0, false, true},
+      {"charging_low", makeTime(10, 9, 31), true, false, 12, SyncView::Synced, -1, 0, false, true},
   };
 
   int problems = 0;
   for (int f = 0; f < FACE_COUNT; f++) {
     for (const Case &c : cases) {
       FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.stage, c.noWifi, c.beamDeg};
+      ctx.charging = c.charging;
       frame.textLog.clear();
       drawFaceStatic(frame, (Face)f, ctx);
       drawFaceLive(frame, (Face)f, ctx);
@@ -106,6 +110,88 @@ int main(int argc, char **argv) {
       writePpm(path, frame);
     }
   }
+  // The vector alphabet must fit its declared cell at every actual face size.
+  // Distinct hashes catch a missing/duplicated numeral; the blank leading cell stays empty.
+  for (auto style : {gfx::TimeStyle::Instrument, gfx::TimeStyle::Segment}) {
+    for (float height : {44.0f, 50.0f, 52.0f, 60.0f, 64.0f}) {
+      auto l = gfx::timeLayout(120, 104, height, style);
+      std::vector<std::vector<uint16_t>> glyphs;
+      for (int d = 0; d < 10; ++d) {
+        frame.fillSprite(0);
+        gfx::drawTime(frame, l, d * 11, d * 11, true, false, col::WHITE);
+        int ink = 0, outside = 0;
+        for (int y = 0; y < 240; ++y)
+          for (int x = 0; x < 240; ++x) if (frame.readPixel(x,y)) {
+            ++ink;
+            outside += x < floorf(l.x)-1 || x > ceilf(l.x+l.width)+1 ||
+                       y < floorf(l.y)-1 || y > ceilf(l.y+l.height)+1;
+          }
+        bool unique = std::find(glyphs.begin(), glyphs.end(), frame.buf) == glyphs.end();
+        if (!unique || outside || ink < 100) {
+          printf("  NUMERAL digit %d height %.0f: ink %d, outside %d, unique %d\n", d, height, ink, outside, unique);
+          ++problems;
+        }
+        glyphs.push_back(frame.buf);
+      }
+      frame.fillSprite(0);
+      gfx::drawTime(frame, l, 9, 41, true, true, col::WHITE);
+      int leading = 0;
+      for (int y=0; y<240; ++y)
+        for (int x=(int)floorf(l.x); x<(int)floorf(l.x+l.digitW); ++x)
+          leading += frame.readPixel(x,y) != 0;
+      if (leading) { printf("  NUMERAL blank leading cell has %d pixels\n", leading); ++problems; }
+    }
+  }
+  // The animated radar must never paint over the central time/date register.
+  {
+    FaceContext ctx{makeTime(10,9,31),true,false,86,SyncView::Synced,0,false,-1};
+    drawFaceStatic(frame, FACE_RADAR, ctx); drawFaceLive(frame, FACE_RADAR, ctx);
+    auto base = frame.buf;
+    int central = 0, moving = 0;
+    for (int angle=0; angle<360; angle+=9) {
+      ctx.beamDeg = (float)angle;
+      drawFaceStatic(frame, FACE_RADAR, ctx); drawFaceLive(frame, FACE_RADAR, ctx);
+      for (int i=0; i<240*240; ++i) if (base[i] != frame.buf[i]) {
+        ++moving;
+        central += hypotf(i%240-120, i/240-120) < 74;
+      }
+    }
+    if (central || moving < 1000) {
+      printf("  RADAR central animation pixels %d, moving %d\n",central,moving); ++problems;
+    }
+  }
+
+  // v0.13.0: every face shows a small charging bolt, and only that changes.
+  {
+    TFT_eSprite plain(&screen);
+    plain.createSprite(240, 240);
+    for (int f = 0; f < FACE_COUNT; f++) {
+      FaceContext ctx{makeTime(10, 9, 31), true, false, 64, SyncView::Synced, 0, false, -1};
+      drawFaceStatic(plain, (Face)f, ctx);
+      drawFaceLive(plain, (Face)f, ctx);
+      ctx.charging = true;
+      drawFaceStatic(frame, (Face)f, ctx);
+      drawFaceLive(frame, (Face)f, ctx);
+      int diff = 0, x0 = 240, y0 = 240, x1 = 0, y1 = 0;
+      for (int y = 0; y < 240; y++)
+        for (int x = 0; x < 240; x++)
+          if (plain.readPixel(x, y) != frame.readPixel(x, y)) {
+            diff++;
+            x0 = std::min(x0, x), y0 = std::min(y0, y), x1 = std::max(x1, x), y1 = std::max(y1, y);
+          }
+      // A bolt is about 6 x 10 pixels: some pixels change, all within one small patch.
+      bool ok = diff >= 15 && diff <= 120 && x1 - x0 <= 12 && y1 - y0 <= 14;
+      if (!ok) {
+        printf("  CHARGE %s: %d pixels changed over %d x %d\n", faceName((Face)f), diff, x1 - x0 + 1, y1 - y0 + 1);
+        problems++;
+      }
+      if (faceStaticKey((Face)f, ctx) == faceStaticKey((Face)f, FaceContext{makeTime(10, 9, 31), true, false, 64, SyncView::Synced, 0, false, -1})) {
+        printf("  CHARGE %s: the cached dial would not redraw when charging starts\n", faceName((Face)f));
+        problems++;
+      }
+    }
+  }
+
   // Phantom's seconds timeline: the pure function at each boundary, then native frames at the
   // same moments, with the drawing given the exact time (faces never read a clock).
   auto bad = [&](bool ok, const char *what) {

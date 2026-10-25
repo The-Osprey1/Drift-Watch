@@ -12,6 +12,7 @@ uint8_t migrateSettings(Settings &s, uint8_t storedVersion) {
   // check runs once on the first start; night mode starts off and no drift is known.
   // Version 4 to 5: Motion Reduced becomes Off and Full becomes Subtle (loadSettings reads the
   // old key when the new one is missing).
+  // Version 5 to 6: no zone found by Auto is known yet; the next lookup saves one.
   // Values are range-checked for every version, so a damaged entry cannot crash a face lookup.
   (void)storedVersion;
   if (s.brightnessLevel >= BRIGHTNESS_LEVEL_COUNT) s.brightnessLevel = 2;
@@ -33,6 +34,8 @@ void loadSettings() {
   p.begin("watch", true);
   uint8_t version = p.isKey("ver") ? p.getUChar("ver", 1) : 1;  // missing on v0.7.0 and earlier
   settings.tz = p.getString("tz", "");
+  settings.autoTz = p.isKey("atz") ? p.getString("atz", "") : "";
+  settings.autoZone = p.isKey("azone") ? p.getString("azone", "") : "";
   settings.use12h = p.getBool("h12", false);
   settings.face = p.getUChar("face", 0);
   settings.brightnessLevel = p.getUChar("blevel", 2);
@@ -60,6 +63,8 @@ void saveSettings() {
   p.begin("watch", false);
   p.putUChar("ver", SETTINGS_VERSION);
   p.putString("tz", settings.tz);
+  p.putString("atz", settings.autoTz);
+  p.putString("azone", settings.autoZone);
   p.putBool("h12", settings.use12h);
   p.putUChar("face", settings.face);
   p.putUChar("blevel", settings.brightnessLevel);

@@ -1,9 +1,9 @@
 // Face designs. Accent hierarchy per face:
-//   Digital  - yellow time first, magenta date second, cyan only for the live second.
-//   Stealth  - silver hands and markers, cyan glow inlays, magenta seconds hand only.
-//   Corpo    - yellow structure, black hands edged in yellow, red for seconds and inlays.
-//   Hologram - cyan throughout, white inlays, magenta seconds hand.
-//   Radar    - yellow time, cyan hour ring, magenta seconds dot, phosphor green beam.
+//   Digital  - silver instrument time, quiet date, yellow brackets, cyan live second.
+//   Stealth  - silver baton hands and fine markers, cyan seconds hand.
+//   Corpo    - yellow indices, silver baton hands, red seconds.
+//   Hologram - cyan skeleton hands and indices, silver seconds.
+//   Radar    - silver time, cyan hour ring, magenta blip, peripheral phosphor beam.
 //   Phantom  - black and silver, a crimson jewel in the movement, the seconds hand eclipsed.
 // The themed faces added in v0.12.0 (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave) are in
 // faces_themed.cpp.
@@ -83,7 +83,9 @@ constexpr int DIGI_TIME_Y = 104;
 constexpr int DATE_X = 44, DATE_Y = 140, DATE_W = 152, DATE_H = 27;
 
 void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
-  gfx::skyline(s, 212, c.timeValid ? c.now.tm_yday * 1440 + c.now.tm_hour * 60 + c.now.tm_min : 0);
+  // A quiet lower register replaces the skyline. Structure belongs to the clock.
+  gfx::text(s, "DRIFT", CX, 201, type::SMALL, col::N400);
+  s.drawFastHLine(78, 184, 84, col::N700);
 
   // Seconds track: quiet structure, the live tick is the only bright part.
   for (int i = 0; i < 60; i++) {
@@ -92,18 +94,19 @@ void digitalStatic(TFT_eSprite &s, const FaceContext &c) {
     s.drawWideLine(a.x, a.y, b.x, b.y, major ? 2.0f : 1.2f, major ? col::N500 : col::N700, col::BG);
   }
 
-  gfx::battery(s, CX, 46, c.batteryPct, col::N100);
+  gfx::battery(s, CX, 46, c.batteryPct, col::N100, c.charging);
 
   gfx::TimeLayout tl = gfx::timeLayout(CX, DIGI_TIME_Y, type::TIME_HERO);
-  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
+  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::N100 : col::N500);
   if (c.use12h && c.timeValid)
-    gfx::text(s, c.now.tm_hour < 12 ? "AM" : "PM", tl.x + tl.width, tl.y - 9, type::SMALL, col::CYAN, MR_DATUM);
+    gfx::text(s, c.now.tm_hour < 12 ? "AM" : "PM", tl.x + tl.width, tl.y - 9, type::SMALL, col::N300, MR_DATUM);
 
   char buf[24];
   if (c.timeValid) {
-    gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::MAGENTA, true);
+    s.drawFastVLine(DATE_X, DATE_Y + 5, DATE_H - 10, col::YELLOW);
+    s.drawFastVLine(DATE_X + DATE_W, DATE_Y + 5, DATE_H - 10, col::YELLOW);
     dateText(c, buf, sizeof buf);
-    gfx::text(s, buf, CX, DATE_Y + DATE_H / 2 + 1, type::MEDIUM, col::BG);
+    gfx::text(s, buf, CX, DATE_Y + DATE_H / 2 + 1, type::SMALL, col::N100);
   } else if (c.sync == SyncView::Syncing) {
     gfx::cutBox(s, DATE_X, DATE_Y, DATE_W, DATE_H, 7, col::CYAN, false);
     gfx::cutBox(s, DATE_X + 1, DATE_Y + 1, DATE_W - 2, DATE_H - 2, 6, col::CYAN, false);
@@ -152,31 +155,40 @@ struct DialStyle {
 };
 
 const DialStyle STEALTH = {
-    rgb(0x0B0D12), 0, 0, col::N500, col::N100, 5, 84, col::CYAN,
-    col::N100, col::WHITE, 0, col::CYAN, col::CYAN, true,
-    col::MAGENTA, col::N100,
+    rgb(0x0B0D12), 0, 0, col::N600, col::N100, 3.5f, 91, 0,
+    col::N100, col::WHITE, 0, col::N300, col::N100, true,
+    col::CYAN, col::N100,
     col::N800, col::N500, col::N100,
     col::N600, col::CYAN, col::N100};
 
 const DialStyle CORPO = {
-    rgb(0x080808), col::YELLOW, 0, col::YELLOW_DIM, col::YELLOW, 8, 80, 0,
-    col::BG, col::BG, col::YELLOW, col::RED, col::RED, false,
+    rgb(0x080808), col::YELLOW_DIM, 0, col::N600, col::YELLOW, 5, 91, 0,
+    col::N100, col::N100, 0, col::N100, col::N100, true,
     col::RED, col::YELLOW,
-    col::YELLOW, 0, col::BG,
+    col::N800, col::YELLOW_DIM, col::N100,
     rgb(0x2E2A04), col::YELLOW, col::YELLOW};
 
 const DialStyle HOLO = {
-    rgb(0x020A0D), 0, col::CYAN_DEEP, col::CYAN_DIM, col::CYAN, 4, 86, 0,
+    rgb(0x020A0D), 0, col::CYAN_DEEP, col::CYAN_DEEP, col::CYAN, 2.5f, 94, 0,
     col::CYAN_DEEP, col::CYAN_DEEP, col::CYAN, col::CYAN, col::WHITE, false,
-    col::MAGENTA, col::CYAN,
-    col::BG, col::CYAN, col::CYAN,
+    col::N100, col::CYAN,
+    col::CYAN_DEEP, col::CYAN_DIM, col::N100,
     col::CYAN_DEEP, col::CYAN, col::CYAN};
 
 const DialStyle &styleFor(Face f) { return f == FACE_CORPO ? CORPO : f == FACE_HOLO ? HOLO : STEALTH; }
 
 void hand(TFT_eSprite &s, const DialStyle &st, float deg, float len, float tail, float w,
           uint16_t fill, uint16_t inlay, bool halo) {
-  faceparts::swordHand(s, deg, len, tail, w, fill, inlay, st.handEdge, halo, st.face);
+  if (&st == &HOLO) {
+    faceparts::swordHand(s, deg, len, tail, w, fill, inlay, st.handEdge, halo, st.face);
+    return;
+  }
+  // Parallel baton hands distinguish the instrument dials from the floral sword hands.
+  Pt a = gfx::alongHand(deg, -tail, 0), b = gfx::alongHand(deg, len, 0);
+  if (halo) s.drawWideLine(a.x, a.y, b.x, b.y, w * 1.5f + 3, st.face);
+  s.drawWideLine(a.x, a.y, b.x, b.y, w * 1.5f, fill);
+  Pt i0 = gfx::alongHand(deg, len * 0.28f, 0), i1 = gfx::alongHand(deg, len - 5, 0);
+  s.drawWideLine(i0.x, i0.y, i1.x, i1.y, w * 0.45f, inlay);
 }
 
 void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
@@ -185,13 +197,13 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
 
   if (st.band) {
     // Segmented band, notched at every hour.
-    for (int h = 0; h < 12; h++) gfx::arc(s, 119, 114, h * 30 + 2, h * 30 + 28, st.band, false);
+    for (int h = 0; h < 12; h++) gfx::arc(s, 118, 116, h * 30 + 3, h * 30 + 27, st.band, false);
   }
   if (st.atmosphere) s.drawCircle(CX, CY, 70, st.atmosphere);
 
   for (int i = 0; i < 60; i++) {
     if (i % 5 == 0) continue;
-    Pt a = gfx::polar(i * 6, 104), b = gfx::polar(i * 6, 111);
+    Pt a = gfx::polar(i * 6, 108), b = gfx::polar(i * 6, 111);
     s.drawWideLine(a.x, a.y, b.x, b.y, 1.2f, st.minorTick, st.face);
   }
 
@@ -214,13 +226,13 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
   if (st.dateFill != st.face) s.fillRect(wx, wy, ww, wh, st.dateFill);
   if (st.dateEdge) {
     s.drawRect(wx, wy, ww, wh, st.dateEdge);
-    if (f == FACE_HOLO) s.drawRect(wx + 1, wy + 1, ww - 2, wh - 2, st.dateEdge);
+    if (f == FACE_HOLO) s.drawFastHLine(wx + 4, wy + wh, ww - 8, st.dateEdge);
   }
   if (c.timeValid) snprintf(buf, sizeof buf, "%d", c.now.tm_mday);
   else strcpy(buf, "--");
   gfx::text(s, buf, wx + ww / 2, wy + wh / 2 + 1, type::MEDIUM, st.dateInk);
 
-  gfx::batteryGauge(s, CX, 168, 19, c.batteryPct, st.gaugeTrack, st.gaugeFill, st.gaugeInk);
+  gfx::batteryGauge(s, CX, 174, 16, c.batteryPct, st.gaugeTrack, st.gaugeFill, st.gaugeInk, c.charging);
 
   if (!c.timeValid) {
     // No hands without a time. Syncing is progress, not a fault, so it gets no warning sign.
@@ -229,6 +241,8 @@ void dialStatic(TFT_eSprite &s, Face f, const FaceContext &c) {
     gfx::text(s, noTimeHint(c), CX, 90, type::SMALL, syncing ? col::CYAN : col::N400);
     return;
   }
+  gfx::text(s, f == FACE_CORPO ? "CORPO" : f == FACE_HOLO ? "HOLOGRAM" : "DRIFT", CX, 70,
+            type::SMALL, col::N400);
   // Hour and minute hands move once a minute, so they live in the cached layer.
   float mn = c.now.tm_min, hr = (c.now.tm_hour % 12) + mn / 60.0f;
   hand(s, st, hr * 30, 54, 11, 4.8f, st.hourFill, st.inlayHour, false);
@@ -263,7 +277,7 @@ void radarStatic(TFT_eSprite &s, const FaceContext &c) {
   int hr12 = c.now.tm_hour % 12;
   for (int i = 0; i < 12; i++) {
     uint16_t k = !c.timeValid || i > hr12 ? col::N700 : i == hr12 ? col::CYAN : col::CYAN_DIM;
-    gfx::arc(s, 117, 108, i * 30 + 1.5f, i * 30 + 28.5f, k, false);
+    gfx::arc(s, 117, 113, i * 30 + 1.5f, i * 30 + 28.5f, k, false);
   }
 
   // Minute track with a pointer at the current minute.
@@ -285,10 +299,10 @@ float phosphor(float behind) {
 void radarSweep(TFT_eSprite &s, float deg) {
   // The trail is a fan of thin wedges, each a little darker than the one ahead of it, drawn
   // oldest first so the beam ends on top. Kept dim so the time stays readable through it.
-  constexpr float SLICE = 3, R0 = 18, R1 = 96;
+  constexpr float SLICE = 4, R0 = 76, R1 = 96;
   for (float behind = motion::RADAR_TRAIL_DEG; behind > 0; behind -= SLICE) {
     float a0 = deg - behind, a1 = a0 + SLICE + 0.6f;  // slight overlap: no hairline gaps
-    uint16_t k = gfx::blend(col::PHOSPHOR_TRAIL, col::BG, 0.55f * phosphor(behind));
+    uint16_t k = gfx::blend(col::PHOSPHOR_TRAIL, col::BG, 0.35f * phosphor(behind));
     Pt p[] = {gfx::polar(a0, R0), gfx::polar(a0, R1), gfx::polar(a1, R1), gfx::polar(a1, R0)};
     gfx::fillPoly(s, p, 4, k);
   }
@@ -308,9 +322,9 @@ void radarLive(TFT_eSprite &s, const FaceContext &c) {
     s.fillSmoothCircle(d.x, d.y, 3, glow > 0.5f ? col::WHITE : col::MAGENTA, col::BG);
   }
 
-  gfx::battery(s, CX, 72, c.batteryPct, col::N300);
+  gfx::battery(s, CX, 72, c.batteryPct, col::N300, c.charging);
   gfx::TimeLayout tl = gfx::timeLayout(CX, 114, type::TIME_INSET);
-  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::YELLOW : col::YELLOW_DIM);
+  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::N100 : col::N500);
 
   char buf[28];
   if (c.timeValid) {
@@ -418,7 +432,7 @@ void phantomStatic(TFT_eSprite &s, const FaceContext &c) {
   if (c.timeValid) snprintf(buf, sizeof buf, "%d", c.now.tm_mday);
   else strcpy(buf, "--");
   gfx::text(s, buf, wx + ww / 2, wy + wh / 2 + 1, type::MEDIUM, col::N100);
-  gfx::batteryGauge(s, CX, 170, 18, c.batteryPct, RING_DIM, RING, col::N100);
+  gfx::batteryGauge(s, CX, 170, 18, c.batteryPct, RING_DIM, RING, col::N100, c.charging);
 
   if (!c.timeValid) {
     bool syncing = c.sync == SyncView::Syncing;
@@ -545,6 +559,7 @@ uint32_t faceStaticKey(Face f, const FaceContext &c) {
   k = k * 5 + (uint32_t)c.sync;
   k = k * 5 + c.syncStage;
   k = k * 2 + c.noWifi;
+  k = k * 2 + c.charging;
   return k;
 }
 

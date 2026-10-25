@@ -29,23 +29,28 @@ void dot(TFT_eSprite &s, float x, float y, float r, uint16_t c, uint32_t bg = 0x
 
 // Segment-style time digits. Every digit cell has the same width, so the time
 // never shifts as it changes. `height` is in pixels.
+enum class TimeStyle : uint8_t { Instrument, Segment };
 struct TimeLayout {
   float x, y, height, width, digitW, scale;
+  TimeStyle style;
 };
-TimeLayout timeLayout(float cx, float cy, float height);
+TimeLayout timeLayout(float cx, float cy, float height, TimeStyle style = TimeStyle::Instrument);
 // `ghost` >= 0 also draws every unlit segment in that colour, like a phosphor display.
 void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c,
               int32_t ghost = -1);
 
 // Battery: outline icon plus percentage text, centred on (cx, cy).
 // pct < 0 means the reading is unavailable.
-void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink);
+void battery(TFT_eSprite &s, int cx, int cy, int pct, uint16_t ink, bool charging = false);  // bolt on the left when charging
 // Battery as a ring gauge with the percentage inside, for dials.
-void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink);
+void batteryGauge(TFT_eSprite &s, int cx, int cy, int r, int pct, uint16_t track, uint16_t fill, uint16_t ink,
+                  bool charging = false);  // bolt in the gauge's opening when charging
 
 // Status icons drawn as shapes, so meaning never depends on colour alone.
 void iconCheck(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 void iconCross(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
+// A small lightning bolt, `h` pixels tall, centred on (cx, cy): the charging mark on the faces.
+void chargeBolt(TFT_eSprite &s, int cx, int cy, int h, uint16_t c);
 void iconAlert(TFT_eSprite &s, int cx, int cy, int size, uint16_t c);
 
 // Small clock symbol: "in progress" without motion, used instead of a spinner with reduced motion.

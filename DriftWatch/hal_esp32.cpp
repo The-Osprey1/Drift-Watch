@@ -3,6 +3,8 @@
 #include <Wire.h>
 #include <driver/gpio.h>
 #include <esp_sleep.h>
+#include <esp_task_wdt.h>
+#include <esp_attr.h>
 #include <esp_system.h>
 #include <sys/time.h>
 #include <stdarg.h>
@@ -11,18 +13,66 @@
 namespace {
 constexpr int BL_CHANNEL = 0;
 constexpr int BL_FREQ = 5000;
+
+// Kept in memory that survives a restart but not a power loss, so the count covers one charge.
+constexpr uint32_t RESTART_MAGIC = 0x44524654;  // "DRFT"
+RTC_NOINIT_ATTR uint32_t restartMagic;
+RTC_NOINIT_ATTR uint32_t restartCount;
+
+// A device that was mid-transfer when the chip restarted can keep holding the data line low,
+// and then every later transfer on the bus fails or waits for its timeout: the touch chip and
+// motion sensor both look dead. Clocking up to nine pulses lets it finish its byte and let go,
+// and a stop condition then leaves the bus idle. This is the usual I2C bus recovery.
+void freeI2cBus() {
+  pinMode(PIN_I2C_SDA, INPUT_PULLUP);
+  pinMode(PIN_I2C_SCL, INPUT_PULLUP);
+  delayMicroseconds(10);
+  if (digitalRead(PIN_I2C_SDA) == HIGH && digitalRead(PIN_I2C_SCL) == HIGH) return;
+  Serial.println("boot: I2C bus held low, freeing it");
+  pinMode(PIN_I2C_SCL, OUTPUT_OPEN_DRAIN);
+  for (int i = 0; i < 9 && digitalRead(PIN_I2C_SDA) == LOW; i++) {
+    digitalWrite(PIN_I2C_SCL, LOW);
+    delayMicroseconds(5);
+    digitalWrite(PIN_I2C_SCL, HIGH);
+    delayMicroseconds(5);
+  }
+  pinMode(PIN_I2C_SDA, OUTPUT_OPEN_DRAIN);  // stop: data rises while the clock is high
+  digitalWrite(PIN_I2C_SDA, LOW);
+  delayMicroseconds(5);
+  digitalWrite(PIN_I2C_SCL, HIGH);
+  delayMicroseconds(5);
+  digitalWrite(PIN_I2C_SDA, HIGH);
+  delayMicroseconds(5);
+  pinMode(PIN_I2C_SDA, INPUT_PULLUP);
+  pinMode(PIN_I2C_SCL, INPUT_PULLUP);
+  Serial.printf("boot: I2C bus %s\n", digitalRead(PIN_I2C_SDA) == HIGH ? "free" : "still held");
+}
+
+bool selfRestart(esp_reset_reason_t r) {
+  return r == ESP_RST_PANIC || r == ESP_RST_INT_WDT || r == ESP_RST_TASK_WDT || r == ESP_RST_WDT ||
+         r == ESP_RST_BROWNOUT;
+}
 }
 
 namespace hal {
 
 void begin() {
   Serial.begin(115200);
+  esp_reset_reason_t r = esp_reset_reason();
+  if (r == ESP_RST_POWERON || restartMagic != RESTART_MAGIC) {
+    restartMagic = RESTART_MAGIC;
+    restartCount = 0;
+  }
+  if (selfRestart(r)) restartCount++;
+  Serial.printf("\nboot: Drift-Watch v%s, start reason %d (%s)\n", FW_VERSION, (int)r, startReason() ? startReason() : "power on");
   pinMode(PIN_BOOT_BTN, INPUT_PULLUP);
   analogReadResolution(12);
   ledcSetup(BL_CHANNEL, BL_FREQ, 8);
   ledcAttachPin(PIN_LCD_BL, BL_CHANNEL);
   ledcWrite(BL_CHANNEL, 0);
+  freeI2cBus();
   Wire.begin(PIN_I2C_SDA, PIN_I2C_SCL, 400000);
+  Wire.setTimeOut(20);  // a chip that stops answering costs 20 ms a transfer, not the default 50
 }
 
 uint32_t ms() { return millis(); }
@@ -42,6 +92,30 @@ bool coldBoot() {
   esp_reset_reason_t r = esp_reset_reason();
   return r == ESP_RST_POWERON || r == ESP_RST_EXT || r == ESP_RST_SW || r == ESP_RST_UNKNOWN;
 }
+
+const char *startReason() {
+  switch (esp_reset_reason()) {
+    case ESP_RST_PANIC: return "Crashed, restarted";
+    case ESP_RST_INT_WDT:
+    case ESP_RST_TASK_WDT:
+    case ESP_RST_WDT: return "Froze, restarted by watchdog";
+    case ESP_RST_BROWNOUT: return "Battery too low, restarted";
+    case ESP_RST_SW: return "Restarted";
+    case ESP_RST_DEEPSLEEP: return "Woke from deep sleep";
+    default: return nullptr;  // power on, reset button
+  }
+}
+
+uint32_t unexpectedRestarts() { return restartMagic == RESTART_MAGIC ? restartCount : 0; }
+
+void watchdogStart(uint32_t seconds) {
+  // The Arduino core already runs the task watchdog for the idle tasks; this sets its time limit,
+  // makes a timeout restart the chip, and adds the loop to what it watches.
+  esp_err_t a = esp_task_wdt_init(seconds, true), b = esp_task_wdt_add(nullptr);
+  Serial.printf("boot: watchdog %lu s (%s)\n", (unsigned long)seconds, a == ESP_OK && b == ESP_OK ? "on" : "could not start");
+}
+
+void watchdogFeed() { esp_task_wdt_reset(); }
 
 uint32_t freeHeap() { return ESP.getFreeHeap(); }
 uint32_t freePsram() { return ESP.getFreePsram(); }
@@ -100,7 +174,9 @@ uint8_t doze(uint32_t t, const DozeArm &arm) {
   esp_err_t slept = ESP_FAIL;
   if (ok) {
     Serial.flush();  // the serial port stops during light sleep and would cut a line short
+    esp_task_wdt_reset();
     slept = esp_light_sleep_start();
+    esp_task_wdt_reset();
     // Read the lines straight away, before anything clears them: a touch pulse is short.
     touchLow = digitalRead(PIN_TP_INT) == LOW;
     bootLow = digitalRead(PIN_BOOT_BTN) == LOW;

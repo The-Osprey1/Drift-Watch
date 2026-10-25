@@ -60,7 +60,8 @@ void startUp() {
   runFor(200);
   CHECK(net::lastResult() == net::Result::Ok && net::timeIsValid() && llabs(hal::nowMs() - truthMs()) < 20,
         "the answer sets the clock (%lld ms off)", (long long)(hal::nowMs() - truthMs()));
-  CHECK(netsim::configuredTz == "<+0100>-1:00" && !strcmp(net::zoneName(), "Europe/London"), "in the looked-up zone (%s)",
+  CHECK(netsim::configuredTz == "GMT0BST,M3.5.0/1,M10.5.0" && !strcmp(net::zoneName(), "Europe/London"),
+        "in the looked-up zone, with its summer time rules (%s)",
         netsim::configuredTz.c_str());
   CHECK(!net::radioOn() && netsim::mode == WIFI_OFF && !netsim::sntpRunning, "and the radio and time client are off");
   settle(4000);
@@ -117,7 +118,7 @@ void setup() {
   CHECK(!net::syncRunning() && !net::radioOn(), "Cancel stops the sync");
   netsim::runTask();
   runFor(500);
-  CHECK(!strcmp(net::zoneName(), "Europe/London") && netsim::configuredTz == "<+0100>-1:00",
+  CHECK(!strcmp(net::zoneName(), "Europe/London") && netsim::configuredTz == "GMT0BST,M3.5.0/1,M10.5.0",
         "the lookup's late answer is not used (%s)", net::zoneName());
   netsim::taskMode = netsim::TaskMode::RunNow;
 
@@ -214,6 +215,41 @@ void retryAfterFailure() {
   CHECK(net::lastResult() == net::Result::Ok && screen() == "asleep", "and succeeds with the screen still off");
 }
 
+void backoff() {
+  printf("Screen off: failures in a row wait longer each time, up to 6 hours, and a success resets it\n");
+  netsim::status = WL_DISCONNECTED;  // away from the saved network: every join fails
+  const double want[] = {360, 30, 60, 120, 240, 360, 360};  // the first is the normal 6-hour resync
+  bool first = true;
+  for (double w : want) {
+    uint32_t t0 = sim::clockMs;
+    while (!net::syncRunning() && sim::clockMs - t0 < 8UL * 3600 * 1000) runFor(1000);
+    if (!first) {
+      double got = (sim::clockMs - t0) / 60000.0;
+      CHECK(net::syncRunning() && fabs(got - w) < 1.5, "the next try waits %.0f minutes (%.1f)", w, got);
+    }
+    first = false;
+    runFor(31000);  // two 15 s join tries, then it fails
+    CHECK(net::failReason() == net::Fail::JoinFailed && !net::radioOn() && screen() == "asleep",
+          "it fails quietly with the radio off and the screen asleep");
+  }
+  uint32_t t0 = sim::clockMs;
+  while (!net::syncRunning() && sim::clockMs - t0 < 8UL * 3600 * 1000) runFor(1000);
+  netsim::status = WL_CONNECTED;
+  waitFor(net::Sync::Clock, 1000);
+  netsim::sntpAnswer(truthMs());
+  runFor(200);
+  CHECK(net::lastResult() == net::Result::Ok, "back home, the sync works");
+  netsim::status = WL_DISCONNECTED;
+  t0 = sim::clockMs;
+  while (!net::syncRunning() && sim::clockMs - t0 < 8UL * 3600 * 1000) runFor(1000);
+  runFor(31000);
+  t0 = sim::clockMs;
+  while (!net::syncRunning() && sim::clockMs - t0 < 8UL * 3600 * 1000) runFor(1000);
+  CHECK(fabs((sim::clockMs - t0) / 60000.0 - 30) < 1.5, "and the first failure after it waits 30 minutes again (%.1f)",
+        (sim::clockMs - t0) / 60000.0);
+  runFor(31000);
+}
+
 void warmRestart() {
   printf("Restart: the typed zone and network come back from flash\n");
   sim::cold = false;
@@ -237,6 +273,7 @@ int main(int argc, char **argv) {
   setup();
   quietResync();
   retryAfterFailure();
+  backoff();
   warmRestart();
   (void)PACIFIC;
   printf("%d of %d checks passed\n", checks - failures, checks);

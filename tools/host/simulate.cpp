@@ -897,21 +897,40 @@ void scenarios() {
   touchUp();
   CHECK(settings.brightnessLevel == (light + 1) % BRIGHTNESS_LEVEL_COUNT, "Brightness steps the level");
   CHECK(lastBacklight() == backlightLevel(), "backlight follows (%d vs %d)", lastBacklight(), backlightLevel());
-  bool h12 = settings.use12h;
-  CHECK(tapButton(screens::Button::TimeFormat) && settings.use12h != h12, "Time format switches 12/24 hour");
-  tapButton(screens::Button::TimeFormat);
+  int night0 = settings.night;
+  CHECK(tapButton(screens::Button::Night) && settings.night == (night0 + 1) % NIGHT_CHOICES, "Night switches mode");
+  tapButton(screens::Button::Night);
+  while (settings.night != night0) tapButton(screens::Button::Night);
   // Edges of the hit regions: the extra rows between the controls belong to the nearest one.
   find(screens::Button::Brightness, c);
   int before = settings.brightnessLevel;
   tap(c.hit.x + 4, c.hit.y + c.hit.h - 2);  // below the drawn box, inside its touch region
   CHECK(settings.brightnessLevel != before, "a tap just under the drawn Brightness box still counts");
   screens::Control lower;
-  find(screens::Button::TimeFormat, lower);
+  find(screens::Button::Night, lower);
   int gapY = (c.hit.y + c.hit.h + lower.hit.y) / 2;
   before = settings.brightnessLevel;
-  bool fmt = settings.use12h;
+  int nightBefore = settings.night;
   tap(120, gapY);
-  CHECK(settings.brightnessLevel == before && settings.use12h == fmt, "a tap in the gap between controls does nothing");
+  CHECK(settings.brightnessLevel == before && settings.night == nightBefore, "a tap in the gap between controls does nothing");
+
+  printf("Category Hub fast jumping\n");
+  tap(160, 27);  // tap category header right side
+  settle();
+  CHECK(ui::page() == 2, "tapping header jumps to Clock (page %d)", ui::page() + 1);
+  tap(160, 27);
+  settle();
+  CHECK(ui::page() == 5, "tapping header jumps to Gestures (page %d)", ui::page() + 1);
+  tap(160, 27);
+  settle();
+  CHECK(ui::page() == 6, "tapping header jumps to System (page %d)", ui::page() + 1);
+  tap(160, 27);
+  settle();
+  CHECK(ui::page() == 0, "tapping header wraps back to Display (page %d)", ui::page() + 1);
+  tap(80, 27);  // tap left side
+  settle();
+  CHECK(ui::page() == 6, "tapping left jumps backwards to System (page %d)", ui::page() + 1);
+  goTo(screens::Button::Brightness);
 
   printf("Drags never act\n");
   goTo(screens::Button::Motion);
@@ -946,10 +965,13 @@ void scenarios() {
   runFor(400);
   CHECK(ui::display().pixelsPushed > px0, "the spinner animates while syncing");
   bool fmtBefore = settings.use12h;
-  goTo(screens::Button::TimeFormat);
+  swipeRight();
+  settle();
   tapButton(screens::Button::TimeFormat);
   CHECK(settings.use12h != fmtBefore && net::syncRunning(), "Time format still works during a sync");
   tapButton(screens::Button::TimeFormat);
+  swipeLeft();
+  settle();
   goTo(screens::Button::SyncNow);
   settle(1500);
   CHECK(net::lastResult() == net::Result::Ok && !net::syncRunning(), "sync done");
@@ -1369,12 +1391,12 @@ void scenarios() {
   saves = sim::settingsSaves;
   tapButton(screens::Button::Brightness);
   tapButton(screens::Button::Brightness);
-  tapButton(screens::Button::TimeFormat);
+  tapButton(screens::Button::Night);
   runFor(500);
   CHECK(sim::settingsSaves == saves, "no flash write right after settings taps");
   runFor(2000);
   CHECK(sim::settingsSaves == saves + 1, "one write for three taps (%d)", sim::settingsSaves - saves);
-  tapButton(screens::Button::TimeFormat);
+  tapButton(screens::Button::Night);
   pressBoot();
   settle(2600);
 
@@ -1490,9 +1512,9 @@ void v010Scenarios() {
   CHECK(screen() == "face", "then the face, got %s", screen().c_str());
   openSettings();
   CHECK(screen() == "panel", "a swipe up now opens settings, got %s", screen().c_str());
-  bool h12 = settings.use12h;
-  CHECK(tapButton(screens::Button::TimeFormat) && settings.use12h != h12, "and taps land on the right control");
-  tapButton(screens::Button::TimeFormat);
+  int night0 = settings.night;
+  CHECK(tapButton(screens::Button::Night) && settings.night == (night0 + 1) % NIGHT_CHOICES, "and taps land on the right control");
+  while (settings.night != night0) tapButton(screens::Button::Night);
 
   printf("Touch check: a tap that fits no map is asked again\n");
   goTo(screens::Button::TouchCheck);

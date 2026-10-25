@@ -28,7 +28,7 @@ constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estima
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
-constexpr uint32_t BOOT_HOLD_MS = 250;                 // name stays up briefly after the sequence
+constexpr uint32_t BOOT_HOLD_MS = 350;                 // hero hold + smooth implosion at end of boot
 constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts showing the hold ring
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
 constexpr uint32_t REPEAT_DELAY_MS = 450;               // holding - or + starts repeating after this
@@ -57,9 +57,14 @@ bool awake = true;
 uint32_t bootStart = 0, lastActivity = 0, lastPresent = 0, settingsChangedAt = 0;
 bool settingsDirty = false;
 
-// Backlight fade-in on wake.
+// Smooth power transitions: perceptual backlight curve + radial iris bloom/collapse.
 bool fading = false;
 uint32_t fadeStart = 0;
+bool irisWaking = false;
+uint32_t irisStart = 0;
+bool sleeping = false;
+uint32_t sleepStart = 0;
+void finishIris();
 
 // Face drawing state.
 uint32_t cacheKey = 0;
@@ -593,6 +598,7 @@ void changePage(int dir, float v = 0) {
   int &page = pageFor(mode);
   int to = page + dir;
   if (to < 0 || to >= pageCount()) return;  // no wrap-around, and never a face change
+  finishIris();
   pressed = screens::Button::None;
   if (!haveSpare || !motionOn()) {
     page = to;
@@ -651,6 +657,7 @@ void cutToFace(int step) {
 }
 
 void openPanel(float v = 0) {
+  finishIris();
   cancelEntrance(false);
   pressed = screens::Button::None;
   settingsPage = firstSettingsPage();
@@ -670,6 +677,7 @@ void openPanel(float v = 0) {
 
 // An upward drag on a face pulls the settings panel up under the finger.
 void startPanelDrag() {
+  finishIris();
   cancelEntrance(false);
   pressed = screens::Button::None;
   settingsPage = firstSettingsPage();
@@ -682,6 +690,7 @@ void startPanelDrag() {
 }
 
 void closeToFace(float v = 0) {
+  finishIris();
   pressed = screens::Button::None;
   if (!haveSpare || !motionOn()) {
     mode = Mode::Face;
@@ -779,12 +788,25 @@ void touchResume() {
   }
 }
 
+void finishIris() {
+  if (!irisWaking && !sleeping) return;
+  if (haveSpare) memcpy(cur->getPointer(), nb->getPointer(), W * H * 2);
+  irisWaking = false;
+  if (sleeping) {
+    sleeping = false;
+    hal::backlight(backlightLevel());
+  }
+  dirty = true;
+}
+
 void sleepScreen() {
   if (!awake) return;
   hal::backlight(0);
   tft.writecommand(0x10);  // panel sleep in
   awake = false;
   fading = false;
+  irisWaking = false;
+  sleeping = false;
   pressed = screens::Button::None;
   tr = Transition{};
   faceMoving = false;
@@ -815,6 +837,24 @@ void sleepScreen() {
   touchRest();
 }
 
+void startSleep() {
+  if (!awake || sleeping) return;
+  if (!motionOn() || !haveSpare || tr.kind != Slide::None) {
+    sleepScreen();
+    return;
+  }
+  if (irisWaking) {
+    irisWaking = false;
+  } else if (mode == Mode::Face) {
+    renderFace(*nb, currentFace(), false);
+  } else {
+    memcpy(nb->getPointer(), cur->getPointer(), W * H * 2);
+  }
+  fading = false;
+  sleeping = true;
+  sleepStart = hal::ms();
+}
+
 void wakeScreen() {
   if (awake) return;
   touchResume();
@@ -822,30 +862,85 @@ void wakeScreen() {
   tft.writecommand(0x11);  // panel sleep out; the panel needs 5 ms before the next command
   hal::idle(5);
   awake = true;
+  sleeping = false;
   lastActivity = hal::ms();
   wristDrop.reset();
-  // Draw the current time first, then fade the light up over it.
-  if (mode == Mode::Face) {
-    renderFace(*cur, currentFace(), false);
-    present(*cur);
-    shownSecond = faceContext(false).now.tm_sec;
-    dirty = false;
-  } else {
-    refreshScreen(true);
-  }
-  if (motionOn()) {
+  // Render the clean target into `nb` and bloom outward with a smooth iris + backlight ramp.
+  if (motionOn() && haveSpare) {
+    if (mode == Mode::Face) {
+      renderFace(*nb, currentFace(), false);
+      shownSecond = faceContext(false).now.tm_sec;
+      dirty = false;
+    } else {
+      drawScreen(*nb, mode, pageFor(mode));
+      uiKey = screenKey();
+    }
+    irisWaking = true;
     fading = true;
-    fadeStart = hal::ms();
+    irisStart = fadeStart = hal::ms();
+    gfx::irisTransition(*cur, *nb, 0.04f, faceTheme(currentFace()).primary, true);
+    present(*cur);
   } else {
-    hal::backlight(backlightLevel());
+    irisWaking = false;
+    if (mode == Mode::Face) {
+      renderFace(*cur, currentFace(), false);
+      present(*cur);
+      shownSecond = faceContext(false).now.tm_sec;
+      dirty = false;
+    } else {
+      refreshScreen(true);
+    }
+    if (motionOn()) {
+      fading = true;
+      fadeStart = hal::ms();
+    } else {
+      hal::backlight(backlightLevel());
+    }
   }
 }
 
 void stepFade() {
   if (!fading) return;
   float t = since(fadeStart) / (float)motion::WAKE_MS;
-  hal::backlight((uint8_t)(backlightLevel() * motion::easeOut(t)));
-  if (t >= 1) fading = false;
+  if (t >= 1.0f) {
+    hal::backlight(backlightLevel());
+    fading = false;
+    return;
+  }
+  float s = motion::easeInOut(t);
+  hal::backlight((uint8_t)(backlightLevel() * s * (0.35f + 0.65f * s)));
+}
+
+void stepIris() {
+  if (!irisWaking) return;
+  float t = since(irisStart) / (float)motion::WAKE_MS;
+  if (t >= 1.0f) {
+    irisWaking = false;
+    memcpy(cur->getPointer(), nb->getPointer(), W * H * 2);
+    present(*cur);
+    if (mode == Mode::Face) dirty = true;
+    return;
+  }
+  if (since(lastPresent) >= ANIM_FRAME_MS) {
+    gfx::irisTransition(*cur, *nb, motion::easeOut(t), faceTheme(currentFace()).primary, true);
+    present(*cur);
+  }
+}
+
+void stepSleep() {
+  if (!sleeping) return;
+  float t = since(sleepStart) / (float)motion::SLEEP_MS;
+  if (t >= 1.0f) {
+    sleeping = false;
+    sleepScreen();
+    return;
+  }
+  float p = 1.0f - motion::easeInOut(t);
+  hal::backlight((uint8_t)(backlightLevel() * p * (0.35f + 0.65f * p) + 0.5f));
+  if (since(lastPresent) >= ANIM_FRAME_MS) {
+    gfx::irisTransition(*cur, *nb, p, faceTheme(currentFace()).primary, false);
+    present(*cur);
+  }
 }
 
 // ---- Actions --------------------------------------------------------------------------
@@ -858,6 +953,7 @@ screens::SetupPhase setupPhase() {
 }
 
 void showMode(Mode m) {
+  finishIris();
   mode = m;
   pressed = screens::Button::None;
   if (m == Mode::Face) dirty = true;
@@ -1058,6 +1154,7 @@ void activate(screens::Button b) {
   switch (b) {
     case Button::Brightness:
       settings.brightnessLevel = (settings.brightnessLevel + 1) % BRIGHTNESS_LEVEL_COUNT;
+      fading = false;
       hal::backlight(backlightLevel());
       markSettingsChanged();
       break;
@@ -1199,7 +1296,7 @@ bool feedGesture(uint32_t ms, const Accel &a) {
 
 // While the screen is on a face, turning the wrist away after a look puts it to sleep early.
 void stepDrop() {
-  if (!gesturesOn() || mode != Mode::Face || tr.kind != Slide::None || finger.down || boot.down) return;
+  if (sleeping || !gesturesOn() || mode != Mode::Face || tr.kind != Slide::None || finger.down || boot.down) return;
   if (since(lastImuRead) < IMU_AWAKE_MS) return;
   lastImuRead = hal::ms();
   Accel a;
@@ -1207,7 +1304,7 @@ void stepDrop() {
   float g = sqrtf(a.x * a.x + a.y * a.y + a.z * a.z);
   if (wristDrop.update(hal::ms(), a.z * wristRaise.facing(), g)) {
     hal::log("ui: wrist down, screen off");
-    sleepScreen();
+    startSleep();
   }
 }
 
@@ -1227,12 +1324,24 @@ void onFingerDown(const TouchSample &s) {
     finger.ignore = true;  // the waking touch never also acts
     return;
   }
+  if (sleeping) {
+    // Catch a dimming screen mid-fade and smoothly bloom back to full brightness.
+    float elapsed = min(1.0f, since(sleepStart) / (float)motion::SLEEP_MS);
+    sleeping = false;
+    irisWaking = true;
+    fading = true;
+    uint32_t already = (uint32_t)((1.0f - elapsed) * motion::WAKE_MS);
+    irisStart = fadeStart = hal::ms() - already;
+    finger.ignore = true;
+    return;
+  }
   if (mode == Mode::Boot) {
     // A touch skips the startup sequence.
     bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
     finger.ignore = true;
     return;
   }
+  finishIris();
   releaseUntil = 0;
   cancelEntrance(true);  // a new touch ends a running entrance, never queues behind it
   if (tr.kind == Slide::Face) {
@@ -1289,6 +1398,7 @@ void onFingerMove(const TouchSample &s) {
       refreshScreen(true);
     }
     if (mode == Mode::Face && finger.axis == Axis::Horizontal && haveSpare && motionOn()) {
+      finishIris();
       tr = Transition{};
       tr.kind = Slide::Face;
       tr.dragging = true;
@@ -1438,16 +1548,29 @@ void pollBoot() {
     boot.used = true;
     boot.checkOpened = false;
     noteLooking();
+    if (sleeping) {
+      float elapsed = min(1.0f, since(sleepStart) / (float)motion::SLEEP_MS);
+      sleeping = false;
+      irisWaking = true;
+      fading = true;
+      uint32_t already = (uint32_t)((1.0f - elapsed) * motion::WAKE_MS);
+      irisStart = fadeStart = hal::ms() - already;
+      return;
+    }
     if (awake) cancelEntrance(true);
     if (!awake) wakeScreen();  // the waking press does nothing else
     else if (mode == Mode::Boot) bootStart = hal::ms() - motion::BOOT_MS - BOOT_HOLD_MS;
-    else if (mode == Mode::Face) boot.used = tr.kind != Slide::None;  // decided on release or at the hold time
-    else if (tr.kind == Slide::None) goBack();
+    else {
+      finishIris();
+      if (mode == Mode::Face) boot.used = tr.kind != Slide::None;  // decided on release or at the hold time
+      else if (tr.kind == Slide::None) goBack();
+    }
     return;
   }
   // Released before the hold time on a face: next face.
   if (boot.used || mode != Mode::Face || tr.kind != Slide::None) return;
   boot.used = true;
+  finishIris();
   dirty = true;  // clears a started hold ring
   if (haveSpare && motionOn()) {
     tr = Transition{};
@@ -1534,12 +1657,30 @@ void stepBoot() {
       openTouchCheck(Mode::Face, screens::Button::None);
     } else {
       mode = Mode::Face;
-      dirty = true;
+      if (motionOn() && haveSpare) {
+        renderFace(*nb, currentFace(), false);
+        shownSecond = faceContext(false).now.tm_sec;
+        dirty = false;
+        irisWaking = true;
+        irisStart = hal::ms();
+        gfx::irisTransition(*cur, *nb, 0.06f, faceTheme(currentFace()).primary, true);
+        present(*cur);
+      } else {
+        dirty = true;
+      }
     }
     return;
   }
   if (since(lastPresent) < ANIM_FRAME_MS) return;
-  screens::drawBoot(*cur, min(1.0f, t / (float)motion::BOOT_MS), "v" FW_VERSION);
+  constexpr uint32_t OUTRO_MS = 140;
+  uint32_t outroStart = motion::BOOT_MS + BOOT_HOLD_MS - OUTRO_MS;
+  if (t > outroStart && haveSpare && motionOn() && touchChecked()) {
+    float p = 1.0f - (t - outroStart) / (float)OUTRO_MS;
+    screens::drawBoot(*nb, 1.0f, "v" FW_VERSION);
+    gfx::irisTransition(*cur, *nb, motion::easeInOut(p), col::CYAN, false);
+  } else {
+    screens::drawBoot(*cur, min(1.0f, t / (float)motion::BOOT_MS), "v" FW_VERSION);
+  }
   present(*cur);
 }
 
@@ -1769,6 +1910,7 @@ void begin() {
   finger = Finger{};
   pressed = screens::Button::None;
   awake = true;
+  fading = irisWaking = sleeping = false;
   standby = power::Controller{};
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = 0;
@@ -1821,15 +1963,18 @@ void begin() {
   bootStart = lastActivity = hal::ms();
   if (!sequence && !touchChecked()) {
     openTouchCheck(Mode::Face, screens::Button::None);
+    hal::backlight(backlightLevel());
   } else if (mode == Mode::Face) {
     renderFace(*cur, currentFace(), false);
     present(*cur);
     dirty = false;
+    hal::backlight(backlightLevel());
   } else {
     screens::drawBoot(*cur, 0, "v" FW_VERSION);
     present(*cur);
+    fading = true;
+    fadeStart = hal::ms();
   }
-  hal::backlight(backlightLevel());
 }
 
 void loop() {
@@ -1853,16 +1998,22 @@ void loop() {
 
   bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot;
   if (held) lastActivity = hal::ms();
-  if (since(lastActivity) > screenTimeout()) {
-    sleepScreen();
+  if (!sleeping && since(lastActivity) > screenTimeout()) {
+    startSleep();
+    if (!awake) return;
+  }
+  if (sleeping) {
+    stepSleep();
+    if (awake) hal::idle(1);
     return;
   }
 
   stepFade();
   stepBootCheck();
   stepDrop();
-  if (!awake) return;
+  if (!awake || sleeping) return;
   if (tr.kind != Slide::None) stepTransition();
+  else if (irisWaking) stepIris();
   else if (mode == Mode::Boot) stepBoot();
   else if (mode == Mode::Face) {
     if (!stepHold()) stepFace();
@@ -1882,8 +2033,8 @@ void loop() {
   stepDiag();
 #endif
 
-  bool busy = tr.kind != Slide::None || fading || faceMoving || entrance.playing || marker.moving || mode == Mode::Boot ||
-              finger.down || boot.down || releaseUntil;
+  bool busy = tr.kind != Slide::None || fading || irisWaking || sleeping || faceMoving || entrance.playing ||
+              marker.moving || mode == Mode::Boot || finger.down || boot.down || releaseUntil;
   hal::idle(busy ? 1 : 10);
 }
 

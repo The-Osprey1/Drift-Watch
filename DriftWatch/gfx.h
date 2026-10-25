@@ -72,4 +72,8 @@ int chordWidth(int top, int bottom, int margin);
 // Low skyline silhouette along the bottom of the screen. Windows change with `seed`.
 void skyline(TFT_eSprite &s, int horizon, uint32_t seed);
 
+// Smooth radial iris + luminance transition between screen off (progress = 0) and on (1),
+// with a soft feathered aperture and a subtle glowing horizon ring in `accent`.
+void irisTransition(TFT_eSprite &dst, TFT_eSprite &src, float progress, uint16_t accent, bool waking);
+
 }  // namespace gfx

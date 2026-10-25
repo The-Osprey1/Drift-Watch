@@ -742,7 +742,7 @@ void scenarios() {
   runFor(150); snap("boot_a");
   runFor(300); snap("boot_b");
   runFor(300); snap("boot_c");
-  runFor(500);
+  runFor(motion::BOOT_MS);
   CHECK(screen() == "touchcheck", "the first start with the screen turned checks touch, got %s", screen().c_str());
   snap("touch_check_1");
   CHECK(settings.screenTurn == DISPLAY_ROTATION && ui::display().rotation == DISPLAY_ROTATION,

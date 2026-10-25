@@ -310,4 +310,93 @@ void skyline(TFT_eSprite &s, int horizon, uint32_t seed) {
   s.drawFastHLine(0, horizon, 240, col::MAGENTA_DIM);
 }
 
+void irisTransition(TFT_eSprite &dst, TFT_eSprite &src, float progress, uint16_t accent, bool waking) {
+  if (progress <= 0.002f) {
+    dst.fillSprite(col::BG);
+    return;
+  }
+  if (progress >= 0.998f) {
+    memcpy(dst.getPointer(), src.getPointer(), 240 * 240 * 2);
+    return;
+  }
+
+  const float feather = waking ? 28.0f : 32.0f;
+  const float rOuter = waking ? (18.0f + 134.0f * progress) : (150.0f * progress);
+  const float rInner = rOuter - feather;
+  const float lum = waking ? (0.30f + 0.70f * progress) : progress;
+
+  const float ringCenter = rOuter - feather * 0.42f;
+  const float ringPeak = sinf(progress * 3.14159265f) * (waking ? 0.68f : 0.52f);
+  const float ringHalfW = 4.2f;
+
+  // Lookup tables indexed by (dx*dx + dy*dy) >> 5 (0..900 for a 240x240 display).
+  uint8_t alphaByD2[901];
+  uint8_t glowByD2[901];
+  for (int i = 0; i <= 900; i++) {
+    float d = sqrtf((float)(i << 5));
+    if (d >= rOuter) {
+      alphaByD2[i] = 0;
+    } else if (d <= rInner) {
+      alphaByD2[i] = (uint8_t)(32.0f * lum + 0.5f);
+    } else {
+      float u = (rOuter - d) / feather;
+      float s = u * u * (3.0f - 2.0f * u);
+      alphaByD2[i] = (uint8_t)(32.0f * lum * s + 0.5f);
+    }
+
+    float rd = fabsf(d - ringCenter);
+    if (ringCenter > 3.0f && ringCenter < 121.0f && rd < ringHalfW) {
+      float ru = 1.0f - rd / ringHalfW;
+      glowByD2[i] = (uint8_t)(32.0f * ringPeak * (ru * ru) + 0.5f);
+    } else {
+      glowByD2[i] = 0;
+    }
+  }
+
+  uint16_t acc = accent ? accent : col::CYAN;
+  const uint32_t accGrb = (acc | ((uint32_t)acc << 16)) & 0x07E0F81FU;
+  const uint16_t *sp = (const uint16_t *)src.getPointer();
+  uint16_t *dp = (uint16_t *)dst.getPointer();
+
+  for (int y = 0; y < 240; y++) {
+    int dy = y - CY, dy2 = dy * dy;
+    const uint16_t *rowS = sp + y * 240;
+    uint16_t *rowD = dp + y * 240;
+    for (int x = 0; x < 240; x++) {
+      int dx = x - CX;
+      int idx = (dx * dx + dy2) >> 5;
+      uint8_t a = alphaByD2[idx];
+      uint8_t g = glowByD2[idx];
+      if ((a | g) == 0) {
+        rowD[x] = 0;
+        continue;
+      }
+      uint16_t raw = rowS[x];
+      if (g == 0 && (a >= 32 || raw == 0)) {
+        rowD[x] = raw;
+        continue;
+      }
+#ifdef ESP32
+      uint16_t c = __builtin_bswap16(raw);
+#else
+      uint16_t c = raw;
+#endif
+      uint32_t grb = 0;
+      if (a > 0 && c != 0) {
+        grb = (c | ((uint32_t)c << 16)) & 0x07E0F81FU;
+        if (a < 32) grb = ((grb * a) >> 5) & 0x07E0F81FU;
+      }
+      if (g > 0) {
+        grb = (((grb * (32 - g)) + (accGrb * g)) >> 5) & 0x07E0F81FU;
+      }
+      uint16_t out = (uint16_t)(grb | (grb >> 16));
+#ifdef ESP32
+      rowD[x] = __builtin_bswap16(out);
+#else
+      rowD[x] = out;
+#endif
+    }
+  }
+}
+
 }  // namespace gfx

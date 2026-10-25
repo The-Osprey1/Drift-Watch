@@ -38,6 +38,9 @@ $CXX -I tools/host/net -I tools/host -I DriftWatch tools/host/net_test.cpp tools
 # The motion sensor's register sequences and the screen-off power controller.
 $CXX -I tools/host -I DriftWatch tools/host/power_test.cpp DriftWatch/power.cpp DriftWatch/qmi8658.cpp -o "$BIN/power_test"
 
+$CXX -I tools/host -I DriftWatch -isystem "$TFT" tools/host/tft_shim.cpp tools/host/preview_faces.cpp \
+  DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp -o "$BIN/preview_faces"
+
 status=0
 run() {  # name, command...: runs one test, keeps its whole output in the output folder
   local name=$1; shift
@@ -51,4 +54,5 @@ run interface        "$BIN/simulate" "$OUT"
 run interface_network "$BIN/simulate_network" "$OUT"
 run network          "$BIN/net_test"
 run power            "$BIN/power_test"
+run preview          "$BIN/preview_faces" "$OUT"
 exit $status

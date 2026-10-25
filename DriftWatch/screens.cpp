@@ -260,8 +260,11 @@ int flow(Ctx &c, const Doc &d, const int *idx, int n, int top, int bottom, bool 
 bool drawItem(Ctx &c, const Item &it, const Rect &r) {
   bool pressed = c.v.pressed == it.id && it.id != Button::None;
   if (c.draw) {
-    if (pressed) gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, col::CYAN_DEEP, true);
-    uint16_t edge = pressed ? col::CYAN : it.edge;
+    uint16_t pressedBg = c.v.theme.pressed ? c.v.theme.pressed : col::CYAN_DEEP;
+    if (pressed) gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, pressedBg, true);
+    uint16_t activeEdge = c.v.theme.primary ? c.v.theme.primary : col::CYAN;
+    uint16_t subtleEdge = c.v.theme.outline ? c.v.theme.outline : col::OUTLINE;
+    uint16_t edge = pressed ? activeEdge : (it.edge == col::CYAN ? activeEdge : it.edge == col::OUTLINE ? subtleEdge : it.edge);
     gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, edge, false);
     gfx::cutBox(c.s, r.x + 1, r.y + 1, r.w - 2, r.h - 2, CUT - 1, edge, false);
   }
@@ -330,14 +333,15 @@ bool drawItem(Ctx &c, const Item &it, const Rect &r) {
   return true;
 }
 
-void dots(TFT_eSprite &s, int page, int pages) {
+void dots(TFT_eSprite &s, int page, int pages, uint16_t activeCol, uint16_t outlineCol) {
   if (pages < 2) return;
   int gap = 12, x0 = CX - (pages - 1) * gap / 2;
   for (int i = 0; i < pages; i++) {
-    if (i == page) s.fillSmoothCircle(x0 + i * gap, DOTS_Y, 3, col::TEXT, col::BG);
-    else s.drawCircle(x0 + i * gap, DOTS_Y, 3, col::OUTLINE);
+    if (i == page) s.fillSmoothCircle(x0 + i * gap, DOTS_Y, 3, activeCol, col::BG);
+    else s.drawCircle(x0 + i * gap, DOTS_Y, 3, outlineCol);
   }
 }
+void dots(TFT_eSprite &s, int page, int pages) { dots(s, page, pages, col::TEXT, col::OUTLINE); }
 
 // Swipe-down handle at the top edge, the hint that this screen closes downwards.
 void handle(TFT_eSprite &s) { s.fillRect(CX - 12, 13, 24, 3, col::N600); }
@@ -405,6 +409,31 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
       it.label = "Time format";
       it.value = v.use12h ? "12-hour" : "24-hour";
       break;
+    case Button::HotSwap: {
+      it.label = "Hot swap";
+      uint16_t mask = v.activeFaces & 0x0FFF;
+      int count = 0;
+      for (int i = 0; i < FACE_COUNT; i++) {
+        if (mask & (1 << i)) count++;
+      }
+      if (count >= FACE_COUNT || count == 0) {
+        it.value = "All (12)";
+      } else if (count == 2) {
+        int other = -1;
+        for (int i = 0; i < FACE_COUNT; i++) {
+          if (mask & (1 << i)) {
+            if (other == -1) other = i;
+            else if (i != (int)(settings.face % FACE_COUNT)) other = i;
+          }
+        }
+        it.value = d.fmt("2: %s", faceName((Face)other));
+        it.valueColor = it.edge = v.theme.primary ? v.theme.primary : col::CYAN;
+      } else {
+        it.value = d.fmt("%d active", count);
+        it.valueColor = it.edge = v.theme.primary ? v.theme.primary : col::CYAN;
+      }
+      break;
+    }
     case Button::Motion:
       it.label = "Motion";
       it.value = v.motion == MOTION_OFF ? "Off" : v.motion == MOTION_EXPRESSIVE ? "Expressive" : "Subtle";
@@ -500,7 +529,10 @@ int settingsPages(const View &v) { return SETTINGS_ITEMS / settingsPerPage(v); }
 int settingsControls(const View &v, int page, Control *out, int max) {
   int per = settingsPerPage(v), n = 0;
   for (int i = 0; i < per && n < max; i++) {
-    Button b = settingsItem(page * per + i);
+    int idx = page * per + i;
+    if (idx >= SETTINGS_ITEMS) break;
+    Button b = settingsItem(idx);
+    if (b == Button::None) continue;
     if (v.large) out[n++] = {b, TALL, TALL};
     else out[n++] = {b, i == 0 ? UPPER : LOWER, i == 0 ? UPPER_HIT : LOWER_HIT};
   }
@@ -513,7 +545,7 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
   if (!v.large) {
     // Compact header; with large text the space goes to the control instead.
     const GFXfont *f = fontFor(Role::Body, false);
-    gfx::text(s, "Settings", CX, 27, f, col::TEXT_2, MC_DATUM);
+    gfx::text(s, "Settings", CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
   }
   Control ctl[2];
   int n = settingsControls(v, page, ctl, 2);
@@ -521,7 +553,7 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
     Doc d;
     drawItem(c, settingsItemFor(v, ctl[i].id, d), ctl[i].visible);
   }
-  dots(s, page, settingsPages(v));
+  dots(s, page, settingsPages(v), v.theme.primary ? v.theme.primary : col::TEXT, v.theme.outline ? v.theme.outline : col::OUTLINE);
   return c.animated;
 }
 
@@ -954,7 +986,8 @@ Button settingsItem(int i) {
   static const Button order[SETTINGS_ITEMS] = {Button::Brightness, Button::TimeFormat, Button::SetTime,
                                                 Button::PhoneSync,  Button::SyncNow,    Button::WifiSetup,
                                                 Button::RaiseWake,  Button::Night,      Button::Motion,
-                                                Button::ScreenTurn, Button::TouchCheck, Button::Details};
+                                                Button::HotSwap,    Button::ScreenTurn, Button::TouchCheck,
+                                                Button::Details,    Button::None};
   return i >= 0 && i < SETTINGS_ITEMS ? order[i] : Button::None;
 }
 
@@ -962,7 +995,7 @@ const char *buttonName(Button b) {
   static const char *names[] = {"none",     "brightness", "time format", "motion",   "sync now",   "wi-fi setup",
                                 "details",  "text size",  "cancel",      "back",     "retry",      "edit wi-fi",
                                 "try again", "done",      "set time",    "raise to wake", "minus", "plus", "save time",
-                                "phone sync", "night mode", "screen turn", "touch check"};
+                                "phone sync", "night mode", "screen turn", "touch check", "hot swap"};
   return names[(int)b];
 }
 

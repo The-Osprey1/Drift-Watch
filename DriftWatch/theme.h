@@ -8,6 +8,13 @@ constexpr uint16_t rgb(uint32_t hex) {
   return ((hex >> 8) & 0xF800) | ((hex >> 5) & 0x07E0) | ((hex >> 3) & 0x001F);
 }
 
+struct FaceTheme {
+  uint16_t primary;
+  uint16_t secondary;
+  uint16_t pressed;
+  uint16_t outline;
+};
+
 namespace col {
 // Identity colours. Each face picks one as primary and uses the others sparingly.
 constexpr uint16_t YELLOW = rgb(0xFCEE0A);
@@ -96,6 +103,7 @@ constexpr uint32_t RADAR_FRAME_MS = 33; // about 30 frames a second: 3.3 degrees
 constexpr int LOW_BATTERY_PCT = 20;     // below this the beam only moves with the seconds
 // Phantom: the balance wheel and seconds hand at about 30 frames a second while it is on screen.
 constexpr uint32_t PHANTOM_FRAME_MS = 33;
+constexpr uint32_t AMBIENT_FRAME_MS = 50;  // 20 fps ambient animation for lively faces
 // Entrances and Orbit's minute marker run at the slide frame rate, then the face drops back to
 // one frame a second.
 constexpr uint32_t ENTRANCE_FRAME_MS = 16;

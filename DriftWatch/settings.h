@@ -11,7 +11,7 @@ constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
 // (v0.10.0) adds the screen turn, the checked touch map, night mode, the learned clock drift
 // and the last time the clock was known; version 5 (v0.12.0) turns the two-way Motion setting
 // into three levels.
-constexpr uint8_t SETTINGS_VERSION = 5;
+constexpr uint8_t SETTINGS_VERSION = 6;
 
 // How much the interface moves. Off: instant changes, no entrances, hands and the radar step once
 // a second. Subtle (the default): slides, settles and one short entrance after choosing a face.
@@ -40,6 +40,7 @@ struct Settings {
   uint8_t night = 0;            // index into NIGHT_FROM / NIGHT_TO
   int32_t driftPpb = 0;         // learned clock error in parts per billion, + = the watch runs fast
   int64_t lastKnownTime = 0;    // wall clock when last saved, a starting point for Set time after power loss
+  uint16_t activeFaces = 0x0FFF; // Bitmask of enabled faces in hot swap (bits 0..11)
 };
 
 extern Settings settings;

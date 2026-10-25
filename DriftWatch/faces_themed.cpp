@@ -226,6 +226,20 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
   // The track draws clockwise from 12 over 300 ms.
   float tp = motion::easeOut(seg(e, 0, 300));
   if (tp > 0) gfx::arc(s, (int)orbit::TRACK_R, (int)orbit::TRACK_R - 1, 0, 360 * tp, TRACK);
+  if (c.animate) {
+    // Subtle star twinkle across deep space
+    static const struct { float deg, r, phase; } TWINKLE[] = {
+      {45.0f, 92.0f, 0.0f},
+      {215.0f, 85.0f, 2.1f},
+      {310.0f, 98.0f, 4.3f}
+    };
+    for (const auto &ts : TWINKLE) {
+      Pt sp = polarAt(CX, CY, ts.r, ts.deg);
+      float tw = 0.5f + 0.5f * sinf(c.animMs * 0.004f + ts.phase);
+      uint16_t sc = gfx::blend(col::WHITE, STAR_FAR, tw);
+      gfx::dot(s, sp.x, sp.y, 1.3f * tw + 0.3f, sc, col::BG);
+    }
+  }
   if (!c.timeValid || !orbit::markerShown(c)) return;
   float deg = orbit::markerDeg(c.now.tm_min * 6, c);
   if (c.entering && e < orbit::ENTRANCE_MS) {
@@ -285,6 +299,19 @@ void moon(TFT_eSprite &s, uint32_t e) {
 
 void drawLive(TFT_eSprite &s, const FaceContext &c) {
   moon(s, timeline(c));
+  if (c.animate) {
+    static const struct { float deg, r, phase; } LUN_STARS[] = {
+      {38.0f, 82.0f, 1.2f},
+      {225.0f, 78.0f, 3.5f},
+      {325.0f, 88.0f, 0.5f}
+    };
+    for (const auto &ts : LUN_STARS) {
+      Pt sp = gfx::polar(ts.deg, ts.r);
+      float tw = 0.5f + 0.5f * sinf(c.animMs * 0.004f + ts.phase);
+      uint16_t sc = gfx::blend(SILVER, DIM, tw);
+      gfx::dot(s, sp.x, sp.y, 1.2f * tw + 0.2f, sc, BG);
+    }
+  }
   if (c.timeValid) {
     hands(s, c, SILVER, SILVER, BG, 4.8f, 3.5f);
     needle(s, c.now.tm_sec * 6, 96, 16, 1.6f, SEC, BG);
@@ -339,6 +366,12 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
   for (int i = 0; i < yozakura::PETALS; i++) {
     yozakura::Petal p = yozakura::petalAt(i, e);
     if (p.visible) petal(s, p.x, p.y, p.size, p.rot, gfx::blend(PINK_HI, BG, p.alpha));
+  }
+  if (c.animate) {
+    float sh = 0.5f + 0.5f * sinf(c.animMs * 0.003f);
+    uint16_t shimmer = gfx::blend(PINK_HI, PINK, sh);
+    gfx::dot(s, 155, 80, 2.2f, shimmer);
+    gfx::dot(s, 85, 165, 2.0f, shimmer);
   }
 }
 }  // namespace yoz

@@ -23,6 +23,7 @@ uint8_t migrateSettings(Settings &s, uint8_t storedVersion) {
   }
   if (s.night >= NIGHT_CHOICES) s.night = 0;
   if (s.motion >= MOTION_LEVELS) s.motion = MOTION_SUBTLE;
+  if ((s.activeFaces & 0x0FFF) == 0) s.activeFaces = 0x0FFF;
   if (s.driftPpb > 30000000 || s.driftPpb < -30000000) s.driftPpb = 0;  // over 3%: not a real clock error
   return SETTINGS_VERSION;
 }
@@ -48,6 +49,8 @@ void loadSettings() {
   settings.night = p.getUChar("night", 0);
   settings.driftPpb = p.getInt("drift", 0);
   settings.lastKnownTime = p.getLong64("known", 0);
+  settings.activeFaces = p.isKey("faces") ? p.getUShort("faces", 0x0FFF) : 0x0FFF;
+  if ((settings.activeFaces & 0x0FFF) == 0) settings.activeFaces = 0x0FFF;
   p.end();
   migrateSettings(settings, version);
 }
@@ -72,6 +75,7 @@ void saveSettings() {
   p.putUChar("night", settings.night);
   p.putInt("drift", settings.driftPpb);
   p.putLong64("known", settings.lastKnownTime);
+  p.putUShort("faces", settings.activeFaces);
   p.end();
 }
 

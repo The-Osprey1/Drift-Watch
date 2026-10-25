@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drift sync</title>
-<meta name="description" content="Set a Drift-Watch's time, time zone and Wi-Fi from this browser over Bluetooth.">
+<meta name="description" content="Set a Drift-Watch's time, time zone, hot swap watch faces, and Wi-Fi from this browser over Bluetooth.">
 <style>
   :root {
     --bg: #07080b; --panel: #0e1016; --line: #2a303c; --text: #dce2ea; --text2: #9aa2b4;
@@ -18,12 +18,12 @@
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 34rem; margin: 0 auto; padding: 24px 16px 48px; }
+  main { max-width: 36rem; margin: 0 auto; padding: 24px 16px 48px; }
   h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: 0.02em; }
   h1 span { color: var(--yellow); }
   p.lead { color: var(--text2); margin: 0 0 24px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-  h2 { font-size: 1.05rem; margin: 0 0 8px; }
+  h2 { font-size: 1.05rem; margin: 0 0 8px; display: flex; align-items: center; justify-content: space-between; }
   ol { margin: 0; padding-left: 1.2rem; color: var(--text2); }
   button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 20px; border-radius: 10px; border: 2px solid var(--cyan);
            background: transparent; color: var(--cyan); cursor: pointer; width: 100%; margin-top: 12px; }
@@ -40,12 +40,115 @@
   dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 0.95rem; }
   dt { color: var(--text2); }
   dd { margin: 0; word-break: break-word; }
+
+  /* Watch face selector grid */
+  .face-count-badge {
+    font-size: 0.85rem;
+    color: var(--cyan);
+    font-weight: 500;
+  }
+  .face-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
+    gap: 8px;
+    margin: 14px 0 10px;
+  }
+  .face-card {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg);
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-top: 0;
+    cursor: pointer;
+    user-select: none;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
+  }
+  .face-card:hover {
+    border-color: var(--card-color, var(--cyan));
+  }
+  .face-card.selected {
+    border-color: var(--card-color, var(--cyan));
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .face-card input[type="checkbox"] {
+    appearance: none;
+    -webkit-appearance: none;
+    width: 18px;
+    height: 18px;
+    min-height: 18px;
+    padding: 0;
+    margin: 0;
+    border-radius: 4px;
+    border: 1px solid var(--line);
+    background: transparent;
+    cursor: pointer;
+    display: grid;
+    place-content: center;
+    flex-shrink: 0;
+  }
+  .face-card input[type="checkbox"]:checked {
+    background: var(--card-color, var(--cyan));
+    border-color: var(--card-color, var(--cyan));
+  }
+  .face-card input[type="checkbox"]:checked::before {
+    content: "";
+    width: 8px;
+    height: 8px;
+    background: var(--bg);
+    clip-path: polygon(14% 44%, 0 60%, 40% 100%, 100% 20%, 82% 6%, 38% 68%);
+  }
+  .face-info {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+  .face-name {
+    font-weight: 600;
+    font-size: 0.9rem;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text);
+  }
+  .face-badge {
+    font-size: 0.72rem;
+    color: var(--text2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .face-active-tag {
+    color: var(--yellow);
+    font-weight: 700;
+  }
+  .btn-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .btn-row button {
+    margin-top: 0;
+    min-height: 38px;
+    font-size: 0.85rem;
+    padding: 0 12px;
+  }
+  button.ghost {
+    border-color: var(--line);
+    color: var(--text2);
+  }
+  button.ghost:hover:not(:disabled) {
+    border-color: var(--text2);
+    color: var(--text);
+  }
 </style>
 </head>
 <body>
 <main>
   <h1><span>DRIFT</span> sync</h1>
-  <p class="lead">Sets your Drift-Watch's time, time zone and Wi-Fi over Bluetooth. Nothing is installed and nothing leaves this page except what you send to the watch.</p>
+  <p class="lead">Sets your Drift-Watch's time, time zone, active watch faces and Wi-Fi over Bluetooth. Nothing is installed and nothing leaves this page except what you send to the watch.</p>
 
   <section id="unsupported" hidden>
     <h2>This browser can't use Bluetooth</h2>
@@ -72,8 +175,21 @@
     <p id="syncMsg" class="msg" role="status"></p>
   </section>
 
+  <section id="facesSection">
+    <h2><span>3. Active watch faces (Hot swap)</span> <span id="faceCountBadge" class="face-count-badge"></span></h2>
+    <p class="note">Choose which faces you want active when swiping left or right on the watch. Selecting just <b>two</b> enables fast hot-swap switching between your favorites.</p>
+    <div class="face-grid" id="faceGrid"></div>
+    <div class="btn-row">
+      <button type="button" id="selectAllFaces" class="ghost" disabled>Select all (12)</button>
+      <button type="button" id="selectTwoFaces" class="ghost" disabled>Pair (Digital + Orbit)</button>
+      <button type="button" id="clearFaces" class="ghost" disabled>Clear</button>
+    </div>
+    <button id="saveFaces" disabled>Save active faces to watch</button>
+    <p id="facesMsg" class="msg" role="status"></p>
+  </section>
+
   <section>
-    <h2>3. Wi-Fi (optional)</h2>
+    <h2>4. Wi-Fi (optional)</h2>
     <p class="note">Lets the watch keep itself right over the internet. It only works with 2.4 GHz networks. The password goes straight to the watch, over a Bluetooth link that is not encrypted, so only do this with the watch close to you.</p>
     <p class="note">Using an iPhone Personal Hotspot? Turn on <b>Maximize Compatibility</b> in Settings &gt; Personal Hotspot so it broadcasts on 2.4 GHz, and keep that screen open while the watch joins.</p>
     <label for="ssid">Network name</label>
@@ -96,6 +212,122 @@ const COMMAND = "8f1d0002-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const STATUS = "8f1d0003-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const $ = (id) => document.getElementById(id);
 let device = null, command = null;
+
+const FACES = [
+  { id: 0, name: "Digital", color: "#00f0ff", desc: "CRT glow & colon pulse" },
+  { id: 1, name: "Stealth", color: "#9aa2b4", desc: "Monochrome hands" },
+  { id: 2, name: "Corpo", color: "#fcee0a", desc: "Gold executive dial" },
+  { id: 3, name: "Hologram", color: "#00f0ff", desc: "Neon wireframe" },
+  { id: 4, name: "Radar", color: "#19ffb0", desc: "Phosphor sweep & blips" },
+  { id: 5, name: "Phantom", color: "#b026ff", desc: "Floating ghost rings" },
+  { id: 6, name: "Orbit", color: "#00f0ff", desc: "Planetary orbit & stars" },
+  { id: 7, name: "Lunar", color: "#c9d0db", desc: "Moon phase & craters" },
+  { id: 8, name: "Yozakura", color: "#ff2a6d", desc: "Night cherry blossoms" },
+  { id: 9, name: "Hanami", color: "#ff7eb6", desc: "Spring blossoms" },
+  { id: 10, name: "Wasteland", color: "#39ff14", desc: "Pip CRT & scanlines" },
+  { id: 11, name: "Mojave", color: "#ff9e00", desc: "Warm amber glow" }
+];
+
+let currentWatchFace = -1;
+
+function buildFaceGrid() {
+  const container = $("faceGrid");
+  container.innerHTML = "";
+  FACES.forEach(f => {
+    const card = document.createElement("label");
+    card.className = "face-card selected";
+    card.id = "face-card-" + f.id;
+    card.style.setProperty("--card-color", f.color);
+
+    const cb = document.createElement("input");
+    cb.type = "checkbox";
+    cb.id = "face-cb-" + f.id;
+    cb.checked = true;
+    cb.addEventListener("change", () => {
+      card.classList.toggle("selected", cb.checked);
+      updateFaceCount();
+    });
+
+    const info = document.createElement("div");
+    info.className = "face-info";
+
+    const name = document.createElement("div");
+    name.className = "face-name";
+    name.textContent = f.name;
+
+    const badge = document.createElement("div");
+    badge.className = "face-badge";
+    badge.id = "face-badge-" + f.id;
+    badge.textContent = f.desc;
+
+    info.appendChild(name);
+    info.appendChild(badge);
+    card.appendChild(cb);
+    card.appendChild(info);
+    container.appendChild(card);
+  });
+  updateFaceCount();
+}
+
+function updateFaceCount() {
+  let count = 0;
+  for (let i = 0; i < FACES.length; i++) {
+    const cb = $("face-cb-" + i);
+    if (cb && cb.checked) count++;
+  }
+  const badge = $("faceCountBadge");
+  if (badge) {
+    if (count === 12) badge.textContent = "All 12 active";
+    else if (count === 2) badge.textContent = "2 faces (Hot Swap Pair)";
+    else badge.textContent = count + " of 12 active";
+  }
+}
+
+function setFaceMask(mask) {
+  for (let i = 0; i < FACES.length; i++) {
+    const cb = $("face-cb-" + i);
+    const card = $("face-card-" + i);
+    const checked = (mask & (1 << i)) !== 0;
+    if (cb) cb.checked = checked;
+    if (card) card.classList.toggle("selected", checked);
+  }
+  updateFaceCount();
+}
+
+function getFaceMask() {
+  let mask = 0;
+  for (let i = 0; i < FACES.length; i++) {
+    const cb = $("face-cb-" + i);
+    if (cb && cb.checked) mask |= (1 << i);
+  }
+  return mask;
+}
+
+function highlightWatchFace(faceIdx) {
+  currentWatchFace = faceIdx;
+  for (let i = 0; i < FACES.length; i++) {
+    const badge = $("face-badge-" + i);
+    if (!badge) continue;
+    if (i === faceIdx) {
+      badge.innerHTML = '<span class="face-active-tag">[ON WATCH]</span> ' + FACES[i].desc;
+    } else {
+      badge.textContent = FACES[i].desc;
+    }
+  }
+}
+
+function parseWatchStatus(txt) {
+  const mFaces = txt.match(/faces=(\d+)/);
+  if (mFaces) {
+    const mask = parseInt(mFaces[1], 10);
+    setFaceMask(mask);
+  }
+  const mFace = txt.match(/face=(\d+)/);
+  if (mFace) {
+    const face = parseInt(mFace[1], 10);
+    highlightWatchFace(face);
+  }
+}
 
 // A POSIX time zone string for this browser's zone, including its summer time rules, worked
 // out by finding this year's offset changes. The watch's C library understands these.
@@ -172,8 +404,15 @@ async function send(line) {
 function connected(on) {
   $("sync").disabled = !on;
   $("wifi").disabled = !on;
+  $("saveFaces").disabled = !on;
+  $("selectAllFaces").disabled = !on;
+  $("selectTwoFaces").disabled = !on;
+  $("clearFaces").disabled = !on;
   $("connect").textContent = on ? "Connected to " + (device && device.name || "the watch") : "Connect to the watch";
-  if (!on) $("status").textContent = "Not connected.";
+  if (!on) {
+    $("status").textContent = "Not connected.";
+    highlightWatchFace(-1);
+  }
 }
 
 async function connect() {
@@ -191,12 +430,22 @@ async function connect() {
     const service = await server.getPrimaryService(SERVICE);
     command = await service.getCharacteristic(COMMAND);
     const status = await service.getCharacteristic(STATUS);
-    status.addEventListener("characteristicvaluechanged", (e) => { $("status").textContent = new TextDecoder().decode(e.target.value); });
+    status.addEventListener("characteristicvaluechanged", (e) => {
+      const txt = new TextDecoder().decode(e.target.value);
+      $("status").textContent = txt;
+      parseWatchStatus(txt);
+    });
     await status.startNotifications().catch(() => {});
     const initial = await status.readValue().catch(() => null);
-    if (initial) $("status").textContent = new TextDecoder().decode(initial);
+    if (initial) {
+      const txt = new TextDecoder().decode(initial);
+      $("status").textContent = txt;
+      parseWatchStatus(txt);
+    }
     connected(true);
     say("connMsg", "Connected.", "ok");
+    // Request current status from the watch
+    try { await send("?"); } catch (e) {}
   } catch (err) {
     command = null;
     connected(false);
@@ -217,6 +466,28 @@ async function syncTime() {
   }
 }
 
+async function saveActiveFaces() {
+  const mask = getFaceMask();
+  if (mask === 0) {
+    say("facesMsg", "Please select at least one face.", "err");
+    return;
+  }
+  say("facesMsg", "Sending...");
+  try {
+    await send("H=" + mask);
+    const count = FACES.filter((_, i) => (mask & (1 << i))).length;
+    if (count === 2) {
+      say("facesMsg", "Saved! Hot Swap Pair enabled - swipe left or right on the watch to toggle between your 2 chosen faces.", "ok");
+    } else if (count === 12) {
+      say("facesMsg", "Saved! All 12 watch faces are enabled.", "ok");
+    } else {
+      say("facesMsg", "Saved! Watch will cycle through the " + count + " selected faces.", "ok");
+    }
+  } catch (err) {
+    say("facesMsg", "Could not send: " + err.message, "err");
+  }
+}
+
 async function sendWifi() {
   const ssid = $("ssid").value.trim(), pass = $("pass").value;
   if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
@@ -233,6 +504,7 @@ async function sendWifi() {
 }
 
 (function start() {
+  buildFaceGrid();
   try {
     $("zoneName").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
     $("zonePosix").textContent = posixZone();
@@ -244,6 +516,14 @@ async function sendWifi() {
   }
   $("connect").addEventListener("click", connect);
   $("sync").addEventListener("click", syncTime);
+  $("selectAllFaces").addEventListener("click", () => setFaceMask(0x0FFF));
+  $("selectTwoFaces").addEventListener("click", () => {
+    let p1 = currentWatchFace >= 0 ? currentWatchFace : 0;
+    let p2 = (p1 === 6) ? 0 : 6;
+    setFaceMask((1 << p1) | (1 << p2));
+  });
+  $("clearFaces").addEventListener("click", () => setFaceMask(0));
+  $("saveFaces").addEventListener("click", saveActiveFaces);
   $("wifi").addEventListener("click", sendWifi);
 })();
 </script>

@@ -179,7 +179,27 @@ bool motionOn() { return settings.motion != MOTION_OFF; }
 bool entrancesOn() { return motionOn() && haveSpare && haveCache; }
 uint32_t since(uint32_t t) { return hal::ms() - t; }
 Face currentFace() { return (Face)(settings.face % FACE_COUNT); }
-Face faceAt(int step) { return (Face)((settings.face + FACE_COUNT + step) % FACE_COUNT); }
+Face nextActiveFace(int cur, int dir) {
+  uint16_t mask = settings.activeFaces & 0x0FFF;
+  if (!mask) mask = 0x0FFF;
+  int f = cur;
+  for (int i = 0; i < FACE_COUNT; i++) {
+    f = (f + FACE_COUNT + dir) % FACE_COUNT;
+    if (mask & (1 << f)) return (Face)f;
+  }
+  return (Face)cur;
+}
+
+Face faceAt(int step) {
+  if (step == 0) return currentFace();
+  int dir = step > 0 ? 1 : -1;
+  int count = abs(step);
+  Face f = currentFace();
+  for (int i = 0; i < count; i++) {
+    f = nextActiveFace(f, dir);
+  }
+  return f;
+}
 
 void markSettingsChanged() {
   settingsDirty = true;
@@ -366,6 +386,8 @@ screens::View view(Mode m, int page) {
   v.large = settings.largeText;
   v.reducedMotion = !motionOn();
   v.motion = settings.motion;
+  v.activeFaces = settings.activeFaces;
+  v.theme = faceTheme(currentFace());
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
@@ -982,7 +1004,7 @@ void stepPhone() {
     if (ph != shownPhase && tr.kind == Slide::None) phonePage = 0;
     shownPhase = ph;
   }
-  char line[128], status[160];
+  char line[128], status[220];
   bool any = false;
   while (ble::nextLine(line, sizeof line)) {
     const char *reply = phone::apply(line);
@@ -1076,6 +1098,20 @@ void activate(screens::Button b) {
     case Button::TryAgain:
       openSetup();
       return;
+    case Button::HotSwap: {
+      uint16_t mask = settings.activeFaces & 0x0FFF;
+      if (mask != 0x0FFF) {
+        settings.activeFaces = 0x0FFF;  // restore all 12
+      } else {
+        // default 2-face pair: current face + Orbit (or Digital if currently on Orbit)
+        int pair = (settings.face % FACE_COUNT == FACE_ORBIT) ? FACE_DIGITAL : FACE_ORBIT;
+        settings.activeFaces = (1 << (settings.face % FACE_COUNT)) | (1 << pair);
+      }
+      saveSettings();
+      markSettingsChanged();
+      dirty = true;
+      return;
+    }
     case Button::Details:
       detailsPage = 0;
       showMode(Mode::Details);
@@ -1520,7 +1556,9 @@ void stepFace() {
     sweepStart = hal::ms();
     dirty = true;
   }
-  uint32_t frameMs = currentFace() == FACE_RADAR ? motion::RADAR_FRAME_MS : motion::PHANTOM_FRAME_MS;
+  uint32_t frameMs = currentFace() == FACE_RADAR ? motion::RADAR_FRAME_MS
+                   : currentFace() == FACE_PHANTOM ? motion::PHANTOM_FRAME_MS
+                   : motion::AMBIENT_FRAME_MS;
 
   // The entrance runs at the slide frame rate and ends on its exact final state.
   if (entrance.playing && (entrance.face != currentFace() || since(entrance.start) >= entrance.length)) {

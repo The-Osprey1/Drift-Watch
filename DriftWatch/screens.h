@@ -6,6 +6,8 @@
 #include <time.h>
 #include "ble.h"
 #include "net.h"
+#include "theme.h"
+#include "faces.h"
 
 namespace screens {
 
@@ -21,6 +23,7 @@ enum class Button : uint8_t {
   SetTime, RaiseWake, Minus, Plus, SaveTime,
   // Added in v0.10.0
   PhoneSync, Night, ScreenTurn, TouchCheck,
+  HotSwap,
 };
 const char *buttonName(Button b);
 
@@ -97,6 +100,8 @@ struct View {
   const char *diag;         // diagnostics line, or nullptr
   Button pressed;
   uint32_t ms;              // drives the progress spinner
+  uint16_t activeFaces;
+  FaceTheme theme;
 };
 
 // Draws the screen. Returns true if it shows a spinner that needs more frames.
@@ -113,7 +118,7 @@ enum class SetupPhase : uint8_t { Hotspot, Connecting, Done, Failed, TimedOut };
 SetupPhase setupPhase(const View &v);
 
 // Settings items in page order; two per page, or one with large text.
-constexpr int SETTINGS_ITEMS = 12;
+constexpr int SETTINGS_ITEMS = 14;
 Button settingsItem(int i);
 
 // Where phone sync is.

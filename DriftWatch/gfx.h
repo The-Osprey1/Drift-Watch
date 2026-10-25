@@ -29,10 +29,12 @@ void dot(TFT_eSprite &s, float x, float y, float r, uint16_t c, uint32_t bg = 0x
 
 // Segment-style time digits. Every digit cell has the same width, so the time
 // never shifts as it changes. `height` is in pixels.
+enum class TimeStyle : uint8_t { Instrument, Segment };
 struct TimeLayout {
   float x, y, height, width, digitW, scale;
+  TimeStyle style;
 };
-TimeLayout timeLayout(float cx, float cy, float height);
+TimeLayout timeLayout(float cx, float cy, float height, TimeStyle style = TimeStyle::Instrument);
 // `ghost` >= 0 also draws every unlit segment in that colour, like a phosphor display.
 void drawTime(TFT_eSprite &s, const TimeLayout &l, int hh, int mm, bool valid, bool blankLeadingZero, uint16_t c,
               int32_t ghost = -1);

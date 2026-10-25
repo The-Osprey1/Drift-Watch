@@ -165,7 +165,7 @@ void dateWindow(TFT_eSprite &s, const FaceContext &c, int x, int y, int w, int h
 
 // ---- Orbit (Space, digital) -------------------------------------------------------------------
 namespace orb {
-const uint16_t IVORY = rgb(0xECF0F8), LAV = rgb(0xA8A0E8), TRACK = rgb(0x26385C), TRAIL = rgb(0x005A6E);
+const uint16_t IVORY = rgb(0xECF0F8), LAV = rgb(0xAFBACD), TRACK = rgb(0x26385C), TRAIL = rgb(0x005A6E);
 const uint16_t MARKER_GLOW = rgb(0x005064), INK = rgb(0x96A0BE), DASH = rgb(0x4A4E5A);
 const uint16_t PLANET = rgb(0x10162C), ATMOS = rgb(0x4678D2), RING_FRONT = rgb(0x96A5C8), RING_BACK = rgb(0x46506E);
 const uint16_t STAR_NEAR = rgb(0xBEC8DC), STAR_FAR = rgb(0x505A6E);
@@ -212,7 +212,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   if (c.charging) gfx::chargeBolt(s, 97, 40, 10, bat);
   gfx::text(s, buf, 141, 40, type::SMALL, bat);
 
-  gfx::TimeLayout tl = gfx::timeLayout(CX, 70 + 26, 52);
+  gfx::TimeLayout tl = gfx::timeLayout(CX, 98, 60);
   gfx::drawTime(s, tl, faceparts::displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? IVORY : DASH);
   if (c.timeValid) {
     dateLine(c, buf, sizeof buf);
@@ -288,7 +288,7 @@ void moon(TFT_eSprite &s, uint32_t e) {
 void drawLive(TFT_eSprite &s, const FaceContext &c) {
   moon(s, timeline(c));
   if (c.timeValid) {
-    hands(s, c, SILVER, SILVER, BG, 4.8f, 3.5f);
+    hands(s, c, SILVER, col::WHITE, BG, 3.7f, 2.6f);
     needle(s, c.now.tm_sec * 6, 96, 16, 1.6f, SEC, BG);
   }
   pivot(s, SEC, BG);
@@ -299,8 +299,8 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
 namespace yoz {
 const uint16_t BG = rgb(0x140E1A), DISC = rgb(0x22182C), DISC_EDGE = rgb(0x342642), IVORY = rgb(0xFAEEDC);
 const uint16_t PINK = rgb(0xDE8CA5), PINK_HI = rgb(0xF2BECD), ROSE = rgb(0xE296AA), BARK = rgb(0x4A303C);
-const uint16_t PETAL_EDGE = rgb(0x78465F), INK = rgb(0x96788C);
-const Pt BR_TR[] = {{236, 46}, {206, 56}, {182, 60}, {164, 70}, {152, 84}};
+const uint16_t PETAL_EDGE = rgb(0x78465F), INK = rgb(0xBEA4B5);
+const Pt BR_TR[] = {{236, 46}, {206, 56}, {182, 60}, {164, 58}, {152, 64}};
 const Pt BR_BL[] = {{4, 190}, {34, 184}, {58, 178}, {78, 170}, {90, 160}};
 
 void drawStatic(TFT_eSprite &s, const FaceContext &c) {
@@ -309,7 +309,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   gfx::arc(s, 79, 78, 0, 360, DISC_EDGE, true, BG);
   branch(s, BR_TR, 5, 5, 1.8f, BARK, 1);
   branch(s, BR_BL, 5, 5, 1.8f, BARK, 1);
-  static const float BLOSSOMS[][4] = {{206, 56, 9, 10}, {182, 62, 7, 40}, {160, 76, 6, 70},
+  static const float BLOSSOMS[][4] = {{206, 56, 9, 10}, {182, 62, 7, 40}, {160, 64, 6, 70},
                                       {34, 184, 9, 20}, {60, 178, 7, 55}, {82, 168, 6, 80}};
   for (const auto &b : BLOSSOMS) {
     blossom(s, b[0], b[1], b[2], PINK, IVORY, b[3], 1, PETAL_EDGE);
@@ -323,7 +323,7 @@ void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   gfx::text(s, buf, 119, 56, type::SMALL, bat, ML_DATUM);
 
   if (c.timeValid) {
-    gfx::TimeLayout tl = gfx::timeLayout(CX, 84 + 23, 46);
+    gfx::TimeLayout tl = gfx::timeLayout(CX, 107, 52);
     gfx::drawTime(s, tl, faceparts::displayHour(c), c.now.tm_min, true, c.use12h, IVORY);
     dateLine(c, buf, sizeof buf);
     gfx::text(s, buf, CX, 150, type::SMALL, ROSE);
@@ -380,7 +380,7 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
   blossom(s, 88, 210, 7.5f, PINK, PLUM, 10, g2, ROSE);
   blossom(s, 108, 218, 5.5f, PINK, PLUM, 75, g2, ROSE);
   if (c.timeValid) {
-    hands(s, c, PLUM, PLUM, BG, 4.8f, 3.5f);
+    hands(s, c, PLUM, ROSE, BG, 3.7f, 2.4f);
     needle(s, c.now.tm_sec * 6, 96, 16, 1.6f, ROSE, BG);
   }
   pivot(s, ROSE, BG);
@@ -389,12 +389,12 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
 
 // ---- Wasteland (Fallout, digital, phosphor) -------------------------------------------------------
 namespace wst {
-const uint16_t BG = rgb(0x030804), GREEN = rgb(0x5CFF7A), FRAME = rgb(0x28964A), DIM = rgb(0x185C2A);
-const uint16_t GHOST = rgb(0x0A2210), ORANGE = rgb(0xFF8C28);
+const uint16_t BG = rgb(0x030804), GREEN = rgb(0x5CFF7A), FRAME = rgb(0x28964A), DIM = rgb(0x78BB88);
+const uint16_t GHOST = rgb(0x07170B), ORANGE = rgb(0xFF8C28);
 
 void drawStatic(TFT_eSprite &s, const FaceContext &c) {
   s.fillCircle(CX, CY, 120, BG);
-  gfx::TimeLayout tl = gfx::timeLayout(CX, 74 + 25, 50);
+  gfx::TimeLayout tl = gfx::timeLayout(CX, 74 + 25, 50, gfx::TimeStyle::Segment);
   gfx::drawTime(s, tl, faceparts::displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? GREEN : DIM, GHOST);
   char buf[28];
   if (c.timeValid) {
@@ -503,7 +503,7 @@ void drawLive(TFT_eSprite &s, const FaceContext &c) {
   gfx::text(s, buf, CX, 166, type::SMALL, batteryInk(c.batteryPct, CREAM));
   if (c.charging) gfx::chargeBolt(s, CX + 25, 166, 10, batteryInk(c.batteryPct, AMBER));
   if (c.timeValid) {
-    hands(s, c, CREAM, CREAM, BG, 5.5f, 4.0f);
+    hands(s, c, CREAM, AMBER, BG, 4.8f, 3.0f);
     needle(s, c.now.tm_sec * 6, 98, 16, 1.6f, AMBER, BG);
   }
   pivot(s, AMBER, BG);

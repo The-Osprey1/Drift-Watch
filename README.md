@@ -2,7 +2,7 @@
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
-**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. v0.10.1 fixes four bugs in it (touch read dropouts, non-blocking serial commands, keeping Auto time zone across first start, and an out-of-memory screen notice); see `NOTES-v0.10.1.md`. v0.11.0 adds the Phantom face, a candidate low-power wait for the screen-off time (the motion sensor's own wake-on-motion interrupt and the touch chip's standby, in the diagnostic image only), stricter network code, and GitHub Pages publishing for the Drift sync page; see `NOTES-v0.11.0.md`. **v0.11.1** fixes iPhone Bluetooth truncation and write failures (247-byte ATT MTU, acknowledged GATT writes, and 20-byte fallback framing), enables WPA3 SAE H2E and 802.11w PMF with straight/curly apostrophe fallback for modern routers and iPhone Personal Hotspots, publishes the live sync page at https://the-osprey1.github.io/DriftWatch/, and verifies boot on a real watch; power saving in the diagnostic image is still to be measured. See `NOTES-v0.11.1.md` (earlier `NOTES-*.md` files cover earlier versions).
+**Status:** v0.10.0 adds a turned screen with a two-tap touch check, a turning radar sweep, clock drift correction, phone sync over Bluetooth with the Drift sync web page, a flick check for raise to wake, a wrist twist to wake, wrist-down sleep, night mode and a measured battery time left. v0.10.1 fixes four bugs in it (touch read dropouts, non-blocking serial commands, keeping Auto time zone across first start, and an out-of-memory screen notice); see `NOTES-v0.10.1.md`. v0.11.0 adds the Phantom face, a candidate low-power wait for the screen-off time (the motion sensor's own wake-on-motion interrupt and the touch chip's standby, in the diagnostic image only), stricter network code, and GitHub Pages publishing for the Drift sync page; see `NOTES-v0.11.0.md`. **v0.11.1** fixes iPhone Bluetooth truncation and write failures (247-byte ATT MTU, acknowledged GATT writes, and 20-byte fallback framing), enables WPA3 SAE H2E and 802.11w PMF with straight/curly apostrophe fallback for modern routers and iPhone Personal Hotspots, publishes the live sync page at https://the-osprey1.github.io/DriftWatch/, and verifies boot on a real watch; power saving in the diagnostic image is still to be measured. See `NOTES-v0.11.1.md`. **v0.12.0** adds six themed faces (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave), each with a short entrance when you choose it, a three-level Motion setting (Off, Subtle, Expressive), and new slide timing; it has not run on the watch yet. See `NOTES-v0.12.0.md` (earlier `NOTES-*.md` files cover earlier versions).
 
 ## The board (checked against the Waveshare wiki)
 
@@ -19,21 +19,30 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 
 ## Faces
 
-Swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png`, `designs/v0.8.0_faces_native.png` and, for Phantom, `designs/v0.11.0_phantom_timeline.png` and `designs/v0.11.0_phantom_states.png`.
+Twelve faces; swipe left or right to move between them. Previews: `designs/v0.7.0_faces.png`, `designs/v0.8.0_faces_native.png`, for Phantom `designs/v0.11.0_phantom_timeline.png` and `designs/v0.11.0_phantom_states.png`, and for the six themed faces `designs/v0.12.0_faces.png` and `designs/v0.12.0_storyboards.png` (each entrance from 0 ms to its final state).
 
 - **Digital:** yellow segment time, magenta date strip, quiet seconds track with one cyan tick for the current second, battery at the top, a low dark skyline.
 - **Stealth dial:** silver markers and hands with cyan inlays, a magenta seconds hand, a date window and a battery ring.
 - **Corpo dial:** black dial, a thin segmented yellow rim, black hands edged in yellow, red seconds hand.
 - **Hologram dial:** cyan markers and edged hands, white inlays, magenta seconds hand.
 - **Radar:** large yellow time in the middle, an hour ring that fills through the day, a minute track with a pointer, range rings, and a beam that turns every 3.6 s with a fading phosphor trail. The seconds dot glows as the beam passes. Below 20% battery the beam sits on the seconds dot and moves once a second.
-- **Phantom:** a dark dial with an opening at 12 showing a ticking balance wheel and a crimson jewel. The seconds hand slides in under the edge of the opening from 55 s, is hidden from 58 to 2 s, slides out again by 5 s and settles with a small bounce. With reduced motion or low battery the wheel stops and the seconds hand steps once a second.
+- **Phantom:** a dark dial with an opening at 12 showing a ticking balance wheel and a crimson jewel. The seconds hand slides in under the edge of the opening from 55 s, is hidden from 58 to 2 s, slides out again by 5 s and settles with a small bounce. With Motion Off or low battery the wheel stops and the seconds hand steps once a second.
+
+The six themed faces (v0.12.0) come in pairs. Each plays one short entrance when you choose it by swiping or with BOOT, never when the screen wakes, and any touch ends it at once. The time is right from the first frame; only decoration moves.
+
+- **Orbit** (Space, digital): ivory segment time over stars and a ringed planet. The orbit track draws round from 12 and a cyan marker eases into the current minute (500 ms); at each new minute the marker moves on 6 degrees.
+- **Lunar** (Space, analog): silver hands on navy, a pale blue seconds hand, a battery ring and a moon that a curved wipe reveals (300 ms).
+- **Yozakura** (Sakura, digital): ivory time on a night disc between two blossoming branches; two petals fall beside the time and date, never across them (900 ms).
+- **Hanami** (Sakura, analog): plum hands on a porcelain dial; a branch grows along the lower left and its blossoms open in two groups (600 ms).
+- **Wasteland** (Fallout, digital): green phosphor segments with the unlit ones faintly showing; dividers, brackets, the power bar and the sync line build up around the time (420 ms).
+- **Mojave** (Fallout, analog): cream hands on dark leather with amber markers; the battery arc fills and a highlight runs over the rim (600 ms).
 
 ## Controls
 
 | Where | Action | What happens |
 |---|---|---|
-| Face | Swipe left / right | Next / previous face. The face follows your finger; let go past a third of the way, or flick, to change |
-| Face | Swipe up, hold for 0.6 s, or hold BOOT for 0.6 s | Open settings. A cyan ring grows while you hold |
+| Face | Swipe left / right | Next / previous face. The face follows your finger; let go past 70 px, or flick, to change. It lands in 120 to 220 ms depending on the distance left (a flick in 140 ms at most), and a shorter drag returns in 150 ms |
+| Face | Swipe up, hold for 0.6 s, or hold BOOT for 0.6 s | Open settings. The panel follows your finger up; a cyan ring grows while you hold |
 | Face | Short press of BOOT | Next face |
 | Set time | Tap - or +, or hold to repeat | Changes the field shown in cyan; swipe for the next field, then Save on the last page |
 | Settings, details, setup | Swipe left / right | Next / previous page. Never changes the face |
@@ -51,7 +60,7 @@ Settings has six pages of two controls each (twelve pages of one with large text
 2. **Set time** (shows the clock, or "Time not set") and **Phone sync** (sets the time, time zone and Wi-Fi from a phone or computer over Bluetooth). When the clock is not set, settings open on this page.
 3. **Sync now**, which also shows the sync state, and **Wi-Fi setup** (shows the saved network).
 4. **Wake gesture** (Raise, twist; Raise; Twist; or Off) and **Night mode** (Off, 22:00-07:00, 23:00-07:00 or 00:00-08:00; turns the wake gestures and wrist-down sleep off at night).
-5. **Motion** (Full or Reduced; Reduced turns slides, the startup sequence, the wake fade, the radar beam and spinners into instant changes) and **Screen turn** (Normal, Right, Half turn or Left; runs the touch check afterwards).
+5. **Motion** (Subtle, Expressive or Off. Subtle is the default: slides, the wake fade, the radar beam, Phantom's movement and one short entrance on the themed faces. Expressive plays those entrances half as long again. Off turns slides, entrances, the startup sequence, the wake fade, the radar beam and spinners into instant changes. A watch updated from v0.11 keeps its choice: Reduced becomes Off, Full becomes Subtle) and **Screen turn** (Normal, Right, Half turn or Left; runs the touch check afterwards).
 6. **Touch check** (two taps line touch up with the screen) and **Status and Text size**, which opens the details screen: battery and time left, clock, last sync and how long ago, clock drift, time zone, network, motion sensor and its interrupt lines, screen turn, version, and the **Text size** setting (Normal or Large, about 140%, for settings and setup screens only).
 
 **Set time** works with no Wi-Fi at all: hour, minutes, day, month and year each have a page with - and +, then a page shows the result with **Save**. Swipe down or BOOT leaves without saving. If the clock was never set it starts from the last time the watch saved (it saves at most once an hour), or else from the date the firmware was built. A later successful sync replaces it. The board has no clock chip, so the time is lost when the battery runs flat or the watch restarts from power-off. Between syncs the watch learns how fast its clock drifts and corrects for it.
@@ -108,7 +117,7 @@ Time zone format, if you type one: `GMT0BST,M3.5.0/1,M10.5.0` (UK), `EST5EDT,M3.
 |---|---|
 | `DriftWatch/theme.h` | Design system: colours, type sizes, spacing, strokes, motion timing and easing |
 | `DriftWatch/gfx.*` | Shared drawing parts: segment digits, battery, icons, arcs, text fitting and line breaking, the readable font, skyline |
-| `DriftWatch/faces.*` | The six faces, each split into a cached static layer and a live layer |
+| `DriftWatch/faces.*` | The faces, each split into a cached static layer and a live layer; the six themed faces and their entrances are in `faces_themed.cpp`, with shared pieces in `face_parts.h` |
 | `DriftWatch/screens.*` | Paged settings, details and Wi-Fi setup screens, round-screen text flow, startup sequence. Each control has a drawn rectangle and a touch rectangle in one table used for drawing and hit-testing |
 | `DriftWatch/ui.*` | Screens, gestures, transitions, sleep and wake, sync timing |
 | `DriftWatch/net.*` | Wi-Fi setup hotspot and time sync, as step-by-step state machines that never block the screen. Sync stage and last result are tracked separately |

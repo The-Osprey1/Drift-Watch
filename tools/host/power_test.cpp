@@ -355,6 +355,11 @@ bool read(Accel &out) {
   out = {0, -1, 0};
   return true;
 }
+bool readTemp(float &celsius) {
+  if (!sensorPresent || imuArmed) return false;
+  celsius = 23.5f;
+  return true;
+}
 Status enterWakeOnMotion(const WomConfig &cfg) {
   if (!sensorPresent) return Status::NotPresent;
   qmi8658::WomConfig c;

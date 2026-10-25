@@ -97,6 +97,7 @@ struct View {
   net::Source syncSource;
   const char *syncAgo;      // e.g. "3 h ago", "" if never
   uint32_t imuLine1, imuLine2;  // edges seen on the motion sensor's interrupt lines
+  float tempC, chipTempC;       // ambient and chip temperatures (-99 if unmeasured)
   const char *version;
   const char *startReason;  // why the watch last started, nullptr after a normal power-on
   uint32_t restarts;        // restarts the watch did by itself on this charge

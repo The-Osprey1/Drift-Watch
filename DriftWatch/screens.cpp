@@ -722,7 +722,16 @@ void detailsDoc(const View &v, Doc &d) {
   }
   d.add(v.imuPresent ? "Motion sensor found" : "Motion sensor not found", Role::Body, col::TEXT_2);
   // For the watch test: which of the sensor's interrupt lines reach the processor.
-  if (v.imuPresent) d.add(d.fmt("Sensor lines: GPIO 4 %lu, GPIO 3 %lu", (unsigned long)v.imuLine1, (unsigned long)v.imuLine2), Role::Body, col::TEXT_2);
+  if (v.imuPresent) {
+    d.add(d.fmt("Sensor lines: GPIO 4 %lu, GPIO 3 %lu", (unsigned long)v.imuLine1, (unsigned long)v.imuLine2), Role::Body, col::TEXT_2);
+    if (v.tempC > -50.0f) {
+      if (v.chipTempC > -50.0f) {
+        d.add(d.fmt("Temp %.1f C (chip %.0f C)", v.tempC, v.chipTempC), Role::Body, col::TEXT_2);
+      } else {
+        d.add(d.fmt("Temp %.1f C", v.tempC), Role::Body, col::TEXT_2);
+      }
+    }
+  }
   d.add(d.fmt("Screen %s, touch %s", orient::turnName(v.screenTurn), v.touchChecked ? "checked" : "not checked"), Role::Body,
         col::TEXT_2);
   d.add(d.fmt("Firmware %s", v.version), Role::Body, col::TEXT_2);
@@ -971,6 +980,9 @@ constexpr int QR_QUIET = 2;   // modules of white around the code; phones read 2
 
 const char *qrText(const View &v) {
   static char join[64], open[32];
+  if (v.screen == Screen::PhoneSync && phonePhase(v) == PhonePhase::Waiting) {
+    return "https://the-osprey1.github.io/DriftWatch/";
+  }
   if (v.screen != Screen::Setup || v.portal == net::Portal::Saved) return nullptr;
   if (v.portal == net::Portal::Waiting) {
     snprintf(join, sizeof join, "WIFI:T:nopass;S:%s;;", net::SETUP_AP_NAME);
@@ -997,7 +1009,14 @@ void drawQrPage(TFT_eSprite &s, const View &v, int pages) {
           s.fillRect(x0 + (x + QR_QUIET) * px, y0 + (y + QR_QUIET) * px, px, px, TFT_BLACK);
   }
   const GFXfont *f = fontFor(Role::Body, v.large);
-  if (v.large) {
+  if (v.screen == Screen::PhoneSync) {
+    if (v.large) {
+      gfx::text(s, "Scan to", CX, 160, f, col::TEXT, MC_DATUM);
+      gfx::text(s, "open sync", CX, 186, f, col::TEXT, MC_DATUM);
+    } else {
+      gfx::text(s, "Scan to open sync page", CX, 184, f, col::TEXT, MC_DATUM);
+    }
+  } else if (v.large) {
     gfx::text(s, "Scan to", CX, 160, f, col::TEXT, MC_DATUM);
     gfx::text(s, joined ? "open setup" : "join Wi-Fi", CX, 186, f, col::TEXT, MC_DATUM);
   } else {

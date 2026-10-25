@@ -22,7 +22,7 @@
 namespace qmi8658 {
 constexpr uint8_t REG_WHO_AM_I = 0x00, REG_REVISION = 0x01, REG_CTRL1 = 0x02, REG_CTRL2 = 0x03, REG_CTRL7 = 0x08,
                   REG_CTRL9 = 0x0A, REG_CAL1_L = 0x0B, REG_CAL1_H = 0x0C, REG_STATUSINT = 0x2D, REG_STATUS1 = 0x2F,
-                  REG_AX_L = 0x35, REG_RESET = 0x60;
+                  REG_TEMP_L = 0x33, REG_AX_L = 0x35, REG_RESET = 0x60;
 constexpr uint8_t WHO_AM_I_VALUE = 0x05;
 
 constexpr uint8_t CTRL1_AUTO_INCREMENT = 0x40;

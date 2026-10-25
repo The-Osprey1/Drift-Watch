@@ -96,6 +96,14 @@ bool read(Accel &out) {
   return true;
 }
 
+bool readTemp(float &celsius) {
+  uint8_t d[2];
+  if (!found || armed || !bus.read(qmi8658::REG_TEMP_L, d, sizeof d)) return false;
+  int16_t raw = (int16_t)(d[0] | (d[1] << 8));
+  celsius = raw / 256.0f;
+  return true;
+}
+
 uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? edges[line] : 0; }
 
 Status enterWakeOnMotion(const WomConfig &cfg) {

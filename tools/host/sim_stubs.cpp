@@ -177,6 +177,11 @@ bool read(Accel &out) {
   out = sim::accel;
   return true;
 }
+bool readTemp(float &celsius) {
+  if (!sim::imuPresent || sim::womArmed) return false;
+  celsius = 23.5f;
+  return true;
+}
 uint32_t lineEdges(int line) { return line >= 0 && line < 2 ? sim::imuLineEdges[line] : 0; }
 Status enterWakeOnMotion(const WomConfig &cfg) {
   if (!sim::imuPresent) return Status::NotPresent;

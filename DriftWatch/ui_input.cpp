@@ -749,7 +749,7 @@ void runSerialCommand(const char *line) {
     dirty = true;
     Serial.printf("Faces mask set to 0x%04X\n", (unsigned int)settings.activeFaces);
   } else if (cmd.kind == serialcmd::Kind::Info) {
-    Serial.printf("DRIFT:VER=0.14.0,TIME=%ld,BAT=%d,FACES=0x%04X\n",
+    Serial.printf("DRIFT:VER=" FW_VERSION ",TIME=%ld,BAT=%d,FACES=0x%04X\n",
                   (long)hal::now(), batteryPct, (unsigned int)settings.activeFaces);
   }
 }

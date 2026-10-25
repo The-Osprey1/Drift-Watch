@@ -123,6 +123,9 @@ Button settingsItem(int i);
 enum class PhonePhase : uint8_t { Waiting, Connected, TimeSet, Closed, Failed };
 PhonePhase phonePhase(const View &v);
 
+// The low battery notice, drawn over the bottom of the face for a few seconds.
+void drawLowBattery(TFT_eSprite &s, int pct, bool urgent);
+
 // Startup sequence, t from 0 to 1.
 void drawBoot(TFT_eSprite &s, float t, const char *version);
 

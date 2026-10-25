@@ -22,7 +22,7 @@ fi
 CXX="g++ $FLAGS"
 UI_SRC="DriftWatch/ui.cpp DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp \
 DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp \
-DriftWatch/serial_cmd.cpp DriftWatch/power.cpp"
+DriftWatch/serial_cmd.cpp DriftWatch/power.cpp DriftWatch/qrcodegen.c"
 
 $CXX -I tools/host -I DriftWatch -isystem "$TFT" tools/host/tft_shim.cpp tools/host/render_faces.cpp \
   DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp -o "$BIN/render_faces"

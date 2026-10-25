@@ -28,6 +28,7 @@ constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estima
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
+constexpr uint32_t LOW_NOTICE_MS = 5000;               // the low battery notice stays this long on the face
 constexpr uint32_t BOOT_HOLD_MS = 250;                 // name stays up briefly after the sequence
 constexpr uint32_t HOLD_HINT_MS = 200;                 // a still press starts showing the hold ring
 constexpr uint32_t FLICK_WINDOW_MS = 80;               // finger must still be moving this recently to flick
@@ -88,6 +89,12 @@ uint32_t releaseUntil = 0;  // a tapped control keeps its pressed look until the
 
 int batteryPct = -1, batteryMv = -1;
 battery::Estimate batteryLife;
+battery::LowWarning lowWarning;
+// The low battery notice: waiting for the face to be on screen, then shown until `until`.
+struct LowNotice {
+  bool pending = false, urgent = false;
+  uint32_t until = 0;  // 0 = not showing
+} lowNotice;
 uint32_t lastBatteryRead = 0;
 uint32_t nextSyncAt = 0;
 uint16_t seenAttempts = 0;
@@ -225,6 +232,20 @@ void readBattery() {
   batteryPct = battery::percentFromMilliVolts(batteryMv);
   batteryLife.add(hal::ms(), batteryPct);
   lastBatteryRead = hal::ms();
+  if (int level = lowWarning.update(batteryPct < 0 ? -1 : batteryLife.smoothed(), batteryLife.charging())) {
+    lowNotice.pending = true;
+    lowNotice.urgent = level == battery::LowWarning::NOW;
+    hal::log("battery: below %d%%", level);
+  }
+}
+
+// Shows a waiting low battery notice once the face is on screen; called before the face is drawn.
+void showLowNotice() {
+  if (!lowNotice.pending || !awake || mode != Mode::Face) return;
+  lowNotice.pending = false;
+  lowNotice.until = hal::ms() + LOW_NOTICE_MS;
+  if (!lowNotice.until) lowNotice.until = 1;  // 0 means none
+  dirty = true;
 }
 
 // Below 20% and not charging, the radar beam only moves with the seconds.
@@ -309,6 +330,7 @@ void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart = f
     drawFaceStatic(dst, f, c);
   }
   drawFaceLive(dst, f, c);
+  if (lowNotice.until && f == currentFace() && mode == Mode::Face) screens::drawLowBattery(dst, batteryPct, lowNotice.urgent);
 #if DRIFT_DIAG
   uint32_t used = micros() - t;
   diag.renderUs += used;
@@ -774,6 +796,7 @@ void sleepScreen() {
   marker.moving = false;
   marker.minute = -1;
   releaseUntil = 0;
+  lowNotice.until = 0;  // a notice cut short is not shown again
   // The screen always wakes on the face, so a stale panel is never the first thing seen.
   // Setup stays, so its progress or result is still there on wake. An unsaved time is dropped.
   if (mode == Mode::Panel || mode == Mode::Details || mode == Mode::SetTime || mode == Mode::TouchCheck) mode = Mode::Face;
@@ -807,6 +830,7 @@ void wakeScreen() {
   lastActivity = hal::ms();
   wristDrop.reset();
   // Draw the current time first, then fade the light up over it.
+  showLowNotice();
   if (mode == Mode::Face) {
     renderFace(*cur, currentFace(), false);
     present(*cur);
@@ -1547,6 +1571,11 @@ void stepFace() {
     dirty = true;
   }
   bool stepping = (entrance.playing || marker.moving) && since(lastPresent) >= motion::ENTRANCE_FRAME_MS;
+  showLowNotice();
+  if (lowNotice.until && (int32_t)(hal::ms() - lowNotice.until) >= 0) {
+    lowNotice.until = 0;
+    dirty = true;
+  }
 
   bool due = dirty || stepping || c.now.tm_sec != shownSecond || (faceMoving && since(lastPresent) >= frameMs);
   if (!due) return;
@@ -1787,6 +1816,8 @@ void begin() {
   wristDrop = DropDetector{};
   check = {};
   batteryLife = battery::Estimate{};
+  lowWarning = battery::LowWarning{};
+  lowNotice = LowNotice{};
   faceMoving = false;
   phonePage = checkPage = 0;
   wristRaise.setFacing(settings.screenFacing ? settings.screenFacing : IMU_SCREEN_FACING_DEFAULT);

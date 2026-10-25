@@ -31,13 +31,13 @@ declared bounds and the radar's protected central register.
 ## Native visual review
 Inspected the gallery and radar / Phantom / Orbit / Yozakura animation-state sheet from CI.
 The first pass exposed a Yozakura blossom touching the taller time; the branch endpoint and
-last blossom were moved above the numeral block. Digital time, analog hands, date registers
+last blossom were moved above the numeral block; the corrected native gallery was inspected again. Digital time, analog hands, date registers
 and the peripheral radar remain legible at native resolution.
 
 ## Executed checks
 The first full build passed both normal and diagnostic firmware with zero compiler warnings.
 Host suites passed all face/state checks, 479 interface checks, 54 integrated-network checks,
 239 network checks and 83 power checks after aligning the two cadence assertions with the
-intentional 30 fps decorative budget. Mutation testing is tracked on the PR checks.
+intentional 30 fps decorative budget. All 19 planted bugs were caught by the mutation checks.
 Two snapshot sheets are committed; each CI run also produces a twelve-second motion GIF.
 Physical watch timing, LCD appearance and battery impact still require a device test.

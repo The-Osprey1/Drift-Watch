@@ -36,7 +36,7 @@ All host tests in strict mode (warnings are errors, address and undefined behavi
 
 The simulator now models serial bytes that arrive during light sleep as lost (`sim::serialSent`), and keeps what the watch prints in `Serial.out` for checks to read.
 
-## Still to check on the watch
+## On the watch
 
 1. Start a 1 minute timer on Radar, close the drawer, let the screen go dark: it should light and flash about 60 s later. Repeat on Phantom.
 2. Start a timer, open Settings, wait for the alarm and tap: Settings should come back clean.

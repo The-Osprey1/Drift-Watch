@@ -165,6 +165,7 @@ Time zone format, if you type one: `GMT0BST,M3.5.0/1,M10.5.0` (UK), `EST5EDT,M3.
 | `DriftWatch/theme.h` | Design system: colours, type sizes, spacing, strokes, motion timing and easing |
 | `DriftWatch/gfx.*` | Shared drawing parts: segment and vector digits, battery, icons, arcs, text fitting and line breaking, the readable font, skyline |
 | `DriftWatch/face_id.h` | Shared face identifiers (`Face`), `FACE_COUNT` and `ALL_FACES_MASK` |
+| `DriftWatch/date_names.h` | Day and month names, upper case for the faces and title case for the screens |
 | `DriftWatch/faces.*` | The twelve faces, each split into a cached static layer and a live layer; the six themed faces and their entrances are in `faces_themed.cpp`, with shared pieces in `face_parts.h` |
 | `DriftWatch/screens.*` | Paged settings, details and Wi-Fi setup screens, round-screen text flow, chronometer startup sequence. Each control has a drawn rectangle and a touch rectangle in one table used for drawing and hit-testing |
 | `DriftWatch/ui.h`, `ui.cpp`, `ui_render.cpp`, `ui_motion.cpp`, `ui_input.cpp`, `ui_parts.h` | Interface state, battery/low-power policy and main loop (`ui.cpp`), sprite presentation and boot/face/diagnostic steps (`ui_render.cpp`), entrances, slides, radial iris transitions and standby (`ui_motion.cpp`), and navigation, touch, wrist gestures, BOOT, BLE and serial commands (`ui_input.cpp`) |

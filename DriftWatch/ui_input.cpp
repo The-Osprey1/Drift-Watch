@@ -762,10 +762,10 @@ void runSerialCommand(const char *line) {
                   (int)settings.face, (int)settings.brightnessLevel, (int)settings.motion, settings.use12h ? 12 : 24);
   } else if (cmd.kind == serialcmd::Kind::Timer) {
     if (cmd.value <= 0) {
-      ui::resetTimer();
-      Serial.printf("Timer reset\n");
+      resetTimer();
+      Serial.printf("%s\n", "Timer reset");
     } else {
-      ui::startTimer((uint32_t)cmd.value * 1000u);
+      startTimer((uint32_t)cmd.value * 1000u);
       Serial.printf("Timer started for %d s\n", cmd.value);
     }
   } else if (cmd.kind == serialcmd::Kind::Bright) {

@@ -427,7 +427,7 @@ void extraSerial() {
   Serial.in = "?\n";
   runFor(100);
   std::string r2 = Serial.out;
-  bool fmt = r1.rfind("DRIFT:VER=0.15.0,TIME=", 0) == 0 && r1.find(",BAT=") != std::string::npos &&
+  bool fmt = r1.rfind("DRIFT:VER=" FW_VERSION ",TIME=", 0) == 0 && r1.find(",BAT=") != std::string::npos &&
              r1.find(",FACES=0x0FFF") != std::string::npos;
   if (!r1.empty() && r1.back() == '\n') r1.pop_back();
   P("serial", fmt && r2.rfind("DRIFT:", 0) == 0, "INFO? and ? reply \"%s\"", r1.c_str());

@@ -1183,7 +1183,7 @@
     <div class="deck-tabs" role="tablist" aria-label="Studio workspace view">
       <button type="button" class="deck-tab active" data-deck="faces">Face Gallery</button>
       <button type="button" class="deck-tab" data-deck="sync">Sync &amp; Wi-Fi</button>
-      <button type="button" class="deck-tab" data-deck="complications">Quick Actions</button>
+      <button type="button" class="deck-tab" data-deck="complications">Quick Tools</button>
       <button type="button" class="deck-tab" data-deck="telemetry">Diagnostics</button>
     </div>
     <button type="button" id="headerConnectBtn" class="topbar-cta">Connect Watch</button>
@@ -1213,7 +1213,7 @@
       </div>
 
       <div class="gesture-hint-bar" id="gestureHintBar">
-        Swipe up: Quick Actions · Slide down: Settings
+        Swipe down: Quick Drawer · Swipe up: Settings
       </div>
 
       <div class="watch-housing-wrap">
@@ -1389,33 +1389,22 @@
           <p id="wifiMsg" class="msg" role="status"></p>
         </section>
 
-        <!-- TAB 3: QUICK ACTIONS -->
+        <!-- TAB 3: QUICK TOOLS -->
         <section id="complicationsSection" data-deck-group="complications" data-deck-hidden="true">
-          <h2><span>Quick Actions</span> <span class="face-count-badge" id="compStatusBadge">Ready</span></h2>
-          <p class="note">Swipe up on the watch face to access Quick Actions: Countdown Timer, Stopwatch, Daily Alarm, and OLED Torch.</p>
+          <h2><span>Quick Tools</span> <span class="face-count-badge" id="compStatusBadge">Ready</span></h2>
+          <p class="note">Swipe down on the watch face to open Quick Tools: Countdown Timers (1m, 3m, 5m) and Flashlight.</p>
 
-          <div class="complications-grid">
+          <div class="complications-grid" style="grid-template-columns: 1fr 1fr;">
             <div class="comp-panel">
               <div>
                 <div class="telemetry-label">Countdown Timer</div>
                 <div class="comp-readout" id="studioTimerReadout">03:00</div>
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;">
-                  <div>
-                    <label for="customTimerMin" style="margin-top: 0; font-size: 0.72rem;">Min</label>
-                    <input type="number" id="customTimerMin" min="0" max="180" value="3" style="min-height: 32px; padding: 4px 8px;">
-                  </div>
-                  <div>
-                    <label for="customTimerSec" style="margin-top: 0; font-size: 0.72rem;">Sec</label>
-                    <input type="number" id="customTimerSec" min="0" max="59" value="0" style="min-height: 32px; padding: 4px 8px;">
-                  </div>
-                </div>
               </div>
               <div>
-                <div class="btn-row" style="margin-bottom: 6px;">
+                <div class="btn-row" style="margin-bottom: 8px;">
                   <button type="button" class="ghost" data-quick-timer="60" style="min-width: 0;">1m</button>
                   <button type="button" class="ghost" data-quick-timer="180" style="min-width: 0;">3m</button>
                   <button type="button" class="ghost" data-quick-timer="300" style="min-width: 0;">5m</button>
-                  <button type="button" class="ghost" data-quick-timer="1500" style="min-width: 0;">25m</button>
                 </div>
                 <div style="display: flex; gap: 6px;">
                   <button type="button" id="startTimerBtn" class="primary" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Start</button>
@@ -1426,29 +1415,11 @@
 
             <div class="comp-panel">
               <div>
-                <div class="telemetry-label">Stopwatch</div>
-                <div class="comp-readout" id="studioSwReadout">00:00.00</div>
-                <div class="lap-list" id="swLapList">
-                  <div class="lap-row"><span>No laps</span><span>--:--.--</span></div>
-                </div>
+                <div class="telemetry-label">Flashlight</div>
+                <p class="note" style="margin: 4px 0 12px 0; font-size: 0.78rem; line-height: 1.4;">Full-screen white display at maximum brightness. Tap anywhere or press BOOT to return, or it returns by itself after 2 minutes.</p>
               </div>
-              <div style="display: flex; gap: 6px; margin-top: 8px;">
-                <button type="button" id="swToggleBtn" class="primary" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Start</button>
-                <button type="button" id="swLapBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Lap</button>
-                <button type="button" id="swResetBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Reset</button>
-              </div>
-            </div>
-
-            <div class="comp-panel">
-              <div>
-                <div class="telemetry-label">Alarm &amp; Torch</div>
-                <div class="comp-readout" id="studioAlarmReadout">07:30</div>
-                <label for="alarmTimeInput" style="margin-top: 0; font-size: 0.72rem;">Alarm Time</label>
-                <input type="time" id="alarmTimeInput" value="07:30" style="min-height: 34px; padding: 4px 8px;">
-              </div>
-              <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
-                <button type="button" id="toggleAlarmBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Arm Alarm (07:30)</button>
-                <button type="button" id="toggleTorchBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Watch Flashlight</button>
+              <div style="display: flex; flex-direction: column; gap: 6px; margin-top: auto;">
+                <button type="button" id="toggleTorchBtn" class="ghost" style="margin-top: 0; min-height: 38px; font-size: 0.82rem;">Toggle Flashlight</button>
               </div>
             </div>
           </div>
@@ -1548,8 +1519,8 @@ let previewFaceIdx = 0;
 let previewScreenMode = "face"; // "face" | "drawer" | "radial" | "settings" | "boot"
 let previewMotionMode = "subtle"; // "off" | "subtle" | "expressive"
 let previewSettingsHub = 0; // 0: Display, 1: Clock, 2: Gestures, 3: System
-let drawerPage = 0; // 0: Timers, 1: Stopwatch, 2: Alarm & Torch
-let smartStackScroll = 0; // smooth interpolated scroll index 0..2
+let drawerPage = 0; // 0: Quick Tools
+let smartStackScroll = 0;
 
 // Digital Crown & Bezel Scroll Indicator State
 let crownKnurlOffset = 0;
@@ -1570,16 +1541,14 @@ let dragAxis = null; // "x" | "y" | null
 let settleStartMs = 0, settleDurationMs = 180, settleFromX = 0;
 let holdTriggered = false;
 
-// Watch Settings & Complications State
+// Watch Settings & Tools State
 let hwBrightness = 2; // 0..3
 let hwUse12h = false;
-let hwNightMode = 1; // 0: Off, 1: Auto, 2: On
+let hwNightMode = 0; // 0: Off, 1: 22:00-07:00, 2: 23:00-07:00, 3: 00:00-08:00
 let hwScreenTurn = 0; // 0..3
 let drawerTimerEndMs = 0;
 let drawerTimerTotalSec = 180;
 let drawerFlashlight = false;
-let swRunning = false, swStartMs = 0, swAccumMs = 0, swLaps = [];
-let alarmEnabled = false, alarmTimeStr = "07:30";
 let simTimeOffsetMs = 0;
 let simBatteryPct = 86;
 let simBatteryMv = 4082;
@@ -2403,64 +2372,11 @@ function renderQuickDrawer(ctx) {
     ctx.textAlign = "left";
     ctx.fillText("Flashlight Torch", 78, 170);
     ctx.restore();
-  } else {
-    // Smart Stack Page 2: Stopwatch & Daily Alarm Platters
-    const swMs = getStopwatchMs();
-    ctx.save();
-    ctx.fillStyle = "#1c1c1e";
-    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
-    ctx.beginPath();
-    ctx.roundRect(24, 42, 192, 92, 20);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = "#30d158";
-    ctx.font = "600 10px -apple-system, 'Plus Jakarta Sans', sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText("STOPWATCH", cx, 58);
-
-    ctx.fillStyle = "#f5f5f7";
-    ctx.font = "700 23px 'IBM Plex Mono', monospace";
-    ctx.fillText(formatSw(swMs), cx, 82);
-
-    // Start/Pause & Reset pills
-    ctx.fillStyle = swRunning ? "rgba(255, 69, 58, 0.25)" : "rgba(48, 209, 88, 0.25)";
-    ctx.beginPath();
-    ctx.roundRect(38, 96, 78, 28, 14);
-    ctx.fill();
-    ctx.fillStyle = swRunning ? "#ff453a" : "#30d158";
-    ctx.font = "600 11.5px -apple-system, sans-serif";
-    ctx.fillText(swRunning ? "Stop" : "Start", 77, 114);
-
-    ctx.fillStyle = "#2c2c2e";
-    ctx.beginPath();
-    ctx.roundRect(124, 96, 78, 28, 14);
-    ctx.fill();
-    ctx.fillStyle = "#f5f5f7";
-    ctx.fillText("Reset", 163, 114);
-    ctx.restore();
-
-    // Alarm Platter
-    ctx.save();
-    ctx.fillStyle = "#1c1c1e";
-    ctx.strokeStyle = alarmEnabled ? "#30d158" : "rgba(255, 255, 255, 0.1)";
-    ctx.beginPath();
-    ctx.roundRect(32, 144, 176, 44, 18);
-    ctx.fill();
-    ctx.stroke();
-
-    ctx.fillStyle = alarmEnabled ? "#30d158" : "#98989d";
-    ctx.font = "600 12.5px -apple-system, sans-serif";
-    ctx.textAlign = "center";
-    ctx.fillText(`Alarm ${alarmTimeStr} · ${alarmEnabled ? "ON" : "OFF"}`, cx, 170);
-    ctx.restore();
   }
-
-  drawWatchOsScrollArc(ctx, drawerPage, 2, themeCol);
 }
 
 // ============================================================================
-// Settings Platter List (Slide down from watch face)
+// Settings Platter List (Swipe up from watch face)
 // ============================================================================
 function renderSettingsHub(ctx) {
   const cx = 120;
@@ -2469,7 +2385,7 @@ function renderSettingsHub(ctx) {
   ctx.fillStyle = "#000000";
   ctx.fillRect(0, 0, 240, 240);
 
-  const nightNames = ["Off", "Auto", "On"];
+  const nightNames = ["Off", "22:00–07:00", "23:00–07:00", "00:00–08:00"];
   const turnNames = ["0° Normal", "90° Right", "180° Half", "270° Left"];
   const hubs = [
     {
@@ -2891,14 +2807,47 @@ function highlightWatchFace(faceIdx) {
 
 function parseWatchStatus(txt) {
   const mHex = txt.match(/FACES=0x([0-9a-f]+)/i);
-  const mFaces = txt.match(/faces=(\d+)(?!x)/);
+  const mFaces = txt.match(/faces=(\d+)(?!x)/i);
   if (mHex) setFaceMask(parseInt(mHex[1], 16));
   else if (mFaces) setFaceMask(parseInt(mFaces[1], 10));
+
   const mFace = txt.match(/face=(\d+)/i);
   if (mFace) highlightWatchFace(parseInt(mFace[1], 10));
+
   const mBat = txt.match(/bat=(\d+)/i);
   if (mBat) {
     simBatteryPct = Math.max(0, Math.min(100, parseInt(mBat[1], 10)));
+  }
+
+  const mBright = txt.match(/bright=(\d+)/i);
+  if (mBright) {
+    const b = parseInt(mBright[1], 10);
+    if (!isNaN(b) && b >= 0 && b <= 3) setHardwareBrightness(b, false);
+  }
+
+  const mMotion = txt.match(/motion=(\d+)/i);
+  if (mMotion) {
+    const m = parseInt(mMotion[1], 10);
+    const modes = ["off", "subtle", "expressive"];
+    if (modes[m]) setMotionMode(modes[m], false);
+  }
+
+  const mFmt = txt.match(/format=(\d+)/i);
+  if (mFmt) {
+    const f = parseInt(mFmt[1], 10);
+    if (f === 12 || f === 24) {
+      hwUse12h = (f === 12);
+      updateHardwareSpecLabels();
+    }
+  }
+
+  const mNight = txt.match(/night=(\d+)/i);
+  if (mNight) {
+    const n = parseInt(mNight[1], 10);
+    if (n >= 0 && n <= 3) {
+      hwNightMode = n;
+      updateHardwareSpecLabels();
+    }
   }
 }
 
@@ -3022,8 +2971,22 @@ async function send(line) {
       const modes = ["off", "subtle", "expressive"];
       if (modes[m]) setMotionMode(modes[m], false);
       reply = `Motion set to ${previewMotionMode}`;
+    } else if (line.startsWith("NIGHT:") || line.startsWith("NM=")) {
+      const n = parseInt(line.split(/[:=]/)[1], 10);
+      if (n >= 0 && n <= 3) {
+        hwNightMode = n;
+        updateHardwareSpecLabels();
+        reply = `Night mode set to ${hwNightMode}`;
+      }
+    } else if (line.startsWith("FORMAT:") || line.startsWith("FO=")) {
+      const f = parseInt(line.split(/[:=]/)[1], 10);
+      if (f === 12 || f === 24) {
+        hwUse12h = (f === 12);
+        updateHardwareSpecLabels();
+        reply = `Format set to ${f}h`;
+      }
     } else if (line === "INFO?" || line === "?") {
-      reply = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x${getFaceMask().toString(16).toUpperCase().padStart(4, "0")},FACE=${previewFaceIdx},BRIGHT=${hwBrightness},MOTION=${previewMotionMode}`;
+      reply = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x${getFaceMask().toString(16).toUpperCase().padStart(4, "0")},FACE=${previewFaceIdx},BRIGHT=${hwBrightness},MOTION=${previewMotionMode === "off" ? 0 : previewMotionMode === "subtle" ? 1 : 2},FORMAT=${hwUse12h ? 12 : 24},NIGHT=${hwNightMode}`;
     } else if (line.startsWith("WIFI:") || line === "J") {
       reply = `DRIFT:WIFI=JOINED,NTP=SYNC_OK,BAT=${simBatteryPct}%`;
     } else {
@@ -3180,7 +3143,7 @@ function toggleSimulatedWatch() {
   $("connectSim").classList.add("active");
   $("connectSim").textContent = "Virtual Watch (Active)";
   connected(true, "Virtual Watch");
-  const initStatus = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x0FFF,FACE=${previewFaceIdx}`;
+  const initStatus = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x0FFF,FACE=${previewFaceIdx},BRIGHT=${hwBrightness},MOTION=1,FORMAT=${hwUse12h ? 12 : 24},NIGHT=${hwNightMode}`;
   $("status").textContent = initStatus;
   logCli("RX", initStatus);
   parseWatchStatus(initStatus);
@@ -3443,7 +3406,7 @@ function setMotionMode(mode, dispatch = true) {
 }
 
 function updateHardwareSpecLabels() {
-  const nightNames = ["Off", "Auto", "On"];
+  const nightNames = ["Off", "22:00–07:00", "23:00–07:00", "00:00–08:00"];
   const turnDegs = [0, 90, 180, 270];
   $("specBrightLabel").textContent = `Bri ${hwBrightness + 1}/4 · ${hwUse12h ? "12h" : "24h"}`;
   $("hwFormatVal").textContent = `${hwUse12h ? "12-Hour" : "24-Hour"} · Night ${nightNames[hwNightMode]}`;
@@ -3451,34 +3414,6 @@ function updateHardwareSpecLabels() {
   $("fmt12Btn").classList.toggle("active", hwUse12h);
   $("nightToggleBtn").textContent = `Night: ${nightNames[hwNightMode]}`;
   $("turnToggleBtn").textContent = `Turn: ${turnDegs[hwScreenTurn]}°`;
-}
-
-// ============================================================================
-// Stopwatch & Complications Helpers
-// ============================================================================
-function getStopwatchMs() {
-  return swAccumMs + (swRunning ? (performance.now() - swStartMs) : 0);
-}
-
-function formatSw(ms) {
-  const totalCs = Math.floor(ms / 10);
-  const cs = totalCs % 100;
-  const totalSec = Math.floor(totalCs / 100);
-  const s = totalSec % 60;
-  const m = Math.floor(totalSec / 60);
-  return `${fmtTwo(m)}:${fmtTwo(s)}.${fmtTwo(cs)}`;
-}
-
-function renderSwLaps() {
-  const list = $("swLapList");
-  if (!list) return;
-  if (swLaps.length === 0) {
-    list.innerHTML = `<div class="lap-row"><span>No laps recorded</span><span>--:--.--</span></div>`;
-    return;
-  }
-  list.innerHTML = swLaps.map((l, i) =>
-    `<div class="lap-row"><span>Lap ${String(i + 1).padStart(2, "0")}</span><span>${formatSw(l)}</span></div>`
-  ).reverse().join("");
 }
 
 // ============================================================================
@@ -3662,7 +3597,7 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     if (isSimulated || isSerial) send("FORMAT:12").catch(() => {});
   });
   $("nightToggleBtn").addEventListener("click", () => {
-    hwNightMode = (hwNightMode + 1) % 3;
+    hwNightMode = (hwNightMode + 1) % 4;
     updateHardwareSpecLabels();
     if (isSimulated || isSerial) send(`NIGHT:${hwNightMode}`).catch(() => {});
   });
@@ -3671,12 +3606,10 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     updateHardwareSpecLabels();
   });
 
-  // Complications: Countdown Timer
+  // Quick Tools: Countdown Timer
   document.querySelectorAll("[data-quick-timer]").forEach(btn => {
     btn.addEventListener("click", () => {
       const sec = parseInt(btn.getAttribute("data-quick-timer"), 10);
-      $("customTimerMin").value = Math.floor(sec / 60);
-      $("customTimerSec").value = sec % 60;
       drawerTimerTotalSec = sec;
       drawerTimerEndMs = Date.now() + sec * 1000;
       setScreenMode("drawer");
@@ -3686,62 +3619,16 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
   });
 
   $("startTimerBtn").addEventListener("click", () => {
-    const m = Math.max(0, parseInt($("customTimerMin").value, 10) || 0);
-    const s = Math.max(0, parseInt($("customTimerSec").value, 10) || 0);
-    const total = Math.max(5, m * 60 + s);
-    drawerTimerTotalSec = total;
-    drawerTimerEndMs = Date.now() + total * 1000;
+    const sec = drawerTimerTotalSec || 180;
+    drawerTimerEndMs = Date.now() + sec * 1000;
     setScreenMode("drawer");
     drawerPage = 0;
-    if (isSimulated || isSerial) send(`TIMER:${total}`).catch(() => {});
+    if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
   });
 
   $("resetTimerBtn").addEventListener("click", () => {
     drawerTimerEndMs = 0;
     if (isSimulated || isSerial) send("TIMER:0").catch(() => {});
-  });
-
-  // Complications: Split-Lap Stopwatch
-  $("swToggleBtn").addEventListener("click", () => {
-    if (swRunning) {
-      swAccumMs += performance.now() - swStartMs;
-      swRunning = false;
-      $("swToggleBtn").textContent = "Resume";
-    } else {
-      swStartMs = performance.now();
-      swRunning = true;
-      $("swToggleBtn").textContent = "Pause";
-    }
-  });
-
-  $("swLapBtn").addEventListener("click", () => {
-    const cur = getStopwatchMs();
-    if (cur > 0) {
-      swLaps.push(cur);
-      renderSwLaps();
-    }
-  });
-
-  $("swResetBtn").addEventListener("click", () => {
-    swRunning = false;
-    swAccumMs = 0;
-    swLaps = [];
-    $("swToggleBtn").textContent = "Start";
-    renderSwLaps();
-  });
-
-  // Complications: Daily Alarm & Flashlight
-  $("alarmTimeInput").addEventListener("change", (e) => {
-    alarmTimeStr = e.target.value || "07:30";
-    $("studioAlarmReadout").textContent = alarmTimeStr;
-    $("toggleAlarmBtn").textContent = alarmEnabled ? `Disarm Alarm (${alarmTimeStr})` : `Arm Alarm (${alarmTimeStr})`;
-  });
-
-  $("toggleAlarmBtn").addEventListener("click", () => {
-    alarmEnabled = !alarmEnabled;
-    $("toggleAlarmBtn").textContent = alarmEnabled ? `Disarm Alarm (${alarmTimeStr})` : `Arm Alarm (${alarmTimeStr})`;
-    $("toggleAlarmBtn").classList.toggle("primary", alarmEnabled);
-    $("compStatusBadge").textContent = alarmEnabled ? `Alarm ${alarmTimeStr}` : "Ready";
   });
 
   $("toggleTorchBtn").addEventListener("click", () => {
@@ -3876,28 +3763,23 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     }
 
     if (dragAxis === "y") {
-      // Swipe UP from Watch Face -> Quick Actions ("drawer")
+      // Swipe UP from Watch Face -> Settings ("settings")
       if (dragDy < -42 && previewScreenMode === "face") {
-        setScreenMode("drawer");
-        return;
-      }
-      // Slide DOWN from Watch Face -> Settings ("settings")
-      if (dragDy > 42 && previewScreenMode === "face") {
         setScreenMode("settings");
         return;
       }
-      // Inside Quick Actions: swipe up/down pages or closes back to Watch Face
+      // Swipe DOWN from Watch Face -> Quick Drawer ("drawer")
+      if (dragDy > 42 && previewScreenMode === "face") {
+        setScreenMode("drawer");
+        return;
+      }
+      // Inside Quick Drawer: swipe up closes back to Watch Face
       if (dragDy < -42 && previewScreenMode === "drawer") {
-        if (drawerPage === 0) drawerPage = 1;
+        setScreenMode("face");
         return;
       }
-      if (dragDy > 42 && previewScreenMode === "drawer") {
-        if (drawerPage === 1) drawerPage = 0;
-        else setScreenMode("face");
-        return;
-      }
-      // Inside Settings: swipe up closes back to Watch Face
-      if (dragDy < -42 && previewScreenMode === "settings") {
+      // Inside Settings: swipe down closes back to Watch Face
+      if (dragDy > 42 && previewScreenMode === "settings") {
         setScreenMode("face");
         return;
       }
@@ -3912,25 +3794,13 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
         drawerFlashlight = false;
         return;
       }
-      if (y <= 38) {
-        drawerPage = (drawerPage + 1) % 2;
-        return;
-      }
-      if (drawerPage === 0) {
-        if (y >= 94 && y <= 132) {
-          const sec = x < 90 ? 60 : x < 146 ? 180 : 300;
-          drawerTimerTotalSec = sec;
-          drawerTimerEndMs = Date.now() + sec * 1000;
-        } else if (y >= 142 && y <= 190) {
-          drawerFlashlight = true;
-        }
-      } else {
-        if (y >= 94 && y <= 132) {
-          if (x < 120) $("swToggleBtn").click();
-          else $("swResetBtn").click();
-        } else if (y >= 142 && y <= 190) {
-          $("toggleAlarmBtn").click();
-        }
+      if (y >= 94 && y <= 132) {
+        const sec = x < 90 ? 60 : x < 146 ? 180 : 300;
+        drawerTimerTotalSec = sec;
+        drawerTimerEndMs = Date.now() + sec * 1000;
+        if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
+      } else if (y >= 142 && y <= 190) {
+        drawerFlashlight = true;
       }
     } else if (previewScreenMode === "settings") {
       if (y <= 46) {
@@ -3977,11 +3847,9 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
       $("studioTimerReadout").textContent = `${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
       $("compStatusBadge").textContent = `Timer ${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
     } else {
-      const m = parseInt($("customTimerMin").value, 10) || 0;
-      const s = parseInt($("customTimerSec").value, 10) || 0;
-      $("studioTimerReadout").textContent = `${fmtTwo(m)}:${fmtTwo(s)}`;
+      $("studioTimerReadout").textContent = "03:00";
+      $("compStatusBadge").textContent = "Ready";
     }
-    $("studioSwReadout").textContent = formatSw(getStopwatchMs());
 
     renderWatchViewport(mainCtx, watchCanvas.width, watchCanvas.height);
 

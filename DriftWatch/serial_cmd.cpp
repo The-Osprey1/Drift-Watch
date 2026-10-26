@@ -84,7 +84,7 @@ Command parse(const char *line) {
     }
   } else if (len > 6 && strncmp(line, "NIGHT:", 6) == 0) {
     long n = strtol(line + 6, nullptr, 10);
-    if (n >= 0 && n <= 2) {
+    if (n >= 0 && n <= 3) {
       cmd.kind = Kind::Night;
       cmd.value = (int)n;
     }

@@ -178,14 +178,35 @@ const char *apply(const char *line) {
     saveSettings();
     return "ok";
   }
+  if (startsWith(line, "FORMAT=") || startsWith(line, "FO=")) {
+    const char *p = line[1] == 'O' ? line + 3 : line + 7;
+    long f = strtol(p, nullptr, 10);
+    if (f == 12 || f == 24) {
+      settings.use12h = (f == 12);
+      saveSettings();
+      return "ok";
+    }
+    return refuse("format must be 12 or 24");
+  }
+  if (startsWith(line, "NIGHT=") || startsWith(line, "NM=")) {
+    const char *p = line[1] == 'M' ? line + 3 : line + 6;
+    long nm = strtol(p, nullptr, 10);
+    if (nm >= 0 && nm < NIGHT_CHOICES) {
+      settings.night = (uint8_t)nm;
+      saveSettings();
+      return "ok";
+    }
+    return refuse("night out of range");
+  }
   if (!strcmp(line, "?")) return "ok";
   return refuse("unknown line");
 }
 
 void status(char *out, size_t n, int batteryPct) {
-  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u;bright=%d;motion=%d", net::timeIsValid() ? (long)hal::now() : 0L,
+  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u;bright=%d;motion=%d;format=%d;night=%d", net::timeIsValid() ? (long)hal::now() : 0L,
            settings.tz.c_str(), net::ssid(), batteryPct, (int)(settings.face % FACE_COUNT),
-           (unsigned int)(settings.activeFaces & ALL_FACES_MASK), (int)settings.brightnessLevel, (int)settings.motion);
+           (unsigned int)(settings.activeFaces & ALL_FACES_MASK), (int)settings.brightnessLevel, (int)settings.motion,
+           settings.use12h ? 12 : 24, (int)settings.night);
 }
 
 }  // namespace phone

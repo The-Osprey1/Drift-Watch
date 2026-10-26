@@ -26,6 +26,8 @@ bool imuPresent = true;
 Accel accel = {0, 0, 1};  // lying flat, screen up
 int dozes = 0, lowPowerDozes = 0, motionDozes = 0;
 uint64_t dozedMs = 0;
+int serialLost = 0;
+std::string serialSent;
 uint32_t imuLineEdges[2] = {0, 0};
 bool womArmed = false, womEvent = false;
 Accel womRef = {0, 0, 1};
@@ -66,7 +68,15 @@ void begin() {}
 uint32_t ms() { return sim::clockMs; }
 int64_t nowMs() { return sim::clockSet ? sim::wallAtZeroMs + sim::clockMs : 5000 + (int64_t)sim::clockMs; }
 time_t now() { return (time_t)(nowMs() / 1000); }
-void idle(uint32_t ms) { sim::clockMs += ms; }
+void idle(uint32_t ms) {
+  sim::clockMs += ms;
+  // With the screen on the UART takes bytes as they come. With it off, only a plain wait
+  // (serial hold) takes them; the brief awake moments between light sleeps are not counted.
+  if (ui::screenName() != std::string("asleep")) {
+    Serial.in += sim::serialSent;
+    sim::serialSent.clear();
+  }
+}
 void backlight(uint8_t level) {
   if (sim::backlightLog.empty() || sim::backlightLog.back().second != level)
     sim::backlightLog.push_back({sim::clockMs, level});
@@ -122,6 +132,8 @@ uint8_t doze(uint32_t ms, const DozeArm &arm) {
   };
   if (!arm.lowPower) {
     sim::clockMs += t;
+    Serial.in += sim::serialSent;
+    sim::serialSent.clear();
     return done(WAKE_TIMER);
   }
   if (sim::sleepFails) {
@@ -129,6 +141,16 @@ uint8_t doze(uint32_t ms, const DozeArm &arm) {
     return done(WAKE_FAULT | WAKE_TIMER);
   }
   sim::lowPowerDozes++;
+  // In light sleep the UART is stopped: bytes sent now are lost, as on the watch. Armed, they
+  // wake the chip (still lost); the watch then stays out of light sleep for the next ones.
+  if (!sim::serialSent.empty()) {
+    sim::serialSent.clear();
+    sim::serialLost++;
+    if (arm.serial) {
+      sim::clockMs += 1;
+      return done(WAKE_SERIAL);
+    }
+  }
   bool motionLineHigh = sim::womLineStuck || sim::womEvent;
   bool motionArmed = arm.motion && !motionLineHigh;
   if (motionArmed) sim::motionDozes++;

@@ -325,11 +325,11 @@ function highlightWatchFace(faceIdx) {
 }
 
 function parseWatchStatus(txt) {
-  const mFaces = txt.match(/faces=(\d+)/);
-  if (mFaces) {
-    const mask = parseInt(mFaces[1], 10);
-    setFaceMask(mask);
-  }
+  // Bluetooth status says faces=4095 (decimal); the USB-C reply to INFO? says FACES=0x0FFF (hex).
+  const mHex = txt.match(/FACES=0x([0-9a-f]+)/i);
+  const mFaces = txt.match(/faces=(\d+)(?!x)/);
+  if (mHex) setFaceMask(parseInt(mHex[1], 16));
+  else if (mFaces) setFaceMask(parseInt(mFaces[1], 10));
   const mFace = txt.match(/face=(\d+)/);
   if (mFace) {
     const face = parseInt(mFace[1], 10);
@@ -387,7 +387,37 @@ async function writeRaw(bytes) {
   else await command.writeValue(bytes);
 }
 
-let serialPort = null, serialWriter = null, isSerial = false;
+let serialPort = null, serialWriter = null, serialReader = null, isSerial = false;
+// Lines the page is waiting for from the watch over USB-C: {re, resolve} until they arrive.
+let serialWaiters = [];
+
+function waitForLine(re, ms) {
+  return new Promise(resolve => {
+    const w = { re, resolve };
+    serialWaiters.push(w);
+    setTimeout(() => {
+      serialWaiters = serialWaiters.filter(x => x !== w);
+      resolve(null);
+    }, ms);
+  });
+}
+
+const sleepMs = ms => new Promise(r => setTimeout(r, ms));
+
+// Opening the port can restart the watch (its USB chip's control lines are wired to reset), and
+// a watch with its screen off loses the bytes that wake it. So keep sending a newline and INFO?
+// until it answers, up to 5 s, before sending anything that matters.
+async function serialHandshake() {
+  const until = Date.now() + 5000;
+  while (Date.now() < until && isSerial) {
+    const answer = waitForLine(/DRIFT:VER=/, 350);
+    await serialWriter.write(new TextEncoder().encode("\n"));
+    await sleepMs(50);
+    await send("INFO?");
+    if (await answer) return true;
+  }
+  return false;
+}
 
 async function send(line) {
   if (isSerial && serialWriter) {
@@ -431,27 +461,51 @@ async function connectSerial(portArg = null) {
         });
       }
     }
+    if (isSerial && serialPort === port) return true;  // already open
     serialPort = port;
     await serialPort.open({ baudRate: 115200, bufferSize: 1024 });
+    // Keep the reset line released where the browser allows it.
+    try { await serialPort.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
     serialWriter = serialPort.writable.getWriter();
     isSerial = true;
+    readSerialLoop();
+    say("connMsg", "Waiting for the watch to answer over USB-C...");
+    if (!(await serialHandshake())) {
+      await closeSerial("The watch did not answer over USB-C within 5 s. Is another program using the port?");
+      return false;
+    }
     connected(true);
     $("connect").textContent = "Connected via USB-C";
     $("connectUsb").textContent = "Connected (USB-C)";
-    say("connMsg", "Connected via USB-C Serial.", "ok");
-    readSerialLoop();
-    try { await send("INFO?"); } catch (e) {}
+    say("connMsg", "Connected via USB-C.", "ok");
+    return true;
   } catch (err) {
-    isSerial = false;
-    connected(false);
-    say("connMsg", "USB-C connect error: " + err.message, "err");
+    await closeSerial("USB-C connect error: " + err.message);
+    return false;
   }
+}
+
+// Unplugged, failed or not answering: back to not connected, and say why.
+async function closeSerial(why) {
+  const port = serialPort;
+  isSerial = false;
+  serialPort = null;
+  serialWaiters.forEach(w => w.resolve(null));
+  serialWaiters = [];
+  try { if (serialReader) await serialReader.cancel(); } catch (e) {}
+  try { if (serialWriter) serialWriter.releaseLock(); } catch (e) {}
+  serialReader = serialWriter = null;
+  try { if (port) await port.close(); } catch (e) {}
+  connected(false);
+  $("connectUsb").textContent = "USB-C Cable";
+  if (why) say("connMsg", why, "err");
 }
 
 async function readSerialLoop() {
   const textDecoder = new TextDecoderStream();
   serialPort.readable.pipeTo(textDecoder.writable).catch(() => {});
   const reader = textDecoder.readable.getReader();
+  serialReader = reader;
   try {
     let buf = "";
     while (true) {
@@ -462,7 +516,12 @@ async function readSerialLoop() {
       buf = lines.pop();
       for (const line of lines) {
         if (line.trim()) {
-          $("status").textContent = line;
+          serialWaiters = serialWaiters.filter(w => {
+            if (!w.re.test(line)) return true;
+            w.resolve(line);
+            return false;
+          });
+          if (/^DRIFT:/.test(line)) $("status").textContent = line;
           parseWatchStatus(line);
         }
       }
@@ -545,17 +604,21 @@ async function syncTime() {
   try {
     if (isSerial) {
       const now = Math.floor(Date.now() / 1000);
+      const reply = waitForLine(/Time set to \d+/, 1500);
       await send("TIME:" + now);
+      if (!(await reply)) throw new Error("the watch did not confirm the time");
       say("syncMsg", "Time synced via USB-C (" + new Date().toLocaleTimeString() + ")!", "ok");
-      return;
+      return true;
     }
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     if (zone) await send("N=" + zone);
     await send("Z=" + posixZone());
     await send("T=" + (Date.now() / 1000).toFixed(3));  // last, so the time lands as fresh as possible
     say("syncMsg", "Time sent. The watch should show it now.", "ok");
+    return true;
   } catch (err) {
     say("syncMsg", "Could not send: " + err.message, "err");
+    return false;
   }
 }
 
@@ -568,7 +631,9 @@ async function saveActiveFaces() {
   say("facesMsg", "Sending...");
   try {
     if (isSerial) {
+      const reply = waitForLine(/Faces mask set to/, 1500);
       await send("FACES:0x" + mask.toString(16).toUpperCase());
+      if (!(await reply)) throw new Error("the watch did not confirm the faces");
     } else {
       await send("H=" + mask);
     }
@@ -624,13 +689,14 @@ async function sendWifi() {
       if ($("autoSyncUsb").checked) {
         say("connMsg", "USB-C plugged in! Auto-syncing time...", "ok");
         try {
-          await connectSerial(e.target);
-          await syncTime();
-          say("connMsg", "USB-C Instant Sync complete!", "ok");
+          if ((await connectSerial(e.target)) && (await syncTime())) say("connMsg", "USB-C Instant Sync complete!", "ok");
         } catch (err) {
           console.warn("Auto-sync error:", err);
         }
       }
+    });
+    navigator.serial.addEventListener("disconnect", (e) => {
+      if (serialPort && e.target === serialPort) closeSerial("USB-C cable unplugged.");
     });
   } else {
     $("connectUsb").disabled = true;

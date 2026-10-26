@@ -2,6 +2,7 @@
 #include <Arduino.h>
 #include <Wire.h>
 #include <driver/gpio.h>
+#include <driver/uart.h>
 #include <esp_sleep.h>
 #include <esp_task_wdt.h>
 #include <esp_attr.h>
@@ -168,6 +169,13 @@ uint8_t doze(uint32_t t, const DozeArm &arm) {
     ok &= gpio_wakeup_enable((gpio_num_t)PIN_IMU_INT2, GPIO_INTR_HIGH_LEVEL) == ESP_OK;
   }
   if (touchArmed || bootArmed || motionArmed) ok &= esp_sleep_enable_gpio_wakeup() == ESP_OK;
+  // Serial data: the USB-C port's chip talks to UART0 (RX on GPIO 44). In light sleep the UART is
+  // stopped and bytes are dropped, so a sync sent to a dark watch used to vanish. The UART wakes
+  // the chip after 3 rising edges on RX (one newline has 3); those bytes are lost, so the
+  // computer sends a newline first and retries (tools/windows, companion). A failure here only
+  // loses this wake source, never light sleep itself.
+  bool serialArmed = arm.serial && uart_set_wakeup_threshold(UART_NUM_0, 3) == ESP_OK &&
+                     esp_sleep_enable_uart_wakeup(UART_NUM_0) == ESP_OK;
   ok &= esp_sleep_enable_timer_wakeup((uint64_t)t * 1000) == ESP_OK;
   uint8_t bits = 0;
   bool touchLow = false, bootLow = false, motionHigh = false;
@@ -210,6 +218,7 @@ uint8_t doze(uint32_t t, const DozeArm &arm) {
     // cleared and BOOT is held for much longer, so this was a short touch pulse.
     bits |= WAKE_TOUCH;
   }
+  if (serialArmed && cause == ESP_SLEEP_WAKEUP_UART) bits |= WAKE_SERIAL;
   if (cause == ESP_SLEEP_WAKEUP_TIMER) bits |= WAKE_TIMER;
   return bits ? bits : WAKE_TIMER;
 }

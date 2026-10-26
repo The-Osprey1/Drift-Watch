@@ -60,6 +60,8 @@ screens::Button pressed = screens::Button::None;
 // Page shown on each paged screen. The settings page is kept while details or setup are open.
 int settingsPage = 0, detailsPage = 0, setupPage = 0, setTimePage = 0, phonePage = 0, checkPage = 0, drawerPage = 0;
 TimerState timer{};
+uint32_t flashlightStart = 0;
+uint32_t serialHoldUntil = 0;  // 0: none
 tm editTime{};  // what the set time screen shows; applied only by Save
 
 RaiseDetector wristRaise;
@@ -259,6 +261,7 @@ void begin() {
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = drawerPage = 0;
   timer = TimerState{};
+  serialHoldUntil = 0;
   failsInARow = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;
@@ -336,30 +339,33 @@ void stepTimer() {
     timer.active = false;
     timer.alarming = true;
     timer.alarmStartMs = hal::ms();
+    timer.alarmShown = -1;
     if (!awake) wakeScreen();
+    // The alarm takes the screen over from whatever was waking or dimming it.
+    finishIris();
+    fading = false;
     lastActivity = hal::ms();
   }
-  if (timer.alarming) {
-    if (since(timer.alarmStartMs) > 30000) {
-      timer.alarming = false;
-      hal::backlight(backlightLevel());
-      if (mode == Mode::Drawer) mode = Mode::Face;
-      dirty = true;
-      return;
-    }
-    lastActivity = hal::ms();
-    if (since(lastPresent) >= 200) {
-      bool on = ((hal::ms() - timer.alarmStartMs) / 200) % 2 == 0;
-      hal::backlight(on ? 255 : 40);
-      cur->fillSprite(on ? col::WARN : col::BG);
-      const GFXfont *f = gfx::font(type::Role::Title, true);
-      gfx::text(*cur, "TIMER", layout::CX, 90, f, on ? col::BG : col::WARN, MC_DATUM);
-      gfx::text(*cur, "UP!", layout::CX, 130, f, on ? col::BG : col::WARN, MC_DATUM);
-      const GFXfont *fb = gfx::font(type::Role::Body, false);
-      gfx::text(*cur, "Tap to dismiss", layout::CX, 175, fb, on ? col::BG : col::TEXT, MC_DATUM);
-      present(*cur);
-    }
+  if (!timer.alarming) return;
+  if (since(timer.alarmStartMs) > ALARM_MS) {
+    dismissAlarm();
+    return;
   }
+  lastActivity = hal::ms();
+  // Drawn on its own flash clock: a face that presents every frame (the radar beam, Phantom,
+  // Expressive motion) used to keep the wait from ever running out, so the alarm never showed.
+  int32_t step = (int32_t)(since(timer.alarmStartMs) / ALARM_FLASH_MS);
+  if (step == timer.alarmShown) return;
+  timer.alarmShown = step;
+  bool on = step % 2 == 0;
+  hal::backlight(on ? 255 : 40);
+  cur->fillSprite(on ? col::WARN : col::BG);
+  const GFXfont *f = gfx::font(type::Role::Title, true);
+  gfx::text(*cur, "TIMER", layout::CX, 90, f, on ? col::BG : col::WARN, MC_DATUM);
+  gfx::text(*cur, "UP!", layout::CX, 130, f, on ? col::BG : col::WARN, MC_DATUM);
+  const GFXfont *fb = gfx::font(type::Role::Body, false);
+  gfx::text(*cur, "Tap to dismiss", layout::CX, 175, fb, on ? col::BG : col::TEXT, MC_DATUM);
+  present(*cur);
 }
 
 void loop() {
@@ -383,7 +389,9 @@ void loop() {
     return;
   }
 
-  bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot || timer.alarming || mode == Mode::Flashlight;
+  if (mode == Mode::Flashlight && since(flashlightStart) > FLASHLIGHT_MS) closeFlashlight();
+  bool held = finger.down || boot.down || setupHoldsScreen() || tr.kind != Slide::None || mode == Mode::Boot || timer.alarming ||
+              mode == Mode::Flashlight;
   if (held) lastActivity = hal::ms();
   if (!sleeping && since(lastActivity) > screenTimeout()) {
     startSleep();
@@ -395,6 +403,11 @@ void loop() {
     return;
   }
 
+  if (timer.alarming) {
+    // The alarm owns the screen until it is dismissed or runs out; nothing else draws over it.
+    hal::idle(10);
+    return;
+  }
   stepFade();
   stepBootCheck();
   stepDrop();

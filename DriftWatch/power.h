@@ -50,7 +50,7 @@ const char *stateName(State s);
 const char *fallbackName(Fallback f);
 
 // What the screen-off loop must do after a wait.
-enum class Wake : uint8_t { None, Touch, Button, Gesture };
+enum class Wake : uint8_t { None, Touch, Button, Gesture, Serial };
 
 struct Options {
   bool wom = DRIFT_WOM;                    // use wake on motion where the gesture mode allows
@@ -74,6 +74,7 @@ extern Options options;
 
 struct Inputs {
   bool raise = false, twist = false;  // the gestures allowed now (setting, night mode, sensor)
+  bool serialHold = false;            // the computer is talking over serial: no light sleep, which drops bytes
 };
 
 struct Stats {

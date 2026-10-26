@@ -273,7 +273,7 @@ void registerSequences() {
 uint32_t clockMs = 1000;
 struct Doze {
   uint32_t asked;
-  bool lowPower, motion;
+  bool lowPower, motion, serial;
 };
 std::vector<Doze> dozes;
 std::deque<std::pair<uint32_t, uint8_t>> events;  // (after ms, bits) for the next waits
@@ -308,7 +308,7 @@ void idle(uint32_t ms) {
   clockMs += ms;
 }
 uint8_t doze(uint32_t ms, const DozeArm &arm) {
-  dozes.push_back({ms, arm.lowPower, arm.motion});
+  dozes.push_back({ms, arm.lowPower, arm.motion, arm.serial});
   if (sleepSetupFails && arm.lowPower) {
     clockMs += ms;
     return WAKE_FAULT | WAKE_TIMER;
@@ -464,6 +464,22 @@ void controller() {
   power::options.maxSleepMs = 12000;
   d.step(none, clockMs + 90000, feed);
   CHECK(dozes.back().asked == 12000, "the longest sleep is adjustable (asked %u)", dozes.back().asked);
+
+  printf("Power: serial data wakes the processor, and holds off light sleep\n");
+  resetWorld();
+  power::Controller sc;
+  sc.screenOff(clockMs);
+  events.push_back({3000, hal::WAKE_SERIAL});
+  Wake sw = sc.step(none, clockMs + 60000, feed);
+  CHECK(dozes.back().serial && dozes.back().lowPower, "light sleep with the serial port armed");
+  CHECK(sw == Wake::Serial && clockMs < 1000 + 4000, "bytes arriving end the sleep early as a serial wake");
+  power::Inputs talking;
+  talking.serialHold = true;
+  sc.step(talking, clockMs + 60000, feed);
+  CHECK(!dozes.back().lowPower && dozes.back().asked <= 50, "while the computer talks: plain short waits, no light sleep (asked %u)",
+        dozes.back().asked);
+  events.push_back({10, hal::WAKE_SERIAL | hal::WAKE_TOUCH});
+  CHECK(sc.step(none, clockMs + 60000, feed) == Wake::Touch, "a touch at the same time still wins");
 
   printf("Power: twist modes keep polling\n");
   resetWorld();

@@ -1,10 +1,11 @@
-# Drift-Watch firmware (v0.15.0)
+# Drift-Watch firmware (v0.15.1)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
 ## Status
 
-- **v0.15.0** *(latest; verified on hardware)* — Quick Drawer pull-down shade (swipe down from any face) with interactive countdown timers (1m, 3m, 5m presets, dial progress ring, background light sleep scheduling, visual strobe alarm), full-screen flashlight, Settings 4-Hub Overhaul with 1-tap category header fast-jumping, Instant USB-C Auto-Sync protocol (`TIME:`, `WIFI:`, `FACES:`, `INFO?`), zero-install Windows auto-sync script (`tools/windows/DriftWatchSync.ps1`), Web Serial companion auto-sync, PhoneSync QR code direct scanning, and QMI8658 onboard temperature telemetry. See [`notes/NOTES-v0.15.0.md`](notes/NOTES-v0.15.0.md).
+- **v0.15.1** *(latest; not yet flashed on the watch)* — Daily-driver fixes from the v0.15.0 test: the timer alarm now shows on every face (it was hidden on Radar, Phantom, and Orbit, Lunar and Yozakura with Expressive motion), the "TIMER UP!" picture clears when dismissed in Settings, the flashlight returns to the face after 2 minutes, the open drawer redraws once a second with a progress ring that empties, Wake gesture and Touch check sit under their own headings, serial data wakes a sleeping watch, the Windows script and web page wait for the watch to answer before syncing (and say when it fails), Windows syncs on every plug-in, and the web page reads the face list over USB-C and notices an unplugged cable. See [`notes/NOTES-v0.15.1.md`](notes/NOTES-v0.15.1.md). Images are built from main after merging.
+- **v0.15.0** *(verified on hardware)* — Quick Drawer pull-down shade (swipe down from any face) with interactive countdown timers (1m, 3m, 5m presets, dial progress ring, background light sleep scheduling, visual strobe alarm), full-screen flashlight, Settings 4-Hub Overhaul with 1-tap category header fast-jumping, Instant USB-C Auto-Sync protocol (`TIME:`, `WIFI:`, `FACES:`, `INFO?`), zero-install Windows auto-sync script (`tools/windows/DriftWatchSync.ps1`), Web Serial companion auto-sync, PhoneSync QR code direct scanning, and QMI8658 onboard temperature telemetry. See [`notes/NOTES-v0.15.0.md`](notes/NOTES-v0.15.0.md).
 - **v0.14.0** *(verified on hardware)* — Precision face revamp (upright vector instrument numerals on Digital, Radar, Orbit and Yozakura, quieter supporting marks, distinct analog hand styles), hot-swap active faces (from **Settings > Hot swap** or the Drift sync web page), chronometer startup sequence, radial iris wake and sleep transitions, optional 20 fps ambient face touches on **Motion: Expressive**, shared face-mask constants (`face_id.h`), and `ui.cpp` split into focused units. See [`notes/NOTES-v0.14.0.md`](notes/NOTES-v0.14.0.md).
 - **v0.13.0** — Watchdog freeze recovery with restart reason on the details screen, stuck-I2C bus recovery at start, persisted Auto time zone with built-in summer time rules, two-try Wi-Fi join, failed-resync back-off, scan-to-join QR code on Wi-Fi setup, 15% and 5% low-battery warnings, and a charging bolt on every face. See [`notes/NOTES-v0.13.0.md`](notes/NOTES-v0.13.0.md).
 - **v0.12.0** *(pending hardware test)* — Six themed faces (Orbit, Lunar, Yozakura, Hanami, Wasteland, Mojave) with one-shot entrances, three-level **Motion** setting (Off, Subtle, Expressive), and distance-scaled slide timing. See [`notes/NOTES-v0.12.0.md`](notes/NOTES-v0.12.0.md).
@@ -56,9 +57,9 @@ On **Motion: Expressive** (above 20% battery), Digital pulses its colon with a s
 | Face | Swipe up, hold for 0.6 s, or hold BOOT for 0.6 s | Open settings (styled with the current face's accent colours). The panel follows your finger up; a cyan ring grows while you hold |
 | Face | Short press of BOOT | Next active face |
 | Quick Drawer | Swipe up or BOOT | Close drawer back to the face |
-| Quick Drawer | Tap 1m / 3m / 5m Timer | Starts countdown; screen shows live MM:SS countdown and progress ring |
-| Quick Drawer | Tap Flashlight | Enters full-screen pure white maximum brightness (255 PWM); tap anywhere to return to face and restore brightness |
-| Timer Alarm | Tap anywhere or press BOOT | Dismisses visual strobe alarm and restores normal backlight |
+| Quick Drawer | Tap 1m / 3m / 5m Timer | Starts countdown; the drawer shows MM:SS and a ring that empties, redrawn once a second. With the screen off the watch wakes for the alarm |
+| Quick Drawer | Tap Flashlight | Full-screen white at full brightness; tap anywhere or BOOT to return to the face at your brightness. It returns by itself after 2 minutes |
+| Timer Alarm | Tap anywhere or press BOOT | Dismisses the flashing alarm (shown on every face and screen) and restores your brightness. It stops by itself after 30 s |
 | Settings | Tap category header (top title) | 1-tap fast-jump across category hubs without horizontal swiping |
 | Set time | Tap - or +, or hold to repeat | Changes the field shown in cyan; swipe for the next field, then Save on the last page |
 | Settings, details, setup | Swipe left / right | Next / previous page. Never changes the face |
@@ -117,19 +118,26 @@ Bluetooth is only on while that screen is open. The link is not encrypted, so on
 
 ## USB Serial sync
 
-When plugged into a computer over USB-C, the watch accepts commands on the serial port at **115200 baud**:
+When plugged into a computer over USB-C, the watch accepts commands on the serial port at **115200 baud**, one per line:
 
-- **Set time**: `TIME:<unix_seconds>` (e.g. `TIME:1729828800`)
+- **Set time**: `TIME:<unix_seconds>` (e.g. `TIME:1729828800`); replies `Time set to <seconds>`
 - **Set Wi-Fi**: `WIFI:<network>,<password>`
+- **Active faces**: `FACES:<hex mask>` (e.g. `FACES:0x0041` for Digital and Orbit); replies `Faces mask set to 0x....`
+- **Status**: `INFO?` or `?`; replies `DRIFT:VER=...,TIME=...,BAT=...,FACES=0x....`
 
-**PowerShell 1-liner:**
-```powershell
-$p = New-Object System.IO.Ports.SerialPort "COM6", 115200; $p.Open(); $p.WriteLine("TIME:" + [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()); $p.Close()
-```
+Two things to know before sending anything:
 
-**Bash / Linux 1-liner:**
+- **Opening the port can restart the watch.** The USB chip's control lines are wired to the reset pin, and on Windows opening the port pulses them. The watch then needs about 0.75 s before it reads serial again.
+- **With the screen off, the first bytes are lost.** They wake the watch (v0.15.1 and later), which then listens for 3 seconds without sleeping.
+
+So send a newline and `INFO?` until the watch answers `DRIFT:VER=...`, then send `TIME:`. Both tools here do that:
+
+- **Windows**: [`tools/windows/DriftWatchSync.ps1`](tools/windows/DriftWatchSync.ps1) finds the watch's port, syncs once, and only prints "Success!" when the watch confirms the time. To sync every time you plug the watch in, run [`tools/windows/RegisterAutoSyncTask.ps1`](tools/windows/RegisterAutoSyncTask.ps1) once in a normal PowerShell window: it starts a hidden watcher at each sign-in (and right away) that syncs on every plug-in.
+- **Browser**: the Drift sync page's **USB-C Cable** button (Chrome or Edge), with **Auto-sync** to sync on plug-in.
+
+**Linux, by hand** (the port name varies):
 ```bash
-echo "TIME:$(date +%s)" > /dev/ttyACM0
+stty -F /dev/ttyACM0 115200 -hupcl; sleep 1; printf '\nINFO?\n' > /dev/ttyACM0; sleep 0.3; echo "TIME:$(date +%s)" > /dev/ttyACM0
 ```
 
 ## Wi-Fi setup

@@ -234,6 +234,7 @@ void closeDrawer(float v) {
 void openFlashlight() {
   finishIris();
   mode = Mode::Flashlight;
+  flashlightStart = hal::ms();
   hal::backlight(255);
   drawScreen(*cur, Mode::Flashlight, 0);
   present(*cur);
@@ -511,6 +512,8 @@ power::Inputs standbyInputs() {
   bool on = gesturesOn();  // includes night mode and the sensor being there
   in.raise = on && settings.raiseToWake;
   in.twist = on && settings.twistToWake;
+  in.serialHold = serialHoldUntil && (int32_t)(hal::ms() - serialHoldUntil) < 0;
+  if (!in.serialHold) serialHoldUntil = 0;
   return in;
 }
 
@@ -552,6 +555,9 @@ void standbyStep() {
       touchResume();
       pollInput();               // a touch or press still down wakes the screen and does nothing else
       if (!awake) wakeScreen();  // it was over before it could be read (a short touch pulse): wake anyway
+      break;
+    case power::Wake::Serial:
+      holdForSerial();  // the bytes that woke it are lost; the computer sends again (screen stays off)
       break;
     case power::Wake::None:
       break;

@@ -532,17 +532,27 @@ Item settingsItemFor(const View &v, Button b, Doc &d) {
 }
 
 int settingsPerPage(const View &v) { return v.large ? 1 : 2; }
+// With two items a page the Clock hub has five, so its last page holds one and the Gestures hub
+// starts on a fresh page: the slot after Wi-Fi setup is left empty. Without it Raise to wake sat
+// under the Clock heading and Touch check under Gestures.
+constexpr int CLOCK_HUB_END = 9;  // first item after the Clock hub
+int settingsSlot(const View &v, int item) { return !v.large && item >= CLOCK_HUB_END ? item + 1 : item; }
+int settingsSlots(const View &v) { return settingsSlot(v, SETTINGS_ITEMS - 1) + 1; }
+Button settingsAtSlot(const View &v, int slot) {
+  if (!v.large && slot == CLOCK_HUB_END) return Button::None;
+  return settingsItem(!v.large && slot > CLOCK_HUB_END ? slot - 1 : slot);
+}
 int settingsPages(const View &v) {
   int per = settingsPerPage(v);
-  return (SETTINGS_ITEMS + per - 1) / per;
+  return (settingsSlots(v) + per - 1) / per;
 }
 
 int settingsControls(const View &v, int page, Control *out, int max) {
   int per = settingsPerPage(v), n = 0;
   for (int i = 0; i < per && n < max; i++) {
     int idx = page * per + i;
-    if (idx >= SETTINGS_ITEMS) break;
-    Button b = settingsItem(idx);
+    if (idx >= settingsSlots(v)) break;
+    Button b = settingsAtSlot(v, idx);
     if (b == Button::None) continue;
     if (v.large) out[n++] = {b, TALL, TALL};
     else out[n++] = {b, i == 0 ? UPPER : LOWER, i == 0 ? UPPER_HIT : LOWER_HIT};
@@ -1111,7 +1121,11 @@ bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
     snprintf(timeStr, sizeof timeStr, "%02d:%02d", min, sec);
     gfx::text(s, timeStr, CX, 85, fontFor(Role::Title, true), col::TEXT, MC_DATUM);
     if (v.timerTotalMs > 0) {
+      // The ring empties from 12 o'clock as the time runs down; it moves once a second with the
+      // numbers, so the drawer is redrawn by its key (ui_render.cpp) and never animates.
+      float left = fminf(1.0f, v.timerRemainingMs / (float)v.timerTotalMs);
       s.drawCircle(CX, CY, 108, col::OUTLINE);
+      if (left > 0) gfx::arc(s, 110, 105, 0, 360 * left, col::CYAN);
     }
     Control ctl[2];
     int n = drawerControls(v, page, ctl, 2);
@@ -1119,7 +1133,7 @@ bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
       Item it{Button::TimerReset, nullptr, Icon::None, 0, "Reset Timer", col::WARN, col::WARN, 0};
       drawItem(c, it, ctl[i].visible);
     }
-    return true;
+    return false;
   }
 
   Control ctl[2];
@@ -1141,7 +1155,7 @@ bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
 Button settingsItem(int i) {
   // Grouped into 4 Category Hubs:
   // Hub 0: Display & Style (items 0-3, pages 0-1)
-  // Hub 1: Clock & Sync (items 4-8, pages 2-4)
+  // Hub 1: Clock & Sync (items 4-8, pages 2-4; page 4 holds Wi-Fi setup alone)
   // Hub 2: Gestures & Wake (items 9-10, page 5)
   // Hub 3: System & Info (items 11-12, page 6)
   static const Button order[SETTINGS_ITEMS] = {
@@ -1293,7 +1307,7 @@ Button hit(TFT_eSprite &s, const View &v, int x, int y) {
 int pageOf(TFT_eSprite &s, View v, Button b) {
   if (v.screen == Screen::Settings) {
     for (int i = 0; i < SETTINGS_ITEMS; i++)
-      if (settingsItem(i) == b) return i / settingsPerPage(v);
+      if (settingsItem(i) == b) return settingsSlot(v, i) / settingsPerPage(v);
     return -1;
   }
   int pages = pageCount(s, v);

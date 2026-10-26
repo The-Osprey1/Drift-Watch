@@ -283,8 +283,7 @@ uint32_t screenKey() {
   k = k * 31 + (uint32_t)net::joinWhy() * 2 + net::clockSetByHand();
   k = k * 31 + settings.raiseToWake * 2 + settings.twistToWake;
   // The clock shown on the Set time control: only its page is redrawn when the minute turns.
-  // Set time is the third item, with two items a page (one with large text).
-  bool clockShown = mode != Mode::Panel || settingsPage == (settings.largeText ? 2 : 1);
+  bool clockShown = mode != Mode::Panel || settingsPage == screens::pageOf(*cur, view(Mode::Panel, 0), screens::Button::SetTime);
   if (clockShown) k = k * 61 + (uint32_t)(hal::now() / 60);
   k = k * 31 + (uint32_t)(editTime.tm_year * 400 + editTime.tm_mon * 32 + editTime.tm_mday);
   k = k * 31 + (uint32_t)(editTime.tm_hour * 60 + editTime.tm_min);

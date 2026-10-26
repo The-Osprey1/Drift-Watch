@@ -4,6 +4,7 @@
 // settings, details and setup screen in both text sizes and checks text,
 // touch regions and contrast. Output: PPM frames, debug overlays, a hit-target
 // report and a check log; exit code 1 on any failed check.
+#include <stdarg.h>
 #include <TFT_eSPI.h>
 #include <Preferences.h>
 #include <string>
@@ -1023,7 +1024,10 @@ void scenarios() {
   CHECK(screen() == "panel" && net::portalState() == net::Portal::Closed, "BOOT cancels the waiting hotspot");
   goTo(screens::Button::Details);
   tapButton(screens::Button::Details);
-  while (!find(screens::Button::TextSize, c)) { swipeLeft(); settle(); }
+  for (int i = 0; i < 16 && !find(screens::Button::TextSize, c); i++) {  // bounded: a broken page list must fail, not hang
+    swipeLeft();
+    settle();
+  }
   tapButton(screens::Button::TextSize);
   CHECK(!settings.largeText, "Text size back to Normal");
   swipeDown();
@@ -2898,6 +2902,8 @@ void quickDrawerScenarios() {
   CHECK(!ui::timerAlarming(), "tap dismisses alarm");
 }
 
+#include "sim_tools.inc"
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -2920,6 +2926,7 @@ int main(int argc, char **argv) {
   reliabilityScenarios();
   lowBatteryScenarios();
   quickDrawerScenarios();
+  toolChecks();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

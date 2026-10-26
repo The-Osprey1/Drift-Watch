@@ -1024,7 +1024,10 @@ void scenarios() {
   CHECK(screen() == "panel" && net::portalState() == net::Portal::Closed, "BOOT cancels the waiting hotspot");
   goTo(screens::Button::Details);
   tapButton(screens::Button::Details);
-  while (!find(screens::Button::TextSize, c)) { swipeLeft(); settle(); }
+  for (int i = 0; i < 16 && !find(screens::Button::TextSize, c); i++) {  // bounded: a broken page list must fail, not hang
+    swipeLeft();
+    settle();
+  }
   tapButton(screens::Button::TextSize);
   CHECK(!settings.largeText, "Text size back to Normal");
   swipeDown();

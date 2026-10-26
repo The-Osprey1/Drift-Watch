@@ -261,6 +261,7 @@ void begin() {
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = drawerPage = 0;
   timer = TimerState{};
+  serialHoldUntil = 0;
   failsInARow = 0;
   loadSettings();
   if (settings.face >= FACE_COUNT) settings.face = 0;

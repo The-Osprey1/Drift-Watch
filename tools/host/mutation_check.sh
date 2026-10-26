@@ -75,7 +75,9 @@ PY
   then echo "  MUTATION $name: could not be applied (the code changed; update this list)"; status=1; continue; fi
   build "$test"
   mkdir -p "$WORK/out"
-  if "$WORK/bin/$test" "$WORK/out" >"$WORK/log" 2>&1; then
+  # A planted bug that sends a test into a loop counts as caught, after 5 minutes, rather than
+  # holding up the whole run.
+  if timeout 300 "$WORK/bin/$test" "$WORK/out" >"$WORK/log" 2>&1; then
     echo "  MUTATION $name: NOT caught by the $test test"; status=1
   else
     echo "  mutation $name: caught by the $test test ($(grep -c FAIL "$WORK/log") failed checks)"

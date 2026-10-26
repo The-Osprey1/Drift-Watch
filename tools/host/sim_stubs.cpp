@@ -70,8 +70,12 @@ int64_t nowMs() { return sim::clockSet ? sim::wallAtZeroMs + sim::clockMs : 5000
 time_t now() { return (time_t)(nowMs() / 1000); }
 void idle(uint32_t ms) {
   sim::clockMs += ms;
-  Serial.in += sim::serialSent;  // awake, the UART takes bytes as they come
-  sim::serialSent.clear();
+  // With the screen on the UART takes bytes as they come. With it off, only a plain wait
+  // (serial hold) takes them; the brief awake moments between light sleeps are not counted.
+  if (ui::screenName() != std::string("asleep")) {
+    Serial.in += sim::serialSent;
+    sim::serialSent.clear();
+  }
 }
 void backlight(uint8_t level) {
   if (sim::backlightLog.empty() || sim::backlightLog.back().second != level)

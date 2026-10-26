@@ -420,7 +420,7 @@ void extraSerial() {
   Serial.in = "H=4095\n";
   runFor(100);
   Serial.out.clear();
-  sim::serialSent = "INFO?\n";
+  Serial.in = "INFO?\n";
   runFor(100);
   std::string r1 = Serial.out;
   Serial.out.clear();
@@ -467,7 +467,7 @@ void toolsSerialAsleep() {
   sim::serialSent = "\n";
   runFor(100);
   P("serial", sim::serialLost > lost && screen() == "asleep", "a newline wakes the processor and is lost; the screen stays off");
-  Serial.in = "INFO?\n";
+  sim::serialSent = "INFO?\n";
   runFor(100);
   P("serial", Serial.out.find("DRIFT:VER=" FW_VERSION) != std::string::npos, "INFO? sent next is answered (\"%s\")",
     Serial.out.c_str());

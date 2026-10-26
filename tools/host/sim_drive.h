@@ -76,8 +76,8 @@ inline void swipe(int x0, int y0, int x1, int y1, uint32_t ms) {
 }
 inline void swipeLeft() { swipe(190, 120, 80, 120, 90); }
 inline void swipeRight() { swipe(60, 120, 170, 120, 90); }
-inline void swipeUp() { swipe(120, 180, 120, 80, 120); }
-inline void swipeDown() { swipe(120, 70, 120, 170, 120); }
+inline void swipeUp() { swipe(120, 70, 120, 170, 120); }    // slide down (opens Settings)
+inline void swipeDown() { swipe(120, 180, 120, 80, 120); }  // swipe up (opens Quick Actions)
 
 inline void tap(int x, int y) {
   touchDown(x, y);

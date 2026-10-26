@@ -155,14 +155,37 @@ const char *apply(const char *line) {
     saveSettings();
     return "ok";
   }
+  if (startsWith(line, "B=")) {
+    long b = strtol(line + 2, nullptr, 10);
+    if (b < 0 || b > 3) return refuse("B= out of range");
+    settings.brightnessLevel = (uint8_t)b;
+    hal::backlight(backlightLevel());
+    saveSettings();
+    return "ok";
+  }
+  if (startsWith(line, "M=")) {
+    long m = strtol(line + 2, nullptr, 10);
+    if (m < 0 || m > 2) return refuse("M= out of range");
+    settings.motion = (uint8_t)m;
+    saveSettings();
+    return "ok";
+  }
+  if (startsWith(line, "F=")) {
+    long f = strtol(line + 2, nullptr, 10);
+    if (f < 0 || f >= FACE_COUNT) return refuse("F= out of range");
+    settings.face = (uint8_t)f;
+    settings.activeFaces |= (1u << settings.face);
+    saveSettings();
+    return "ok";
+  }
   if (!strcmp(line, "?")) return "ok";
   return refuse("unknown line");
 }
 
 void status(char *out, size_t n, int batteryPct) {
-  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u", net::timeIsValid() ? (long)hal::now() : 0L,
+  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u;bright=%d;motion=%d", net::timeIsValid() ? (long)hal::now() : 0L,
            settings.tz.c_str(), net::ssid(), batteryPct, (int)(settings.face % FACE_COUNT),
-           (unsigned int)(settings.activeFaces & ALL_FACES_MASK));
+           (unsigned int)(settings.activeFaces & ALL_FACES_MASK), (int)settings.brightnessLevel, (int)settings.motion);
 }
 
 }  // namespace phone

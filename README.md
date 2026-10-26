@@ -4,7 +4,7 @@ Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from s
 
 ## Status
 
-- **v0.15.1** *(latest; not yet flashed on the watch)* — Daily-driver fixes from the v0.15.0 test: the timer alarm now shows on every face (it was hidden on Radar, Phantom, and Orbit, Lunar and Yozakura with Expressive motion), the "TIMER UP!" picture clears when dismissed in Settings, the flashlight returns to the face after 2 minutes, the open drawer redraws once a second with a progress ring that empties, Wake gesture and Touch check sit under their own headings, serial data wakes a sleeping watch, the Windows script and web page wait for the watch to answer before syncing (and say when it fails), Windows syncs on every plug-in, and the web page reads the face list over USB-C and notices an unplugged cable. See [`notes/NOTES-v0.15.1.md`](notes/NOTES-v0.15.1.md). Images are built from main after merging.
+- **v0.15.1** *(latest; partly verified on the watch: USB-C sync with the screen off and Windows sync on plug-in pass)* — Daily-driver fixes from the v0.15.0 test: the timer alarm now shows on every face (it was hidden on Radar, Phantom, and Orbit, Lunar and Yozakura with Expressive motion), the "TIMER UP!" picture clears when dismissed in Settings, the flashlight returns to the face after 2 minutes, the open drawer redraws once a second with a progress ring that empties, Wake gesture and Touch check sit under their own headings, serial data wakes a sleeping watch, the Windows script and web page wait for the watch to answer before syncing (and say when it fails), Windows syncs on every plug-in, and the web page reads the face list over USB-C and notices an unplugged cable. See [`notes/NOTES-v0.15.1.md`](notes/NOTES-v0.15.1.md). Released as [v0.15.1](https://github.com/The-Osprey1/DriftWatch/releases/tag/v0.15.1).
 - **v0.15.0** *(verified on hardware)* — Quick Drawer pull-down shade (swipe down from any face) with interactive countdown timers (1m, 3m, 5m presets, dial progress ring, background light sleep scheduling, visual strobe alarm), full-screen flashlight, Settings 4-Hub Overhaul with 1-tap category header fast-jumping, Instant USB-C Auto-Sync protocol (`TIME:`, `WIFI:`, `FACES:`, `INFO?`), zero-install Windows auto-sync script (`tools/windows/DriftWatchSync.ps1`), Web Serial companion auto-sync, PhoneSync QR code direct scanning, and QMI8658 onboard temperature telemetry. See [`notes/NOTES-v0.15.0.md`](notes/NOTES-v0.15.0.md).
 - **v0.14.0** *(verified on hardware)* — Precision face revamp (upright vector instrument numerals on Digital, Radar, Orbit and Yozakura, quieter supporting marks, distinct analog hand styles), hot-swap active faces (from **Settings > Hot swap** or the Drift sync web page), chronometer startup sequence, radial iris wake and sleep transitions, optional 20 fps ambient face touches on **Motion: Expressive**, shared face-mask constants (`face_id.h`), and `ui.cpp` split into focused units. See [`notes/NOTES-v0.14.0.md`](notes/NOTES-v0.14.0.md).
 - **v0.13.0** — Watchdog freeze recovery with restart reason on the details screen, stuck-I2C bus recovery at start, persisted Auto time zone with built-in summer time rules, two-try Wi-Fi join, failed-resync back-off, scan-to-join QR code on Wi-Fi setup, 15% and 5% low-battery warnings, and a charging bolt on every face. See [`notes/NOTES-v0.13.0.md`](notes/NOTES-v0.13.0.md).
@@ -86,14 +86,14 @@ The screen turns off after 15 seconds (30 seconds on a setup result). While it i
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
-3. Choose [`firmware/drift_watch_v0.15.0.bin`](firmware/drift_watch_v0.15.0.bin) at address **0x0**, then Program.
+3. Choose [`firmware/drift_watch_v0.15.1.bin`](firmware/drift_watch_v0.15.1.bin) at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
 If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
 
-[`firmware/drift_watch_v0.15.0_diag.bin`](firmware/drift_watch_v0.15.0_diag.bin) is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
+[`firmware/drift_watch_v0.15.1_diag.bin`](firmware/drift_watch_v0.15.1_diag.bin) is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
-Working earlier versions (`v0.9.0` through `v0.14.0`) are published on [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). (`v0.7.0` and `v0.8.0` are omitted because they were built with "USB CDC on boot" turned on, which sends serial output to disconnected USB pins and stalls at start on this board.)
+Working earlier versions (`v0.9.0` through `v0.15.0`) are published on [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). (`v0.7.0` and `v0.8.0` are omitted because they were built with "USB CDC on boot" turned on, which sends serial output to disconnected USB pins and stalls at start on this board.)
 
 ## First start
 
@@ -197,7 +197,7 @@ Step counter (the motion sensor can do it), wake on motion for the twist gesture
 
 ## Ready-made firmware files
 
-The [`firmware/`](firmware/) folder holds the current ready-to-flash v0.14.0 image, `drift_watch_v0.14.0.bin`, and the diagnostic build, `drift_watch_v0.14.0_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in [`SHA256SUMS-v0.14.0.txt`](firmware/SHA256SUMS-v0.14.0.txt) and build details in [`MANIFEST-v0.14.0.md`](firmware/MANIFEST-v0.14.0.md). Working earlier releases (`v0.9.0`–`v0.13.0`) are available under [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). All images are flashed at address `0x0`.
+The [`firmware/`](firmware/) folder holds the current ready-to-flash v0.15.1 image, `drift_watch_v0.15.1.bin`, and the diagnostic build, `drift_watch_v0.15.1_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in [`SHA256SUMS-v0.15.1.txt`](firmware/SHA256SUMS-v0.15.1.txt) and build details in [`MANIFEST-v0.15.1.md`](firmware/MANIFEST-v0.15.1.md). Working earlier releases (`v0.9.0`–`v0.15.0`) are available under [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). All images are flashed at address `0x0`.
 
 ## Licence
 

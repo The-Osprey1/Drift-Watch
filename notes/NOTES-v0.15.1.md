@@ -1,6 +1,6 @@
 # Drift-Watch v0.15.1 release notes
 
-Daily-driver fixes for the faults found in the v0.15.0 feature test and the COM6 bench check. Nothing new to learn on the watch: the same tools, now reliable. Not yet flashed on the watch; the checks to do there are at the end.
+Daily-driver fixes for the faults found in the v0.15.0 feature test and the COM6 bench check. Nothing new to learn on the watch: the same tools, now reliable. On the watch, USB-C sync with the screen off and Windows sync on plug-in have passed; the other checks are at the end.
 
 ## What changes on the watch
 
@@ -36,11 +36,11 @@ All host tests in strict mode (warnings are errors, address and undefined behavi
 
 The simulator now models serial bytes that arrive during light sleep as lost (`sim::serialSent`), and keeps what the watch prints in `Serial.out` for checks to read.
 
-## Still to check on the watch
+## On the watch
 
 1. Start a 1 minute timer on Radar, close the drawer, let the screen go dark: it should light and flash about 60 s later. Repeat on Phantom.
 2. Start a timer, open Settings, wait for the alarm and tap: Settings should come back clean.
 3. Flashlight: it should return to the face after 2 minutes.
-4. With the screen off, run `DriftWatchSync.ps1`: it should print "Success! Watch time set to ...". The serial wake depends on the UART wake working in light sleep on this board; if it does not, the script still succeeds when the screen is on, and says clearly when it fails.
-5. Run `RegisterAutoSyncTask.ps1` in a normal PowerShell window, unplug and plug in the watch: it should sync within a few seconds.
+4. **Passed on the watch:** with the screen off, `DriftWatchSync.ps1` prints "Success! Watch time set to ...", so serial data wakes this board from light sleep.
+5. **Passed on the watch:** after `RegisterAutoSyncTask.ps1`, unplugging and plugging in the watch syncs it.
 6. On the Drift sync page over USB-C: Save faces should show the watch's faces ticked, and pulling the cable should show "USB-C cable unplugged".

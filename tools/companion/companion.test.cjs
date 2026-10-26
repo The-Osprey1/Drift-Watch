@@ -76,7 +76,10 @@ function ble(p, options = {}) {
   const statusText = reply => `reply=${reply};fw=0.15.3;time=1800000000;bat=${state.battery};face=${state.face};faces=${state.faces};bright=${state.bright};motion=${state.motion};format=${state.format};night=${state.night}`;
   const emit = text => { const bytes = new TextEncoder().encode(text); for (const fn of listeners.status || []) fn({ target: { value: new DataView(bytes.buffer) } }); };
   const status = { addEventListener: (_name, fn) => (listeners.status ||= []).push(fn),
-    startNotifications: async () => {}, readValue: async () => new TextEncoder().encode(statusText('ok')) };
+    startNotifications: async () => {}, readValue: async () => {
+      if (options.initialReadFails) throw new Error('Initial read unavailable in wrapper');
+      return new TextEncoder().encode(statusText('ok'));
+    } };
   const command = { async writeValueWithResponse(bytes) {
     let line;
     if (bytes[0] === 1 || bytes[0] === 2) { fragment += new TextDecoder().decode(bytes.subarray(1)); if (bytes[0] === 1) return; line = fragment; fragment = ''; }
@@ -89,7 +92,7 @@ function ble(p, options = {}) {
         const name = { B: 'bright', M: 'motion', FO: 'format', NM: 'night', F: 'face', H: 'faces' }[key];
         if (name) state[name] = Number(value);
       }
-      emit(statusText(reply));
+      emit(line === '?' && options.queryStatus !== undefined ? options.queryStatus : statusText(reply));
     };
     if (options.delay && line !== '?') delayed.push(respond); else queueMicrotask(respond);
   } };
@@ -263,4 +266,68 @@ test('rapid setting requests are serialized and every one reads back its own val
   assert.deepEqual(h.writes, ['?', 'B=0', '?', 'B=3', '?']);
   assert.equal(p.run('watchState.bright'), 3);
   await p.context.disconnectTransport();
+});
+
+test('BLE notification query succeeds when the optional initial read fails', async () => {
+  const p = page(), h = ble(p, { initialReadFails: true });
+  assert.equal(await p.context.connect(), true);
+  assert.deepEqual(h.writes, ['?']);
+  assert.equal(p.run('watchState.version'), '0.15.3');
+  assert.equal(p.run('transportReady'), true);
+  await p.ids.get('fmt12Btn').click();
+  assert.equal(h.state.format, 12);
+  await p.context.disconnectTransport();
+});
+
+test('BLE refuses empty or malformed queried status even after a valid initial read', async () => {
+  for (const queryStatus of ['', 'reply=ok', 'reply=ok;fw=starting;bat=oops;face=99']) {
+    const p = page(), h = ble(p, { queryStatus });
+    assert.equal(await p.context.connect(), false);
+    assert.equal(p.run('transportReady'), false);
+    assert.equal(h.connected, false);
+    assert.match(p.text('connMsg'), /acknowledge|empty or invalid status/);
+  }
+});
+
+test('BLE accepts valid available fields without requiring every firmware field', async () => {
+  const p = page(); ble(p, { initialReadFails: true, queryStatus: 'reply=ok;bat=0' });
+  assert.equal(await p.context.connect(), true);
+  assert.equal(p.run('watchState.battery'), 0);
+  assert.equal(p.run('watchState.version'), '');
+  assert.equal(p.ids.get('fmt12Btn').disabled, true);
+  assert.match(p.text('firmwareVersionReadout'), /Studio/);
+  await p.context.disconnectTransport();
+});
+
+test('timer acknowledgements must match the requested operation and duration', async () => {
+  const p = page();
+  assert.equal(p.context.serialReply('TIMER:0').test('Timer started for 60 s'), false);
+  assert.equal(p.context.serialReply('TIMER:60').test('Timer reset'), false);
+  assert.equal(p.context.serialReply('TIMER:60').test('Timer started for 180 s'), false);
+  assert.equal(p.context.serialReply('TIMER:60').test('Timer started for 60 s'), true);
+  assert.equal(p.context.serialReply('TIMER:0').test('Timer reset'), true);
+  assert.throws(() => p.context.serialReply('TIMER:garbage'), /integer/);
+});
+
+test('an unacknowledged timer quarantines the session and cancels the queued reset', async () => {
+  const p = page(), h = serial(p);
+  await p.context.connectSerial();
+  p.run('serialWriter = { write: async () => {} }');
+  const results = await Promise.allSettled([p.context.runTimer(60), p.context.runTimer(0)]);
+  assert.equal(results[0].status, 'rejected');
+  assert.match(results[0].reason.message, /result unknown.*Reconnect/);
+  assert.equal(results[1].status, 'rejected');
+  assert.equal(p.run('transportReady'), false);
+  assert.doesNotMatch(p.text('toolsMsg'), /reset acknowledged/);
+  await settle();
+  assert.equal(h.closed, 1);
+});
+
+test('a stalled transport write still reaches its deadline and leaves controls usable', async () => {
+  const p = page(); serial(p);
+  await p.context.connectSerial();
+  p.run('serialWriter = { write: () => new Promise(() => {}) }');
+  await assert.rejects(p.context.runTimer(60), /did not acknowledge/);
+  assert.equal(p.run('transportReady'), false);
+  assert.equal(p.ids.get('startTimerBtn').disabled, true);
 });

@@ -1,6 +1,7 @@
 // Strict numeric arguments shared by the serial and phone command parsers. Whitespace
 // around a value is allowed; a partial conversion must never become a command.
 #pragma once
+#include <algorithm>
 #include <ctype.h>
 #include <errno.h>
 #include <limits>
@@ -27,10 +28,9 @@ inline bool integer(const char *text, int base, int64_t low, int64_t high, int64
 // The hardware clock also exposes milliseconds as int64_t. Check that conversion before
 // passing a timestamp to it, and respect a narrower time_t on the embedded toolchain.
 inline int64_t maxTimeSeconds() {
-  constexpr int64_t millisecondsLimit = INT64_MAX / 1000 - 1;
-  return (std::numeric_limits<time_t>::max)() < millisecondsLimit
-             ? (int64_t)(std::numeric_limits<time_t>::max)()
-             : millisecondsLimit;
+  constexpr uint64_t millisecondsLimit = INT64_MAX / 1000 - 1;
+  const uint64_t clockLimit = (std::numeric_limits<time_t>::max)();
+  return (int64_t)(std::min)(clockLimit, millisecondsLimit);
 }
 
 // T= is decimal Unix seconds with an optional fractional part. Parse the fraction as

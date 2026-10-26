@@ -6,7 +6,8 @@
 
 - Settings-preserving application-update artifacts are separate from the existing complete factory/rescue image. Each build has a manifest describing the target, layout, offsets, image hashes and update preconditions. Factory/rescue flashing can erase settings; an application-only update preserves them only with the documented compatible layout and app slot.
 - Serial and phone numeric commands reject incomplete, malformed, overflowing and out-of-range arguments before changing state. Valid command aliases remain supported. The phone's long FORMAT= alias now reads the correct value.
-- The companion distinguishes Virtual Watch data from physical measurements, reports command failures, respects transport support, and redacts password-bearing commands from its console.
+- The companion distinguishes Virtual Watch data from physical measurements, reports command failures, respects transport support, and redacts password-bearing commands from its console. Timer acknowledgements must match the requested action/duration; an unacknowledged mutation ends the uncertain session. A stalled browser write still reaches its deadline.
+- BLE connection can use a notification query when the optional initial read fails. Empty/invalid status cannot be mistaken for a successful handshake. Mobile workspace tabs fit a 390 px viewport.
 - Packaging, command parsing and companion regressions join the automated checks. The roadmap and acceptance record are versioned with the source.
 
 ## Qualification record
@@ -15,11 +16,12 @@ Record actual results here before publishing a release. A passing host simulatio
 
 | Area | Status |
 |---|---|
-| Image packaging and manifest tests | Pending final integration run |
-| Companion regressions | Pending final integration run |
-| Headless command parsing | Pending execution; target syntax cross-compile checked separately |
-| Strict host and mutation suites | Pending CI |
-| Normal and diagnostic firmware builds | Pending CI |
+| Image packaging and manifest tests | 16 local tests passed |
+| Companion regressions | 19 local tests passed |
+| Real Chrome smoke | Desktop and 390 px mobile passed; no page errors or horizontal overflow |
+| Headless command parsing | Runs in strict CI; see [PR #28 checks](https://github.com/The-Osprey1/DriftWatch/pull/28/checks) |
+| Strict host and mutation suites | Required on each commit; see PR #28 checks |
+| Normal and diagnostic firmware builds | Required with no own-code warnings; see PR #28 checks |
 | Settings-preserving update on the watch | Not run |
 | Factory/rescue recovery on the watch | Not run |
 | Sleeping-watch USB/BLE connections | Not run for this candidate |

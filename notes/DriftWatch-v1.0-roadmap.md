@@ -6,6 +6,8 @@ Prepared 26 October 2026. Reviewed source: [f8b87542159acc050f3d205ec157a457769b
 
 This document is a proposed implementation and qualification plan. Targets are release requirements to validate, not measurements already achieved. Release numbers and effort ranges are planning estimates. No firmware was changed or flashed during this review.
 
+Implementation began in [PR #28](https://github.com/The-Osprey1/DriftWatch/pull/28) with the unreleased [v0.15.3 foundation](NOTES-v0.15.3.md): update packaging, strict command parsing and truthful companion controls. Hardware acceptance and the measured power/clock gates remain open. The baseline findings below refer to the reviewed source snapshot.
+
 ## 1. What v1.0 promises
 
 You can charge the watch, put it on, read the correct local time, use its tools, and finish a normal day without tending to the firmware. Connectivity failures remain background events. Settings survive supported updates. An unsuccessful update has a documented USB rescue path.

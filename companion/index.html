@@ -1164,6 +1164,16 @@
       flex-wrap: wrap;
       gap: 10px;
     }
+    .deck-tabs {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      width: 100%;
+      min-width: 0;
+    }
+    .deck-tab {
+      min-width: 0;
+      white-space: normal;
+    }
     .conn-grid,
     .tz-grid,
     .wifi-inputs-grid,
@@ -1497,7 +1507,7 @@ const STATUS = "8f1d0003-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const $ = (id) => document.getElementById(id);
 let device = null, command = null;
 let isSimulated = false;
-let transportReady = false, sessionId = 0, commandQueue = Promise.resolve(), controlQueue = Promise.resolve();
+let transportReady = false, sessionId = 0, commandQueue = Promise.resolve(), controlQueue = Promise.resolve(), statusRevision = 0;
 const watchState = { version: "", battery: null, bright: null, motion: null, format: null, night: null, face: null, faces: null, time: null, lastSeen: 0 };
 const STALE_MS = 30000;
 function physicalSession() { return isSerial || !!command; }
@@ -2827,26 +2837,34 @@ function parseWatchStatus(txt) {
   };
   const number = name => {
     const value = field(name);
-    return value !== null && /^-?\d+$/.test(value) ? Number(value) : null;
+    const n = value !== null && /^-?\d+$/.test(value) ? Number(value) : NaN;
+    return Number.isSafeInteger(n) ? n : null;
   };
+  let valid = false;
   const version = field("VER") || field("fw");
-  if (version) watchState.version = version;
-  if (!version && field("BAT") === null && field("face") === null) return;
+  if (version && /^\d+\.\d+(?:\.\d+)?(?:[-+][a-z0-9.-]+)?$/i.test(version)) {
+    watchState.version = version; valid = true;
+  }
   const rawMask = field("FACES");
   if (rawMask !== null && /^(?:0x[0-9a-f]+|\d+)$/i.test(rawMask)) {
     const mask = Number(rawMask);
-    if (mask > 0 && mask <= 0x0fff) { watchState.faces = mask; setFaceMask(mask); }
+    if (mask > 0 && mask <= 0x0fff) { watchState.faces = mask; setFaceMask(mask); valid = true; }
   }
   for (const [key, name, min, max] of [["bright", "BRIGHT", 0, 3], ["motion", "MOTION", 0, 2], ["night", "NIGHT", 0, 3], ["face", "FACE", 0, 11]]) {
     const n = number(name);
-    if (n !== null && n >= min && n <= max) watchState[key] = n;
+    if (n !== null && n >= min && n <= max) { watchState[key] = n; valid = true; }
   }
   const battery = number("BAT");
-  if (field("BAT") !== null) watchState.battery = battery !== null && battery >= 0 && battery <= 100 ? battery : null;
+  if (field("BAT") !== null) {
+    watchState.battery = battery !== null && battery >= 0 && battery <= 100 ? battery : null;
+    if (watchState.battery !== null || battery === -1) valid = true;
+  }
   const time = number("TIME");
-  if (time !== null && time >= 0) watchState.time = time;
+  if (time !== null && time >= 0) { watchState.time = time; valid = true; }
   const format = number("FORMAT");
-  if (format === 12 || format === 24) watchState.format = format;
+  if (format === 12 || format === 24) { watchState.format = format; valid = true; }
+  if (!valid) return false;
+  statusRevision++;
   watchState.lastSeen = Date.now();
   if (watchState.battery !== null) { teleHistory.bat.push(watchState.battery); if (teleHistory.bat.length > 40) teleHistory.bat.shift(); }
   if (watchState.face !== null) highlightWatchFace(watchState.face);
@@ -2857,6 +2875,7 @@ function parseWatchStatus(txt) {
   updateHardwareSpecLabels();
   $("firmwareVersionReadout").textContent = `Watch v${watchState.version || "unknown"} · Studio v0.15.3 candidate`;
   updateControlAvailability();
+  return true;
 }
 
 function receiveLine(line, owner = sessionId) {
@@ -2975,9 +2994,13 @@ async function serialHandshake(owner = sessionId) {
   while (Date.now() < until && isSerial && owner === sessionId) {
     await serialWriter.write(new TextEncoder().encode("\n"));
     await sleepMs(50);
-    try { await send("INFO?", owner); return owner === sessionId; } catch (err) {
+    const beforeQuery = statusRevision;
+    try { await send("INFO?", owner); } catch (err) {
       if (owner !== sessionId) return false;
+      continue;
     }
+    if (statusRevision === beforeQuery) throw new Error("The watch returned an empty or invalid status");
+    return owner === sessionId;
   }
   return false;
 }
@@ -3004,7 +3027,12 @@ function serialReply(line) {
   if (line.startsWith("TIME:")) return /^Time set to \d+/;
   if (line.startsWith("WIFI:")) return /^Configuring Wi-Fi for SSID:/;
   if (line.startsWith("FACES:") || line.startsWith("H=")) return /^Faces mask set to /;
-  if (line.startsWith("TIMER:")) return /^Timer (started for|reset)/;
+  if (line.startsWith("TIMER:")) {
+    const value = line.slice(6).trim(), seconds = Number(value);
+    if (!/^\+?\d+$/.test(value) || !Number.isInteger(seconds) || seconds < 0 || seconds > 86400)
+      throw new Error("Timer seconds must be an integer from 0 to 86400");
+    return seconds === 0 ? /^Timer reset$/ : new RegExp("^Timer started for " + seconds + " s$");
+  }
   if (line.startsWith("BRIGHT:")) return /^Brightness set to /;
   if (line.startsWith("MOTION:")) return /^Motion set to /;
   if (line.startsWith("FORMAT:")) return /^Format set to /;
@@ -3080,6 +3108,7 @@ async function sendCommand(line, owner) {
   const expected = isSerial ? serialReply(wire) : /^reply=/;
   const answer = waitForLine(expected, 1800);
   try {
+    const writing = (async () => {
     if (isSerial && serialWriter) {
       await serialWriter.write(new TextEncoder().encode(wire + "\n"));
     } else {
@@ -3098,9 +3127,20 @@ async function sendCommand(line, owner) {
         }
       }
     }
-    const reply = await answer;
+    })();
+    // A stalled browser write must not hide the acknowledgement deadline.
+    const reply = await Promise.race([answer, writing.then(() => answer)]);
     if (owner !== sessionId) throw new Error("Connection changed; command cancelled");
-    if (!reply) throw new Error("The watch did not acknowledge the command");
+    if (!reply) {
+      const query = wire === "INFO?" || wire === "?";
+      const message = "The watch did not acknowledge the command" +
+        (query ? "" : "; result unknown. Reconnect before sending another command.");
+      // Old protocols have no request IDs. End an uncertain mutating session so a
+      // delayed reply cannot confirm the next operation. Read-only handshake probes
+      // remain retryable while the watch is rebooting or waking from sleep.
+      if (!query) disconnectTransport(message).catch(() => {});
+      throw new Error(message);
+    }
     const failure = reply.match(/^reply=([^;]+)/);
     if (failure && failure[1] !== "ok") throw new Error("Watch refused command: " + failure[1]);
     return reply;
@@ -3247,11 +3287,15 @@ async function connect() {
     status.addEventListener("characteristicvaluechanged", e => receiveLine(new TextDecoder().decode(e.target.value), owner));
     await status.startNotifications();
     if (owner !== sessionId) return false;
-    const initial = await status.readValue();
+    // Some iOS Web Bluetooth wrappers fail this optional read even though
+    // notifications and acknowledged writes work. The fresh query is authoritative.
+    const initial = await status.readValue().catch(() => null);
     if (owner !== sessionId) return false;
-    receiveLine(new TextDecoder().decode(initial), owner);
+    if (initial) receiveLine(new TextDecoder().decode(initial), owner);
+    const beforeQuery = statusRevision;
     await send("?", owner);
     if (owner !== sessionId) return false;
+    if (statusRevision === beforeQuery) throw new Error("The watch returned an empty or invalid status");
     connected(true, "BLE · " + (selected.name || "Drift"));
     say("connMsg", "Connected via Bluetooth. Wi-Fi credentials use an unencrypted link; use USB-C for local cable provisioning.", "ok");
     return true;

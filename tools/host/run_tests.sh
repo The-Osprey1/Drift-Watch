@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds and runs every computer test: the face check, the interface simulation (with the
 # network scripted), the interface and network code together, the network code on its own,
-# and the motion sensor and screen-off power checks. Needs g++ and the TFT_eSPI 2.5.43 source
+# the motion sensor and screen-off power checks, and headless command parsing. Needs g++ and the TFT_eSPI 2.5.43 source
 # (for its fonts).
 # Usage: tools/host/run_tests.sh path/to/TFT_eSPI [output folder, default tools/host/out]
 # HOST_STRICT=1 treats warnings in our own code as errors and adds the address and undefined
@@ -38,6 +38,8 @@ $CXX -I tools/host/net -I tools/host -I DriftWatch tools/host/net_test.cpp tools
   DriftWatch/net.cpp DriftWatch/settings.cpp DriftWatch/timekeep.cpp DriftWatch/orient.cpp -o "$BIN/net_test"
 # The motion sensor's register sequences and the screen-off power controller.
 $CXX -I tools/host -I DriftWatch tools/host/power_test.cpp DriftWatch/power.cpp DriftWatch/qmi8658.cpp -o "$BIN/power_test"
+# Real command parsers, with only time/settings side effects replaced by test doubles.
+$CXX -I tools/host -I DriftWatch tools/host/command_test.cpp DriftWatch/serial_cmd.cpp DriftWatch/phone.cpp -o "$BIN/command_test"
 
 status=0
 run() {  # name, command...: runs one test, keeps its whole output in the output folder
@@ -52,4 +54,5 @@ run interface        "$BIN/simulate" "$OUT"
 run interface_network "$BIN/simulate_network" "$OUT"
 run network          "$BIN/net_test"
 run power            "$BIN/power_test"
+run commands         "$BIN/command_test"
 exit $status

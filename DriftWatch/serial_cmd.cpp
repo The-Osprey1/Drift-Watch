@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "face_id.h"
+#include "numeric_input.h"
 
 namespace serialcmd {
 
@@ -31,13 +32,8 @@ Command parse(const char *line) {
   while (len && isspace((unsigned char)line[len - 1])) len--;
 
   if (len > 5 && strncmp(line, "TIME:", 5) == 0) {
-    char digits[24];
-    size_t n = len - 5;
-    if (n >= sizeof digits) return cmd;
-    memcpy(digits, line + 5, n);
-    digits[n] = '\0';
-    long t = atol(digits);
-    if (t > 100000) {
+    int64_t t;
+    if (numericinput::integer(line + 5, 10, 100001, numericinput::maxTimeSeconds(), t)) {
       cmd.kind = Kind::Time;
       cmd.time = (time_t)t;
     }
@@ -52,46 +48,46 @@ Command parse(const char *line) {
     cmd.kind = Kind::Wifi;
   } else if ((len > 6 && strncmp(line, "FACES:", 6) == 0) || (len > 2 && strncmp(line, "H=", 2) == 0)) {
     const char *arg = (line[0] == 'F') ? line + 6 : line + 2;
-    long m = strtol(arg, nullptr, 0);
-    if (m > 0 && m <= 0xFFFF) {
+    int64_t m;
+    if (numericinput::integer(arg, 0, 1, 0xFFFF, m)) {
       cmd.kind = Kind::Faces;
       cmd.facesMask = (uint16_t)m;
     }
-  } else if (strcmp(line, "INFO?") == 0 || strcmp(line, "?") == 0) {
+  } else if ((len == 5 && strncmp(line, "INFO?", len) == 0) || (len == 1 && line[0] == '?')) {
     cmd.kind = Kind::Info;
   } else if (len > 6 && strncmp(line, "TIMER:", 6) == 0) {
-    long sec = strtol(line + 6, nullptr, 10);
-    if (sec >= 0 && sec <= 86400) {
+    int64_t sec;
+    if (numericinput::integer(line + 6, 10, 0, 86400, sec)) {
       cmd.kind = Kind::Timer;
       cmd.value = (int)sec;
     }
   } else if (len > 7 && strncmp(line, "BRIGHT:", 7) == 0) {
-    long lvl = strtol(line + 7, nullptr, 10);
-    if (lvl >= 0 && lvl <= 3) {
+    int64_t lvl;
+    if (numericinput::integer(line + 7, 10, 0, 3, lvl)) {
       cmd.kind = Kind::Bright;
       cmd.value = (int)lvl;
     }
   } else if (len > 7 && strncmp(line, "MOTION:", 7) == 0) {
-    long m = strtol(line + 7, nullptr, 10);
-    if (m >= 0 && m <= 2) {
+    int64_t m;
+    if (numericinput::integer(line + 7, 10, 0, 2, m)) {
       cmd.kind = Kind::Motion;
       cmd.value = (int)m;
     }
   } else if (len > 7 && strncmp(line, "FORMAT:", 7) == 0) {
-    long f = strtol(line + 7, nullptr, 10);
-    if (f == 12 || f == 24) {
+    int64_t f;
+    if (numericinput::integer(line + 7, 10, 12, 24, f) && (f == 12 || f == 24)) {
       cmd.kind = Kind::Format;
       cmd.value = (int)f;
     }
   } else if (len > 6 && strncmp(line, "NIGHT:", 6) == 0) {
-    long n = strtol(line + 6, nullptr, 10);
-    if (n >= 0 && n <= 3) {
+    int64_t n;
+    if (numericinput::integer(line + 6, 10, 0, 3, n)) {
       cmd.kind = Kind::Night;
       cmd.value = (int)n;
     }
   } else if (len > 5 && strncmp(line, "FACE:", 5) == 0) {
-    long f = strtol(line + 5, nullptr, 10);
-    if (f >= 0 && f < FACE_COUNT) {
+    int64_t f;
+    if (numericinput::integer(line + 5, 10, 0, FACE_COUNT - 1, f)) {
       cmd.kind = Kind::Face;
       cmd.value = (int)f;
     }

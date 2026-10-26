@@ -1208,18 +1208,18 @@
     <!-- Left Sticky Column: Buttonless Touch Watch Showcase -->
     <aside class="watch-stage-panel" aria-label="Interactive 240x240 watch simulator">
       <div class="stage-header">
-        <h2 class="stage-title">240×240 OLED Touch</h2>
-        <span class="stage-meta" id="stageFpsLabel">Touch Ready · 60 Hz</span>
+        <h2 class="stage-title">240×240 LCD Touch</h2>
+        <span class="stage-meta" id="stageFpsLabel">Preview · sample data</span>
       </div>
 
       <div class="gesture-hint-bar" id="gestureHintBar">
-        Swipe down: Quick Drawer · Swipe up: Settings
+        Preview gestures: down for Quick Drawer · up for Settings
       </div>
 
       <div class="watch-housing-wrap">
         <div class="watch-bezel" id="watchBezel">
           <div class="watch-inner-ring">
-            <canvas id="watchCanvas" width="480" height="480" aria-label="Interactive 240x240 Drift-Watch OLED display"></canvas>
+            <canvas id="watchCanvas" width="480" height="480" aria-label="Interactive Drift-Watch preview with sample data"></canvas>
           </div>
         </div>
       </div>
@@ -1392,7 +1392,8 @@
         <!-- TAB 3: QUICK TOOLS -->
         <section id="complicationsSection" data-deck-group="complications" data-deck-hidden="true">
           <h2><span>Quick Tools</span> <span class="face-count-badge" id="compStatusBadge">Ready</span></h2>
-          <p class="note">Swipe down on the watch face to open Quick Tools: Countdown Timers (1m, 3m, 5m) and Flashlight.</p>
+          <p class="note">The circular stage is a preview, not a live screen. Timer commands work over USB-C on supported firmware; Flashlight and screen rotation are preview-only.</p>
+          <p id="toolsMsg" class="msg" role="status" aria-live="polite"></p>
 
           <div class="complications-grid" style="grid-template-columns: 1fr 1fr;">
             <div class="comp-panel">
@@ -1427,20 +1428,20 @@
 
         <!-- TAB 4: TELEMETRY & SERIAL CONSOLE -->
         <section id="telemetrySection" data-deck-group="telemetry" data-deck-hidden="true">
-          <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge">v0.15.2</span></h2>
+          <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge" id="firmwareVersionReadout">Studio v0.15.3 candidate</span></h2>
 
           <div class="charts-grid">
             <div class="chart-card">
               <div class="chart-header">
                 <span class="chart-title">Battery Curve</span>
-                <span class="chart-val" id="chartBatVal">86% · 4082 mV</span>
+                <span class="chart-val" id="chartBatVal">Not connected</span>
               </div>
               <canvas id="batChartCanvas" class="telemetry-canvas" width="380" height="104"></canvas>
             </div>
             <div class="chart-card">
               <div class="chart-header">
                 <span class="chart-title">IMU Temp &amp; Drift</span>
-                <span class="chart-val" id="chartTempVal">28.4 °C · -142 ppb</span>
+                <span class="chart-val" id="chartTempVal">Not connected</span>
               </div>
               <canvas id="tempChartCanvas" class="telemetry-canvas" width="380" height="104"></canvas>
             </div>
@@ -1470,16 +1471,16 @@
             <div class="firmware-links">
               <a href="https://github.com/The-Osprey1/DriftWatch/releases/latest" target="_blank" rel="noopener">GitHub Releases (Latest .bin)</a>
               <span>·</span>
-              <a href="/firmware/drift_watch_v0.15.0.bin" download>drift_watch_v0.15.0.bin</a>
+              <a href="https://github.com/The-Osprey1/DriftWatch/releases/tag/v0.15.1" target="_blank" rel="noopener">v0.15.1 release &amp; recovery images</a>
             </div>
           </div>
 
           <div class="firmware-row" style="margin-top: 8px; padding-top: 8px;">
-            <span>GitHub <code>v0.15.2</code> Export:</span>
+            <span>Project source:</span>
             <div class="firmware-links">
-              <a href="/v0.15.2.patch" download="v0.15.2.patch">v0.15.2.patch</a>
+              <a href="https://github.com/The-Osprey1/DriftWatch" target="_blank" rel="noopener">Repository</a>
               <span>·</span>
-              <a href="/index.html" download="index.html">companion/index.html</a>
+              <a href="https://github.com/The-Osprey1/DriftWatch/blob/main/companion/index.html" target="_blank" rel="noopener">Companion source</a>
             </div>
           </div>
         </section>
@@ -1496,6 +1497,20 @@ const STATUS = "8f1d0003-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const $ = (id) => document.getElementById(id);
 let device = null, command = null;
 let isSimulated = false;
+let transportReady = false, sessionId = 0, commandQueue = Promise.resolve(), controlQueue = Promise.resolve();
+const watchState = { version: "", battery: null, bright: null, motion: null, format: null, night: null, face: null, faces: null, time: null, lastSeen: 0 };
+const STALE_MS = 30000;
+function physicalSession() { return isSerial || !!command; }
+function resetWatchState() {
+  Object.keys(watchState).forEach(k => { watchState[k] = k === "version" ? "" : k === "lastSeen" ? 0 : null; });
+  teleHistory.bat = []; teleHistory.temp = [];
+}
+function errorText(err) { return (err && (err.message || err.name)) || String(err || "No reason supplied"); }
+function reportControlError(err) { say("toolsMsg", errorText(err), "err"); logCli("ERR", errorText(err)); }
+function redactCommand(line) {
+  return String(line).replace(/(^|[\r\n])P=[^\r\n]*/g, "$1P=[redacted]")
+    .replace(/(^|[\r\n])(WIFI:[^,\r\n]*,)[^\r\n]*/g, "$1$2[redacted]");
+}
 
 // All 12 Drift-Watch faces with concise, unclipped descriptions
 const FACES = [
@@ -2405,8 +2420,8 @@ function renderSettingsHub(ctx) {
     },
     {
       title: "System Info",
-      item1: { label: "Battery", val: `${simBatteryPct}% · ${simBatteryMv} mV` },
-      item2: { label: "QMI8658 IMU", val: `${simTempC.toFixed(1)}°C · ${simDriftPpb} ppb` }
+      item1: { label: "Battery", val: physicalSession() ? "See measured status below" : `${simBatteryPct}% · demo` },
+      item2: { label: "QMI8658 IMU", val: physicalSession() ? "Not reported by firmware" : `${simTempC.toFixed(1)}°C · demo` }
     }
   ];
   const hub = hubs[previewSettingsHub % hubs.length];
@@ -2520,7 +2535,7 @@ function renderBootIgnition(ctx, t) {
     ctx.fillStyle = "#98989d";
     ctx.font = "500 11px 'IBM Plex Mono', monospace";
     ctx.textAlign = "center";
-    ctx.fillText("Drift Watch · v0.15.2", cx, cy + 40);
+    ctx.fillText("Drift Watch · preview", cx, cy + 40);
   }
 }
 
@@ -2806,49 +2821,78 @@ function highlightWatchFace(faceIdx) {
 }
 
 function parseWatchStatus(txt) {
-  const mHex = txt.match(/FACES=0x([0-9a-f]+)/i);
-  const mFaces = txt.match(/faces=(\d+)(?!x)/i);
-  if (mHex) setFaceMask(parseInt(mHex[1], 16));
-  else if (mFaces) setFaceMask(parseInt(mFaces[1], 10));
-
-  const mFace = txt.match(/face=(\d+)/i);
-  if (mFace) highlightWatchFace(parseInt(mFace[1], 10));
-
-  const mBat = txt.match(/bat=(\d+)/i);
-  if (mBat) {
-    simBatteryPct = Math.max(0, Math.min(100, parseInt(mBat[1], 10)));
+  const field = name => {
+    const m = txt.match(new RegExp("(?:^|[;,]|DRIFT:)" + name + "=([^;,]*)", "i"));
+    return m ? m[1] : null;
+  };
+  const number = name => {
+    const value = field(name);
+    return value !== null && /^-?\d+$/.test(value) ? Number(value) : null;
+  };
+  const version = field("VER") || field("fw");
+  if (version) watchState.version = version;
+  if (!version && field("BAT") === null && field("face") === null) return;
+  const rawMask = field("FACES");
+  if (rawMask !== null && /^(?:0x[0-9a-f]+|\d+)$/i.test(rawMask)) {
+    const mask = Number(rawMask);
+    if (mask > 0 && mask <= 0x0fff) { watchState.faces = mask; setFaceMask(mask); }
   }
-
-  const mBright = txt.match(/bright=(\d+)/i);
-  if (mBright) {
-    const b = parseInt(mBright[1], 10);
-    if (!isNaN(b) && b >= 0 && b <= 3) setHardwareBrightness(b, false);
+  for (const [key, name, min, max] of [["bright", "BRIGHT", 0, 3], ["motion", "MOTION", 0, 2], ["night", "NIGHT", 0, 3], ["face", "FACE", 0, 11]]) {
+    const n = number(name);
+    if (n !== null && n >= min && n <= max) watchState[key] = n;
   }
+  const battery = number("BAT");
+  if (field("BAT") !== null) watchState.battery = battery !== null && battery >= 0 && battery <= 100 ? battery : null;
+  const time = number("TIME");
+  if (time !== null && time >= 0) watchState.time = time;
+  const format = number("FORMAT");
+  if (format === 12 || format === 24) watchState.format = format;
+  watchState.lastSeen = Date.now();
+  if (watchState.battery !== null) { teleHistory.bat.push(watchState.battery); if (teleHistory.bat.length > 40) teleHistory.bat.shift(); }
+  if (watchState.face !== null) highlightWatchFace(watchState.face);
+  if (watchState.bright !== null) setHardwareBrightness(watchState.bright, false);
+  if (watchState.motion !== null) setMotionMode(["off", "subtle", "expressive"][watchState.motion], false);
+  if (watchState.format !== null) hwUse12h = watchState.format === 12;
+  if (watchState.night !== null) hwNightMode = watchState.night;
+  updateHardwareSpecLabels();
+  $("firmwareVersionReadout").textContent = `Watch v${watchState.version || "unknown"} · Studio v0.15.3 candidate`;
+  updateControlAvailability();
+}
 
-  const mMotion = txt.match(/motion=(\d+)/i);
-  if (mMotion) {
-    const m = parseInt(mMotion[1], 10);
-    const modes = ["off", "subtle", "expressive"];
-    if (modes[m]) setMotionMode(modes[m], false);
-  }
+function receiveLine(line, owner = sessionId) {
+  if (owner !== sessionId) return;
+  if (!line.trim()) return;
+  logCli("RX", line);
+  if (/^(DRIFT:|reply=|fw=)/.test(line)) $("status").textContent = redactCommand(line);
+  parseWatchStatus(line);
+  serialWaiters = serialWaiters.filter(w => {
+    if (!w.re.test(line)) return true;
+    clearTimeout(w.timer); w.resolve(line); return false;
+  });
+}
 
-  const mFmt = txt.match(/format=(\d+)/i);
-  if (mFmt) {
-    const f = parseInt(mFmt[1], 10);
-    if (f === 12 || f === 24) {
-      hwUse12h = (f === 12);
-      updateHardwareSpecLabels();
-    }
+function updateTelemetry() {
+  if (isSimulated) {
+    simTempC = 28.2 + Math.sin(Date.now() / 9000) * 0.35;
+    simBatteryMv = Math.round(3500 + (simBatteryPct / 100) * 680);
+    teleHistory.bat.push(simBatteryPct); teleHistory.temp.push(simTempC);
+    if (teleHistory.bat.length > 40) teleHistory.bat.shift();
+    if (teleHistory.temp.length > 40) teleHistory.temp.shift();
+    $("chartBatVal").textContent = `Demo: ${simBatteryPct}% · ${simBatteryMv} mV`;
+    $("chartTempVal").textContent = `Demo: ${simTempC.toFixed(1)} °C · ${simDriftPpb} ppb`;
+    $("specTempLabel").textContent = `Demo: ${simTempC.toFixed(1)} °C`;
+    $("simBatLabel").textContent = `Demo: ${simBatteryPct}%`;
+  } else {
+    const stale = watchState.lastSeen && (!transportReady || Date.now() - watchState.lastSeen > STALE_MS);
+    const battery = watchState.battery === null ? "Battery unavailable" : `${watchState.battery}% · voltage unavailable`;
+    $("chartBatVal").textContent = watchState.lastSeen ? `${stale ? "Stale: " : "Last read: "}${battery}` : "Not connected / awaiting status";
+    $("chartTempVal").textContent = "Temperature / drift not reported by firmware";
+    $("specTempLabel").textContent = "Temperature unavailable";
+    $("simBatLabel").textContent = watchState.battery === null ? "Battery unavailable" : `${watchState.battery}%${stale ? " · stale" : " · last read"}`;
   }
-
-  const mNight = txt.match(/night=(\d+)/i);
-  if (mNight) {
-    const n = parseInt(mNight[1], 10);
-    if (n >= 0 && n <= 3) {
-      hwNightMode = n;
-      updateHardwareSpecLabels();
-    }
-  }
+  const color = FACES[previewFaceIdx].color;
+  drawTelemetryChart("batChartCanvas", teleHistory.bat, color, 0, 100);
+  drawTelemetryChart("tempChartCanvas", isSimulated ? teleHistory.temp : [], "#ff9f0a", 25, 32);
 }
 
 function posixZone(now = new Date()) {
@@ -2899,7 +2943,7 @@ function logCli(dir, text) {
   const row = document.createElement("div");
   const ts = new Date().toLocaleTimeString();
   row.style.color = dir === "TX" ? "var(--theme-primary)" : "var(--text2)";
-  row.textContent = `[${ts}] ${dir}: ${text}`;
+  row.textContent = `[${ts}] ${dir}: ${redactCommand(text)}`;
   box.appendChild(row);
   while (box.children.length > 30) box.removeChild(box.firstChild);
   box.scrollTop = box.scrollHeight;
@@ -2911,13 +2955,13 @@ async function writeRaw(bytes) {
 }
 
 let serialPort = null, serialWriter = null, serialReader = null, isSerial = false;
-let serialWaiters = [];
+let serialWaiters = [], serialPipe = null;
 
 function waitForLine(re, ms) {
   return new Promise(resolve => {
     const w = { re, resolve };
     serialWaiters.push(w);
-    setTimeout(() => {
+    w.timer = setTimeout(() => {
       serialWaiters = serialWaiters.filter(x => x !== w);
       resolve(null);
     }, ms);
@@ -2926,22 +2970,57 @@ function waitForLine(re, ms) {
 
 const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 
-async function serialHandshake() {
+async function serialHandshake(owner = sessionId) {
   const until = Date.now() + 5000;
-  while (Date.now() < until && isSerial) {
-    const answer = waitForLine(/DRIFT:VER=/, 350);
+  while (Date.now() < until && isSerial && owner === sessionId) {
     await serialWriter.write(new TextEncoder().encode("\n"));
     await sleepMs(50);
-    await send("INFO?");
-    if (await answer) return true;
+    try { await send("INFO?", owner); return owner === sessionId; } catch (err) {
+      if (owner !== sessionId) return false;
+    }
   }
   return false;
 }
 
-async function send(line) {
-  logCli("TX", line);
+async function send(line, owner = sessionId) {
+  const task = commandQueue.then(() => {
+    if (owner !== sessionId) throw new Error("Connection changed; command cancelled");
+    return sendCommand(line, owner);
+  });
+  commandQueue = task.catch(() => {});
+  return task;
+}
+
+function bleCommand(line) {
+  if (line === "INFO?") return "?";
+  const aliases = [["TIME:", "T="], ["FACES:", "H="], ["BRIGHT:", "B="], ["MOTION:", "M="], ["FORMAT:", "FO="], ["NIGHT:", "NM="], ["FACE:", "F="]];
+  for (const [from, to] of aliases) if (line.startsWith(from)) return to + line.slice(from.length);
+  if (/^(T|N|Z|S|P|H|B|M|F|FO|NM)=/.test(line) || line === "J" || line === "?") return line;
+  throw new Error("This command is not supported over Bluetooth; use USB-C where available");
+}
+
+function serialReply(line) {
+  if (line === "INFO?" || line === "?") return /^DRIFT:VER=/;
+  if (line.startsWith("TIME:")) return /^Time set to \d+/;
+  if (line.startsWith("WIFI:")) return /^Configuring Wi-Fi for SSID:/;
+  if (line.startsWith("FACES:") || line.startsWith("H=")) return /^Faces mask set to /;
+  if (line.startsWith("TIMER:")) return /^Timer (started for|reset)/;
+  if (line.startsWith("BRIGHT:")) return /^Brightness set to /;
+  if (line.startsWith("MOTION:")) return /^Motion set to /;
+  if (line.startsWith("FORMAT:")) return /^Format set to /;
+  if (line.startsWith("NIGHT:")) return /^Night mode set to /;
+  if (line.startsWith("FACE:")) return /^Active face set to /;
+  throw new Error("This command is not supported over USB-C");
+}
+
+async function sendCommand(line, owner) {
+  if (/[\r\n]/.test(line)) throw new Error("Send one command at a time");
+  if (!isSimulated && !isSerial && !command) throw new Error("Connect a watch or start Virtual Watch first");
+  const wire = isSimulated || isSerial ? line : bleCommand(line);
+  logCli("TX", wire);
   if (isSimulated) {
     await sleepMs(45);
+    if (owner !== sessionId) throw new Error("Connection changed; command cancelled");
     let reply = "";
     if (line.startsWith("H=") || line.startsWith("FACES:")) {
       const raw = line.startsWith("H=") ? line.slice(2) : line.slice(6);
@@ -2990,127 +3069,129 @@ async function send(line) {
     } else if (line.startsWith("WIFI:") || line === "J") {
       reply = `DRIFT:WIFI=JOINED,NTP=SYNC_OK,BAT=${simBatteryPct}%`;
     } else {
-      reply = `OK (${line})`;
+      reply = "OK (Virtual Watch demo)";
     }
     if (reply) {
-      $("status").textContent = reply;
-      logCli("RX", reply);
+      $("status").textContent = "Virtual Watch demo | " + reply;
+      logCli("RX", "Virtual Watch demo | " + reply);
     }
     return;
   }
-  if (isSerial && serialWriter) {
-    const data = new TextEncoder().encode(line + "\n");
-    await serialWriter.write(data);
-    return;
-  }
-  if (!command) throw new Error("Not connected");
-  const data = new TextEncoder().encode(line);
-  if (data.byteLength <= 20) {
-    await writeRaw(data);
-    return;
-  }
+  const expected = isSerial ? serialReply(wire) : /^reply=/;
+  const answer = waitForLine(expected, 1800);
   try {
-    await writeRaw(data);
-  } catch (err) {
-    for (let i = 0; i < data.byteLength; i += 19) {
-      const slice = data.subarray(i, Math.min(i + 19, data.byteLength));
-      const pkt = new Uint8Array(slice.byteLength + 1);
-      pkt[0] = i + 19 < data.byteLength ? 0x01 : 0x02;
-      pkt.set(slice, 1);
-      await writeRaw(pkt);
+    if (isSerial && serialWriter) {
+      await serialWriter.write(new TextEncoder().encode(wire + "\n"));
+    } else {
+      const data = new TextEncoder().encode(wire);
+      if (data.byteLength <= 20) await writeRaw(data);
+      else {
+        try { await writeRaw(data); }
+        catch (err) {
+          for (let i = 0; i < data.byteLength; i += 19) {
+            if (owner !== sessionId) throw new Error("Connection changed; command cancelled");
+            const slice = data.subarray(i, Math.min(i + 19, data.byteLength));
+            const pkt = new Uint8Array(slice.byteLength + 1);
+            pkt[0] = i + 19 < data.byteLength ? 0x01 : 0x02; pkt.set(slice, 1);
+            await writeRaw(pkt);
+          }
+        }
+      }
     }
+    const reply = await answer;
+    if (owner !== sessionId) throw new Error("Connection changed; command cancelled");
+    if (!reply) throw new Error("The watch did not acknowledge the command");
+    const failure = reply.match(/^reply=([^;]+)/);
+    if (failure && failure[1] !== "ok") throw new Error("Watch refused command: " + failure[1]);
+    return reply;
+  } catch (err) {
+    // Release this operation's waiter before another queued command can start.
+    serialWaiters = serialWaiters.filter(w => {
+      if (w.re !== expected) return true;
+      clearTimeout(w.timer); w.resolve(null); return false;
+    });
+    throw err;
   }
 }
 
+async function disconnectTransport(why = "") {
+  const owner = ++sessionId;
+  const oldDevice = device, oldPort = serialPort, oldReader = serialReader, oldWriter = serialWriter, oldPipe = serialPipe;
+  device = command = serialPort = serialReader = serialWriter = serialPipe = null;
+  isSerial = isSimulated = transportReady = false;
+  serialWaiters.forEach(w => { clearTimeout(w.timer); w.resolve(null); }); serialWaiters = [];
+  commandQueue = controlQueue = Promise.resolve();
+  drawerTimerEndMs = 0; drawerFlashlight = false;
+  if (oldDevice && oldDevice.gatt && oldDevice.gatt.connected) oldDevice.gatt.disconnect();
+  connected(false);
+  $("connectSim").classList.remove("active"); $("connectSim").textContent = "Virtual Watch";
+  $("connectUsb").textContent = "USB-C Cable";
+  updateTelemetry();
+  try { if (oldReader) await oldReader.cancel(); } catch (err) {}
+  try { if (oldWriter) oldWriter.releaseLock(); } catch (err) {}
+  try { if (oldPipe) await oldPipe; } catch (err) {}
+  try { if (oldPort) await oldPort.close(); } catch (err) {}
+  if (why && owner === sessionId) say("connMsg", why, "err");
+  return owner;
+}
+
 async function connectSerial(portArg = null) {
-  isSimulated = false;
-  $("connectSim").classList.remove("active");
+  // Calling requestPort before an await preserves the browser's user gesture.
+  let chosen;
+  try { chosen = Promise.resolve(portArg || navigator.serial.requestPort({ filters: [{ usbVendorId: 0x1a86, usbProductId: 0x55d3 }] })); }
+  catch (err) { say("connMsg", errorText(err), "err"); return false; }
+  chosen.catch(() => {});
+  const owner = await disconnectTransport();
+  let port;
   say("connMsg", "Connecting to watch over USB-C...");
   try {
-    let port = portArg;
-    if (!port) {
-      if (navigator.serial.getPorts) {
-        const ports = await navigator.serial.getPorts().catch(() => []);
-        if (ports.length > 0) port = ports[0];
-      }
-      if (!port) {
-        port = await navigator.serial.requestPort({
-          filters: [{ usbVendorId: 0x1a86, usbProductId: 0x55d3 }]
-        });
-      }
-    }
-    if (isSerial && serialPort === port) return true;
+    port = await chosen;
+    if (owner !== sessionId) return false;
+    await port.open({ baudRate: 115200, bufferSize: 1024 });
+    if (owner !== sessionId) { await port.close(); return false; }
     serialPort = port;
-    await serialPort.open({ baudRate: 115200, bufferSize: 1024 });
-    try { await serialPort.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
-    serialWriter = serialPort.writable.getWriter();
-    isSerial = true;
-    readSerialLoop();
+    try { await port.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (err) {}
+    if (owner !== sessionId) return false;
+    serialWriter = port.writable.getWriter(); isSerial = true;
+    resetWatchState(); readSerialLoop(port, owner);
     say("connMsg", "Waiting for the watch to answer over USB-C...");
-    if (!(await serialHandshake())) {
-      await closeSerial("The watch did not answer over USB-C within 5 s. Is another program using the port?");
-      return false;
-    }
-    connected(true, "USB-C Serial");
-    $("connect").textContent = "Bluetooth";
-    $("connectUsb").textContent = "Connected (USB-C)";
-    say("connMsg", "Connected via USB-C (115200 baud).", "ok");
+    if (!(await serialHandshake(owner))) throw new Error("The watch did not answer during the USB-C handshake");
+    if (owner !== sessionId) return false;
+    connected(true, "USB-C Serial"); $("connectUsb").textContent = "Connected (USB-C)";
+    say("connMsg", "Connected via USB-C. Status is the last confirmed reading.", "ok");
     return true;
   } catch (err) {
-    await closeSerial("USB-C connect error: " + err.message);
+    if (owner === sessionId) await disconnectTransport("USB-C connect error: " + errorText(err));
     return false;
   }
 }
 
-async function closeSerial(why) {
-  const port = serialPort;
-  isSerial = false;
-  serialPort = null;
-  serialWaiters.forEach(w => w.resolve(null));
-  serialWaiters = [];
-  try { if (serialReader) await serialReader.cancel(); } catch (e) {}
-  try { if (serialWriter) serialWriter.releaseLock(); } catch (e) {}
-  serialReader = serialWriter = null;
-  try { if (port) await port.close(); } catch (e) {}
-  connected(false);
-  $("connectUsb").textContent = "USB-C Cable";
-  if (why) say("connMsg", why, "err");
-}
+async function closeSerial(why) { return disconnectTransport(why); }
 
-async function readSerialLoop() {
-  const textDecoder = new TextDecoderStream();
-  serialPort.readable.pipeTo(textDecoder.writable).catch(() => {});
-  const reader = textDecoder.readable.getReader();
-  serialReader = reader;
+async function readSerialLoop(port, owner) {
+  const decoder = new TextDecoderStream();
+  serialPipe = port.readable.pipeTo(decoder.writable).catch(() => {});
+  const reader = decoder.readable.getReader(); serialReader = reader;
   try {
     let buf = "";
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
+    while (owner === sessionId) {
+      const { value, done } = await reader.read(); if (done) break;
       buf += value;
-      let lines = buf.split(/\r?\n/);
-      buf = lines.pop();
-      for (const line of lines) {
-        if (line.trim()) {
-          logCli("RX", line);
-          serialWaiters = serialWaiters.filter(w => {
-            if (!w.re.test(line)) return true;
-            w.resolve(line);
-            return false;
-          });
-          if (/^DRIFT:/.test(line)) $("status").textContent = line;
-          parseWatchStatus(line);
-        }
-      }
+      const lines = buf.split(/\r?\n/); buf = lines.pop();
+      if (buf.length > 4096) throw new Error("Serial reply exceeded 4096 characters");
+      for (const line of lines) receiveLine(line, owner);
     }
-  } catch (err) {
-    // Port closed
-  } finally {
+  } catch (err) { if (owner === sessionId) say("connMsg", "Serial read error: " + errorText(err), "err"); }
+  finally {
     reader.releaseLock();
+    if (owner === sessionId) { serialReader = null; await disconnectTransport("USB-C connection ended."); }
   }
 }
 
 function connected(on, modeLabel = "Disconnected") {
+  transportReady = on;
+  $("firmwareVersionReadout").textContent = isSimulated ? "Virtual Watch · Studio v0.15.3 candidate" :
+    (watchState.version ? `Watch v${watchState.version}${on ? "" : " (last seen)"} · ` : "") + "Studio v0.15.3 candidate";
   $("sync").disabled = !on;
   $("wifi").disabled = !on;
   $("saveFaces").disabled = !on;
@@ -3128,91 +3209,83 @@ function connected(on, modeLabel = "Disconnected") {
     $("status").textContent = "Not connected.";
     highlightWatchFace(-1);
   }
+  updateControlAvailability();
 }
 
-function toggleSimulatedWatch() {
-  if (isSimulated) {
-    isSimulated = false;
-    $("connectSim").classList.remove("active");
-    $("connectSim").textContent = "Virtual Watch";
-    connected(false);
-    say("connMsg", "Virtual watch disconnected.", "");
-    return;
-  }
-  isSimulated = true;
-  $("connectSim").classList.add("active");
-  $("connectSim").textContent = "Virtual Watch (Active)";
-  connected(true, "Virtual Watch");
-  const initStatus = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x0FFF,FACE=${previewFaceIdx},BRIGHT=${hwBrightness},MOTION=1,FORMAT=${hwUse12h ? 12 : 24},NIGHT=${hwNightMode}`;
-  $("status").textContent = initStatus;
-  logCli("RX", initStatus);
-  parseWatchStatus(initStatus);
-  say("connMsg", "Virtual Watch active — test syncing time, faces, Quick Actions timers, and Wi-Fi right in this browser.", "ok");
+async function toggleSimulatedWatch() {
+  const wasSimulated = isSimulated;
+  const owner = await disconnectTransport();
+  if (owner !== sessionId || wasSimulated) return;
+  resetWatchState(); isSimulated = true;
+  $("connectSim").classList.add("active"); $("connectSim").textContent = "Virtual Watch (Active)";
+  connected(true, "Virtual Watch · demo");
+  say("connMsg", "Virtual Watch uses sample data. No commands are sent to hardware.", "ok");
+  updateTelemetry();
 }
 
 async function connect() {
-  isSimulated = false;
-  $("connectSim").classList.remove("active");
-  $("connectSim").textContent = "Virtual Watch";
+  let chosen;
+  try { chosen = navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] }); }
+  catch (err) { say("connMsg", errorText(err), "err"); return false; }
+  chosen.catch(() => {});
+  const owner = await disconnectTransport();
   say("connMsg", "Connecting to the watch...");
   try {
-    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
-    device.addEventListener("gattserverdisconnected", () => {
-      command = null;
-      connected(false);
-      say("connMsg", "The watch disconnected. Open Phone sync on the watch again if you need to.", "err");
+    const selected = await chosen;
+    if (owner !== sessionId) return false;
+    device = selected;
+    selected.addEventListener("gattserverdisconnected", () => {
+      if (owner === sessionId && device === selected) disconnectTransport("The watch disconnected. Open Phone sync to reconnect.");
     });
-    const server = await device.gatt.connect();
+    const server = await selected.gatt.connect();
+    if (owner !== sessionId) { selected.gatt.disconnect(); return false; }
     const service = await server.getPrimaryService(SERVICE);
-    command = await service.getCharacteristic(COMMAND);
+    const characteristic = await service.getCharacteristic(COMMAND);
     const status = await service.getCharacteristic(STATUS);
-    status.addEventListener("characteristicvaluechanged", (e) => {
-      const txt = new TextDecoder().decode(e.target.value);
-      $("status").textContent = txt;
-      logCli("RX", txt);
-      parseWatchStatus(txt);
-    });
-    await status.startNotifications().catch(() => {});
-    const initial = await status.readValue().catch(() => null);
-    if (initial) {
-      const txt = new TextDecoder().decode(initial);
-      $("status").textContent = txt;
-      logCli("RX", txt);
-      parseWatchStatus(txt);
-    }
-    connected(true, "BLE · " + (device.name || "Drift"));
-    say("connMsg", "Connected via Bluetooth Low Energy.", "ok");
-    try { await send("?"); } catch (e) {}
+    if (owner !== sessionId) return false;
+    command = characteristic; resetWatchState();
+    status.addEventListener("characteristicvaluechanged", e => receiveLine(new TextDecoder().decode(e.target.value), owner));
+    await status.startNotifications();
+    if (owner !== sessionId) return false;
+    const initial = await status.readValue();
+    if (owner !== sessionId) return false;
+    receiveLine(new TextDecoder().decode(initial), owner);
+    await send("?", owner);
+    if (owner !== sessionId) return false;
+    connected(true, "BLE · " + (selected.name || "Drift"));
+    say("connMsg", "Connected via Bluetooth. Wi-Fi credentials use an unencrypted link; use USB-C for local cable provisioning.", "ok");
+    return true;
   } catch (err) {
-    command = null;
-    connected(false);
-    const reason = (err && (err.message || err.name)) || (err ? String(err) : "the browser gave no reason");
-    let msg = "Could not connect: " + reason;
-    if (err && err.name === "NotFoundError") {
-      msg = "No watch chosen. Is Phone sync open on the watch?";
-    } else if (/GATT|disconnect/i.test(reason)) {
-      msg += ". If on Windows, remove the watch from Windows Bluetooth Settings (do not pair there) and ensure Phone sync is active on the watch.";
-    }
-    say("connMsg", msg, "err");
+    if (owner !== sessionId) return false;
+    let msg = "Could not connect: " + errorText(err);
+    if (err && err.name === "NotFoundError") msg = "No watch chosen. Is Phone sync open on the watch?";
+    else if (/GATT|disconnect/i.test(errorText(err))) msg += ". On Windows, remove any OS Bluetooth pairing and connect from this page.";
+    await disconnectTransport(msg); return false;
   }
 }
 
 async function syncTime() {
+  const owner = sessionId;
   say("syncMsg", "Sending...");
   try {
     if (isSerial) {
       const now = Math.floor(Date.now() / 1000);
-      const reply = waitForLine(/Time set to \d+/, 1500);
-      await send("TIME:" + now);
-      if (!(await reply)) throw new Error("the watch did not confirm the time");
-      say("syncMsg", "Time synced via USB-C (" + new Date().toLocaleTimeString() + ")!", "ok");
+      await send("TIME:" + now, owner);
+      await send("INFO?", owner);
+      if (watchState.time === null || Math.abs(watchState.time - now) > 3) throw new Error("The watch did not read back the requested time");
+      say("syncMsg", "Time confirmed via USB-C (" + new Date().toLocaleTimeString() + "). The existing watch time zone is unchanged.", "ok");
       return true;
     }
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
-    if (zone) await send("N=" + zone);
-    await send("Z=" + posixZone());
-    await send("T=" + (Date.now() / 1000).toFixed(3));
-    say("syncMsg", "Time & POSIX DST rules sent (" + new Date().toLocaleTimeString() + "). The watch is calibrated.", "ok");
+    if (zone) await send("N=" + zone, owner);
+    await send("Z=" + posixZone(), owner);
+    const utc = Date.now() / 1000;
+    await send("T=" + utc.toFixed(3), owner);
+    if (!isSimulated) {
+      await send("?", owner);
+      if (watchState.time === null || Math.abs(watchState.time - utc) > 3) throw new Error("The watch did not read back the requested time");
+    }
+    say("syncMsg", isSimulated ? "Virtual Watch time sync demonstrated." : "Time and time zone acknowledged by the watch (" + new Date().toLocaleTimeString() + ").", "ok");
     return true;
   } catch (err) {
     say("syncMsg", "Could not send: " + err.message, "err");
@@ -3221,6 +3294,7 @@ async function syncTime() {
 }
 
 async function saveActiveFaces() {
+  const owner = sessionId;
   const mask = getFaceMask();
   if (mask === 0) {
     say("facesMsg", "Please select at least one face.", "err");
@@ -3229,13 +3303,16 @@ async function saveActiveFaces() {
   say("facesMsg", "Sending...");
   try {
     if (isSerial) {
-      const reply = waitForLine(/Faces mask set to/, 1500);
-      await send("FACES:0x" + mask.toString(16).toUpperCase());
-      if (!(await reply)) throw new Error("the watch did not confirm the faces");
+      await send("FACES:0x" + mask.toString(16).toUpperCase(), owner);
     } else {
-      await send("H=" + mask);
+      await send("H=" + mask, owner);
+    }
+    if (!isSimulated) {
+      await send(isSerial ? "INFO?" : "?", owner);
+      if (watchState.faces !== mask) throw new Error("The watch did not read back the requested faces");
     }
     const count = FACES.filter((_, i) => (mask & (1 << i))).length;
+    if (isSimulated) { say("facesMsg", "Virtual Watch face selection updated (demo).", "ok"); return true; }
     if (count === 2) {
       say("facesMsg", "Saved! Hot Swap Pair enabled — swipe left or right on the watch to toggle between your 2 chosen faces.", "ok");
     } else if (count === 12) {
@@ -3243,25 +3320,28 @@ async function saveActiveFaces() {
     } else {
       say("facesMsg", "Saved! Watch will cycle through the " + count + " selected faces.", "ok");
     }
+    return true;
   } catch (err) {
-    say("facesMsg", "Could not send: " + err.message, "err");
+    say("facesMsg", "Could not send: " + errorText(err), "err");
+    return false;
   }
 }
 
 async function sendWifi() {
+  const owner = sessionId;
   const ssid = $("ssid").value.trim(), pass = $("pass").value;
   if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
   say("wifiMsg", "Sending...");
   try {
     if (isSerial) {
-      await send("WIFI:" + ssid + "," + pass);
+      await send("WIFI:" + ssid + "," + pass, owner);
     } else {
-      await send("S=" + ssid);
-      await send("P=" + pass);
-      await send("J");
+      await send("S=" + ssid, owner);
+      await send("P=" + pass, owner);
+      await send("J", owner);
     }
     $("pass").value = "";
-    say("wifiMsg", "Sent. The watch saves it and tries to join.", "ok");
+    say("wifiMsg", isSimulated ? "Virtual Watch Wi-Fi setup demonstrated; no network was configured." : "Wi-Fi command acknowledged. Check the watch for the connection result.", "ok");
   } catch (err) {
     say("wifiMsg", "Could not send: " + err.message, "err");
   }
@@ -3344,18 +3424,7 @@ function renderProfiles() {
     applyBtn.type = "button";
     applyBtn.className = "primary";
     applyBtn.textContent = "Apply";
-    applyBtn.addEventListener("click", async () => {
-      setFaceMask(p.mask);
-      setPreviewFace(p.face, true);
-      setMotionMode(p.motion, true);
-      setHardwareBrightness(p.bright ?? 2, true);
-      hwUse12h = !!p.use12h;
-      updateHardwareSpecLabels();
-      if (isSimulated || isSerial || command) {
-        await saveActiveFaces();
-      }
-      say("facesMsg", `Applied collection "${p.name}".`, "ok");
-    });
+    applyBtn.addEventListener("click", () => applyProfile(p).catch(reportControlError));
 
     actions.appendChild(applyBtn);
 
@@ -3382,27 +3451,99 @@ function renderProfiles() {
 }
 
 function setHardwareBrightness(lvl, dispatch = true) {
+  if (dispatch) return applySetting("bright", lvl).catch(reportControlError);
   hwBrightness = Math.max(0, Math.min(3, lvl));
   const pcts = ["25%", "50%", "75%", "100%"];
   $("hwBrightVal").textContent = `Level ${hwBrightness + 1} (${pcts[hwBrightness]})`;
-  document.querySelectorAll("[data-bright]").forEach(btn => {
-    btn.classList.toggle("active", parseInt(btn.getAttribute("data-bright"), 10) === hwBrightness);
-  });
+  document.querySelectorAll("[data-bright]").forEach(btn => btn.classList.toggle("active", Number(btn.getAttribute("data-bright")) === hwBrightness));
   updateHardwareSpecLabels();
-  if (dispatch && (isSimulated || isSerial || command)) {
-    send(isSerial ? `BRIGHT:${hwBrightness}` : `B=${hwBrightness}`).catch(() => {});
-  }
 }
 
 function setMotionMode(mode, dispatch = true) {
+  if (dispatch) return applySetting("motion", ["off", "subtle", "expressive"].indexOf(mode)).catch(reportControlError);
   previewMotionMode = mode;
-  document.querySelectorAll("[data-motion]").forEach(b => {
-    b.classList.toggle("active", b.getAttribute("data-motion") === mode);
-  });
-  if (dispatch && (isSimulated || isSerial || command)) {
-    const idx = mode === "off" ? 0 : mode === "subtle" ? 1 : 2;
-    send(isSerial ? `MOTION:${idx}` : `M=${idx}`).catch(() => {});
+  document.querySelectorAll("[data-motion]").forEach(b => b.classList.toggle("active", b.getAttribute("data-motion") === mode));
+}
+
+function serialToolsSupported() {
+  const parts = watchState.version.split(".").map(Number);
+  return parts.length >= 3 && parts.every(Number.isFinite) && (parts[0] > 0 || parts[1] > 15 || (parts[1] === 15 && parts[2] >= 2));
+}
+
+function updateControlAvailability() {
+  const enable = (el, supported, message) => { if (!el) return; el.disabled = !supported; el.title = supported ? "" : message; };
+  for (const [selector, key] of [["[data-bright]", "bright"], ["[data-motion]", "motion"]]) {
+    document.querySelectorAll(selector).forEach(el => enable(el, transportReady && (isSimulated || watchState[key] !== null), "Connect a supported watch or start Virtual Watch"));
   }
+  for (const [id, key] of [["fmt12Btn", "format"], ["fmt24Btn", "format"], ["nightToggleBtn", "night"]]) enable($(id), transportReady && (isSimulated || watchState[key] !== null), "Setting not reported by this firmware");
+  const timer = transportReady && (isSimulated || (isSerial && serialToolsSupported()));
+  document.querySelectorAll("[data-quick-timer]").forEach(el => enable(el, timer, "Timer commands require USB-C and firmware v0.15.2 or later"));
+  for (const id of ["startTimerBtn", "resetTimerBtn"]) enable($(id), timer, "Timer commands require USB-C and firmware v0.15.2 or later");
+  for (const id of ["toggleTorchBtn", "turnToggleBtn"]) enable($(id), isSimulated, "Preview-only: this firmware has no remote command for this control");
+}
+
+function queueControl(action) {
+  const owner = sessionId;
+  const task = controlQueue.then(async () => {
+    if (owner !== sessionId || !transportReady) throw new Error("Connect a supported watch or start Virtual Watch first");
+    await action(owner);
+    if (owner !== sessionId) throw new Error("Connection changed; setting was not confirmed");
+  });
+  controlQueue = task.catch(() => {});
+  return task;
+}
+
+async function writeSetting(key, value, owner = sessionId) {
+  if (owner !== sessionId) throw new Error("Connection changed; setting cancelled");
+  const names = { bright: "BRIGHT:", motion: "MOTION:", format: "FORMAT:", night: "NIGHT:", face: "FACE:" };
+  if (!names[key]) throw new Error("Unsupported setting");
+  if (isSimulated) {
+    if (key === "bright") setHardwareBrightness(value, false);
+    if (key === "motion") setMotionMode(["off", "subtle", "expressive"][value], false);
+    if (key === "format") hwUse12h = value === 12;
+    if (key === "night") hwNightMode = value;
+    if (key === "face") setPreviewFace(value, true);
+    updateHardwareSpecLabels(); return;
+  }
+  if (watchState[key] === null) throw new Error("This setting is not reported by the connected firmware");
+  await send(names[key] + value, owner);
+  await send(isSerial ? "INFO?" : "?", owner);
+  if (watchState[key] !== value) throw new Error("The watch did not read back the requested " + key);
+}
+
+function applySetting(key, value) {
+  return queueControl(async owner => {
+    say("toolsMsg", "Waiting for the watch to confirm...");
+    await writeSetting(key, value, owner);
+    say("toolsMsg", isSimulated ? "Virtual Watch preview updated (demo)." : "Setting confirmed by the watch.", "ok");
+  });
+}
+
+function applyProfile(profile) {
+  return queueControl(async owner => {
+    say("facesMsg", "Applying collection; waiting for confirmations...");
+    if (isSimulated) setFaceMask(profile.mask);
+    else {
+      await send(isSerial ? "FACES:0x" + profile.mask.toString(16) : "H=" + profile.mask, owner);
+      await send(isSerial ? "INFO?" : "?", owner);
+      if (watchState.faces !== profile.mask) throw new Error("The watch did not confirm the collection faces");
+    }
+    for (const [key, value] of [["face", profile.face], ["motion", ["off", "subtle", "expressive"].indexOf(profile.motion)], ["bright", profile.bright ?? 2], ["format", profile.use12h ? 12 : 24]]) await writeSetting(key, value, owner);
+    say("facesMsg", isSimulated ? `Previewing collection "${profile.name}" (demo).` : `Collection "${profile.name}" confirmed by the watch.`, "ok");
+  }).catch(err => { say("facesMsg", "Collection not fully applied: " + errorText(err), "err"); throw err; });
+}
+
+function runTimer(seconds) {
+  return queueControl(async owner => {
+    if (!isSimulated && (!isSerial || !serialToolsSupported())) throw new Error("Remote timers require USB-C and supported firmware; use the watch for Bluetooth sessions");
+    await send("TIMER:" + seconds, owner);
+    if (isSimulated) {
+      drawerTimerTotalSec = seconds || drawerTimerTotalSec;
+      drawerTimerEndMs = seconds ? Date.now() + seconds * 1000 : 0;
+      setScreenMode("drawer"); drawerPage = 0;
+    }
+    say("toolsMsg", isSimulated ? "Virtual Watch timer updated (demo)." : `Timer ${seconds ? "start" : "reset"} acknowledged. Remaining time is shown on the watch; this firmware does not report timer state.`, "ok");
+  });
 }
 
 function updateHardwareSpecLabels() {
@@ -3475,6 +3616,8 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
   renderProfiles();
   setPreviewFace(0, true);
   updateHardwareSpecLabels();
+  connected(false);
+  updateTelemetry();
 
   try {
     $("zoneName").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
@@ -3517,7 +3660,8 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     const syncTab = document.querySelector('[data-deck="sync"]');
     if (syncTab) syncTab.click();
     if (navigator.bluetooth) connect();
-    else toggleSimulatedWatch();
+    else if (navigator.serial) connectSerial();
+    else say("connMsg", "This browser cannot connect to hardware. Use Virtual Watch for a demo, or a supported browser for USB-C/Bluetooth.", "err");
   });
 
   $("sync").addEventListener("click", syncTime);
@@ -3586,54 +3730,20 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
   document.querySelectorAll("[data-bright]").forEach(btn => {
     btn.addEventListener("click", () => setHardwareBrightness(parseInt(btn.getAttribute("data-bright"), 10), true));
   });
-  $("fmt24Btn").addEventListener("click", () => {
-    hwUse12h = false;
-    updateHardwareSpecLabels();
-    if (isSimulated || isSerial) send("FORMAT:24").catch(() => {});
-  });
-  $("fmt12Btn").addEventListener("click", () => {
-    hwUse12h = true;
-    updateHardwareSpecLabels();
-    if (isSimulated || isSerial) send("FORMAT:12").catch(() => {});
-  });
-  $("nightToggleBtn").addEventListener("click", () => {
-    hwNightMode = (hwNightMode + 1) % 4;
-    updateHardwareSpecLabels();
-    if (isSimulated || isSerial) send(`NIGHT:${hwNightMode}`).catch(() => {});
-  });
+  $("fmt24Btn").addEventListener("click", () => applySetting("format", 24).catch(reportControlError));
+  $("fmt12Btn").addEventListener("click", () => applySetting("format", 12).catch(reportControlError));
+  $("nightToggleBtn").addEventListener("click", () => applySetting("night", (hwNightMode + 1) % 4).catch(reportControlError));
   $("turnToggleBtn").addEventListener("click", () => {
-    hwScreenTurn = (hwScreenTurn + 1) % 4;
-    updateHardwareSpecLabels();
+    if (!isSimulated) { reportControlError(new Error("Screen rotation is preview-only; change it on the watch")); return; }
+    hwScreenTurn = (hwScreenTurn + 1) % 4; updateHardwareSpecLabels();
   });
-
-  // Quick Tools: Countdown Timer
-  document.querySelectorAll("[data-quick-timer]").forEach(btn => {
-    btn.addEventListener("click", () => {
-      const sec = parseInt(btn.getAttribute("data-quick-timer"), 10);
-      drawerTimerTotalSec = sec;
-      drawerTimerEndMs = Date.now() + sec * 1000;
-      setScreenMode("drawer");
-      drawerPage = 0;
-      if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
-    });
-  });
-
-  $("startTimerBtn").addEventListener("click", () => {
-    const sec = drawerTimerTotalSec || 180;
-    drawerTimerEndMs = Date.now() + sec * 1000;
-    setScreenMode("drawer");
-    drawerPage = 0;
-    if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
-  });
-
-  $("resetTimerBtn").addEventListener("click", () => {
-    drawerTimerEndMs = 0;
-    if (isSimulated || isSerial) send("TIMER:0").catch(() => {});
-  });
-
+  document.querySelectorAll("[data-quick-timer]").forEach(btn => btn.addEventListener("click", () => runTimer(Number(btn.getAttribute("data-quick-timer"))).catch(reportControlError)));
+  $("startTimerBtn").addEventListener("click", () => runTimer(drawerTimerTotalSec || 180).catch(reportControlError));
+  $("resetTimerBtn").addEventListener("click", () => runTimer(0).catch(reportControlError));
   $("toggleTorchBtn").addEventListener("click", () => {
-    setScreenMode("drawer");
-    drawerFlashlight = !drawerFlashlight;
+    if (!isSimulated) { reportControlError(new Error("Flashlight is preview-only; turn it on from the watch")); return; }
+    setScreenMode("drawer"); drawerFlashlight = !drawerFlashlight;
+    say("toolsMsg", "Virtual Watch flashlight preview (demo).", "ok");
   });
 
   // Interactive CLI Terminal
@@ -3796,18 +3906,16 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
       }
       if (y >= 94 && y <= 132) {
         const sec = x < 90 ? 60 : x < 146 ? 180 : 300;
-        drawerTimerTotalSec = sec;
-        drawerTimerEndMs = Date.now() + sec * 1000;
-        if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
+        runTimer(sec).catch(reportControlError);
       } else if (y >= 142 && y <= 190) {
-        drawerFlashlight = true;
+        $("toggleTorchBtn").click();
       }
     } else if (previewScreenMode === "settings") {
       if (y <= 46) {
         previewSettingsHub = (previewSettingsHub + 1) % 4;
       } else if (y >= 54 && y <= 106) {
         if (previewSettingsHub === 0) setHardwareBrightness((hwBrightness + 1) % 4, true);
-        else if (previewSettingsHub === 1) { hwUse12h = !hwUse12h; updateHardwareSpecLabels(); }
+        else if (previewSettingsHub === 1) applySetting("format", hwUse12h ? 24 : 12).catch(reportControlError);
         else if (previewSettingsHub === 2) $("nightToggleBtn").click();
       } else if (y >= 114 && y <= 166) {
         if (previewSettingsHub === 0) {
@@ -3847,8 +3955,8 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
       $("studioTimerReadout").textContent = `${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
       $("compStatusBadge").textContent = `Timer ${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
     } else {
-      $("studioTimerReadout").textContent = "03:00";
-      $("compStatusBadge").textContent = "Ready";
+      $("studioTimerReadout").textContent = physicalSession() ? "On watch" : "03:00";
+      $("compStatusBadge").textContent = isSimulated ? "Virtual Watch" : physicalSession() ? "Timer state unavailable" : "Preview";
     }
 
     renderWatchViewport(mainCtx, watchCanvas.width, watchCanvas.height);
@@ -3857,21 +3965,7 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
       lastThumbSec = now.getSeconds();
       renderAllThumbnails();
 
-      simTempC = 28.2 + Math.sin(Date.now() / 9000) * 0.35;
-      simBatteryMv = Math.round(3500 + (simBatteryPct / 100) * 680);
-      teleHistory.bat.push(simBatteryPct);
-      if (teleHistory.bat.length > 40) teleHistory.bat.shift();
-      teleHistory.temp.push(simTempC);
-      if (teleHistory.temp.length > 40) teleHistory.temp.shift();
-
-      const primaryCol = FACES[previewFaceIdx].color;
-      drawTelemetryChart("batChartCanvas", teleHistory.bat, primaryCol, 0, 100);
-      drawTelemetryChart("tempChartCanvas", teleHistory.temp, "#ff9f0a", 25, 32);
-
-      $("chartBatVal").textContent = `${simBatteryPct}% · ${simBatteryMv} mV`;
-      $("chartTempVal").textContent = `${simTempC.toFixed(1)} °C · ${simDriftPpb} ppb`;
-      $("specTempLabel").textContent = `${simTempC.toFixed(1)} °C · QMI8658`;
-      $("simBatLabel").textContent = `${simBatteryPct}% · ${simBatteryMv} mV`;
+      updateTelemetry();
     }
 
     requestAnimationFrame(tick);

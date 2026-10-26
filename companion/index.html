@@ -550,17 +550,11 @@ function connected(on) {
 async function connect() {
   say("connMsg", "Connecting to the watch...");
   try {
-    let dev = null;
-    if (navigator.bluetooth.getDevices) {
-      const devices = await navigator.bluetooth.getDevices().catch(() => []);
-      dev = devices.find(d => d.name && d.name.startsWith("Drift")) || null;
-    }
-    if (!dev) {
-      // The 128-bit service UUID is in the primary advertisement (the name is in the scan response),
-      // so listing the service filter first lets iPhones spot the watch straight away.
-      dev = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
-    }
-    device = dev;
+    // Always show the picker. Reusing a remembered watch from getDevices() skipped it and failed at
+    // once when the phone could not reach that watch, so Bluetooth never connected (v0.15.0).
+    // The 128-bit service UUID is in the primary advertisement (the name is in the scan response),
+    // so listing the service filter first lets iPhones spot the watch straight away.
+    device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
     device.addEventListener("gattserverdisconnected", () => {
       command = null;
       connected(false);
@@ -589,10 +583,12 @@ async function connect() {
   } catch (err) {
     command = null;
     connected(false);
-    let msg = "Could not connect: " + err.message;
-    if (err.name === "NotFoundError") {
+    // Some phone Web Bluetooth browsers reject with a bare string or nothing, not an Error.
+    const reason = (err && (err.message || err.name)) || (err ? String(err) : "the browser gave no reason");
+    let msg = "Could not connect: " + reason;
+    if (err && err.name === "NotFoundError") {
       msg = "No watch chosen. Is Phone sync open on the watch?";
-    } else if (/GATT|disconnect/i.test(err.message)) {
+    } else if (/GATT|disconnect/i.test(reason)) {
       msg += ". If on Windows, remove the watch from Windows Bluetooth Settings (do not pair there) and ensure Phone sync is active on the watch.";
     }
     say("connMsg", msg, "err");

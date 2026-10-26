@@ -32,13 +32,14 @@ void adjustMs(int64_t ms);           // moves the wall clock by this much (drift
 
 // What ended a wait while the screen is off, as a set of bits: more than one can be true at
 // once (a touch during a motion wake, say), and the caller gives touch and BOOT priority.
-constexpr uint8_t WAKE_TIMER = 1, WAKE_MOTION = 2, WAKE_TOUCH = 4, WAKE_BUTTON = 8, WAKE_FAULT = 16;
+constexpr uint8_t WAKE_TIMER = 1, WAKE_MOTION = 2, WAKE_TOUCH = 4, WAKE_BUTTON = 8, WAKE_FAULT = 16, WAKE_SERIAL = 32;
 struct DozeArm {
   bool lowPower = false;  // light sleep; otherwise a plain wait that only a timer ends
   bool motion = false;    // also wake when the motion sensor's INT2 line goes high
+  bool serial = false;    // also wake when bytes arrive on the USB-C serial port (the waking bytes are lost)
 };
 // Waits up to `ms` while the screen is off and returns the wake bits. In light sleep it wakes
-// early on touch, BOOT or (if armed) motion. A line already at its wake level is not armed,
+// early on touch, BOOT or (if armed) motion and serial data. A line already at its wake level is not armed,
 // so a stuck line cannot keep the chip busy; WAKE_FAULT means light sleep could not be set up or
 // entered (the wait then still lasted, as a plain delay).
 uint8_t doze(uint32_t ms, const DozeArm &arm);

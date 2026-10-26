@@ -34,6 +34,10 @@ constexpr uint32_t CHECK_RESULT_MS = 1400;             // touch check result sta
 constexpr uint32_t BOOT_CHECK_MS = 4000;               // holding BOOT this long opens the touch check anywhere
 constexpr uint32_t KNOWN_TIME_SAVE_S = 3600;           // remember the clock in flash at most hourly
 constexpr uint32_t TOUCH_DROPOUT_MS = 50;              // failed touch reads this long end a touch, without acting
+constexpr uint32_t ALARM_FLASH_MS = 200;               // the timer alarm flips between bright and dim this often
+constexpr uint32_t ALARM_MS = 30000;                   // an alarm nobody dismisses stops by itself
+constexpr uint32_t FLASHLIGHT_MS = 2UL * 60 * 1000;    // the flashlight goes back to the face after this
+constexpr uint32_t SERIAL_HOLD_MS = 3000;              // after serial data, no light sleep for this long
 constexpr int SERIAL_BYTES_PER_POLL = 256;             // bounds the time one poll spends on serial input
 constexpr int SWIPE_PX = 40;
 constexpr int W = 240, H = 240;
@@ -116,6 +120,7 @@ struct TimerState {
   uint32_t targetMs = 0;
   uint32_t totalMs = 0;
   uint32_t alarmStartMs = 0;
+  int32_t alarmShown = -1;  // the flash step last drawn; the alarm draws on its own clock, not the face's
 };
 
 #if DRIFT_DIAG
@@ -168,6 +173,8 @@ extern screens::Button pressed;
 extern int settingsPage, detailsPage, setupPage, setTimePage, phonePage, checkPage, drawerPage;
 extern tm editTime;
 extern TimerState timer;
+extern uint32_t flashlightStart;
+extern uint32_t serialHoldUntil;
 
 extern RaiseDetector wristRaise;
 extern TwistDetector wristTwist;
@@ -246,6 +253,7 @@ void closeToFace(float v = 0);
 void openDrawer(float v = 0);
 void closeDrawer(float v = 0);
 void openFlashlight();
+void dismissAlarm();
 void closeFlashlight();
 void startTimer(uint32_t ms);
 void resetTimer();
@@ -297,6 +305,7 @@ void pollBoot();
 void stepBootCheck();
 void runSerialCommand(const char *line);
 void pollSerial();
+void holdForSerial();
 void pollInput();
 
 }  // namespace uiparts

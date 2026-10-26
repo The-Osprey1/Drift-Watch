@@ -4,6 +4,7 @@
 // settings, details and setup screen in both text sizes and checks text,
 // touch regions and contrast. Output: PPM frames, debug overlays, a hit-target
 // report and a check log; exit code 1 on any failed check.
+#include <stdarg.h>
 #include <TFT_eSPI.h>
 #include <Preferences.h>
 #include <string>
@@ -2898,6 +2899,8 @@ void quickDrawerScenarios() {
   CHECK(!ui::timerAlarming(), "tap dismisses alarm");
 }
 
+#include "sim_tools.inc"
+
 int main(int argc, char **argv) {
   outDir = argc > 1 ? argv[1] : ".";
   setenv("TZ", "UTC0", 1);
@@ -2920,6 +2923,7 @@ int main(int argc, char **argv) {
   reliabilityScenarios();
   lowBatteryScenarios();
   quickDrawerScenarios();
+  toolChecks();
   noMemoryScenario();  // last: it leaves the first frame 8-bit
   fclose(report);
   printf("%d of %d checks passed\n", checks - failures, checks);

@@ -44,7 +44,7 @@ class String {
 };
 
 // Serial: the simulation types into `in` (bytes not yet read), and what the watch prints is
-// dropped.
+// kept in `out` for the checks to read.
 struct HostSerial {
   std::string in;
   int available() { return (int)in.size(); }
@@ -54,7 +54,12 @@ struct HostSerial {
     in.erase(0, 1);
     return c;
   }
-  template <class... A> void printf(const char *, A...) {}
+  std::string out;
+  template <class... A> void printf(const char *f, A... x) {
+    char b[256];
+    snprintf(b, sizeof b, f, x...);
+    out += b;
+  }
 };
 extern HostSerial Serial;
 

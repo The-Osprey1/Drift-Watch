@@ -29,6 +29,13 @@ zone-rules-unchecked|DriftWatch/net.cpp|offsetIn(rules, hal::now()) == a.offset)
 join-not-retried|DriftWatch/net.cpp|      } else if (elapsed > CONNECT_TIMEOUT_MS \&\& !joinRetried) {|      } else if (false) {|network
 resync-no-backoff|DriftWatch/ui.cpp|min<uint32_t>(RESYNC_MS, RETRY_SYNC_MS << (failsInARow - 1))|RETRY_SYNC_MS|interface_network
 low-battery-repeats|DriftWatch/battery.cpp|  if (!toldSoon_ \&\& level < SOON) {|  if (level < SOON) {|interface
+alarm-under-face|DriftWatch/ui.cpp|    // The alarm owns the screen until it is dismissed or runs out; nothing else draws over it.\n    hal::idle(10);\n    return;|    (void)0;|interface
+alarm-picture-left|DriftWatch/ui_input.cpp|  uiKey = 0;\n  lastActivity = hal::ms();\n  if (mode != Mode::Face \&\& mode != Mode::Boot \&\& tr.kind == Slide::None) refreshScreen(true);|  lastActivity = hal::ms();|interface
+drawer-redraws-fast|DriftWatch/screens.cpp|      drawItem(c, it, ctl[i].visible);\n    }\n    return false;|      drawItem(c, it, ctl[i].visible);\n    }\n    return true;|interface
+flashlight-never-off|DriftWatch/ui.cpp|  if (mode == Mode::Flashlight \&\& since(flashlightStart) > FLASHLIGHT_MS) closeFlashlight();|  (void)0;|interface
+settings-hub-gap-lost|DriftWatch/screens.cpp|int settingsSlot(const View \&v, int item) { return !v.large \&\& item >= CLOCK_HUB_END ? item + 1 : item; }|int settingsSlot(const View \&v, int item) { return item; }|interface
+serial-wake-not-armed|DriftWatch/power.cpp|  arm.serial = true;|  arm.serial = false;|interface
+serial-hold-ignored|DriftWatch/power.cpp|  arm.lowPower = options.lightSleep \&\& !sleepBroken_ \&\& !in.serialHold;|  arm.lowPower = options.lightSleep \&\& !sleepBroken_;|power
 LIST
 )
 
@@ -59,7 +66,7 @@ while IFS='|' read -r name file find replace test; do
   rm -rf "$WORK/src" && mkdir -p "$WORK/src" && cp -r DriftWatch tools "$WORK/src/"
   if ! python3 - "$WORK/src/$file" "$find" "$replace" <<'PY'
 import sys
-path, old, new = sys.argv[1], sys.argv[2].replace('\\n', '\n').replace('\\&', '&'), sys.argv[3].replace('\\n', '\n')
+path, old, new = sys.argv[1], sys.argv[2].replace('\\n', '\n').replace('\\&', '&'), sys.argv[3].replace('\\n', '\n').replace('\\&', '&')
 s = open(path).read()
 if s.count(old) != 1:
     sys.exit(f"the text to change is not in {path} exactly once")

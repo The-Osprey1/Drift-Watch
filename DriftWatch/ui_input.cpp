@@ -231,6 +231,18 @@ void startTimer(uint32_t ms) {
   refreshScreen(true);
 }
 
+// Ends the alarm and repaints whatever screen is under it: the face, or a settings page whose
+// key has not changed (the alarm picture used to stay there until the next swipe).
+void dismissAlarm() {
+  timer.alarming = false;
+  hal::backlight(backlightLevel());
+  if (mode == Mode::Drawer) mode = Mode::Face;
+  dirty = true;
+  uiKey = 0;
+  lastActivity = hal::ms();
+  if (mode != Mode::Face && mode != Mode::Boot && tr.kind == Slide::None) refreshScreen(true);
+}
+
 void resetTimer() {
   timer.active = false;
   timer.alarming = false;
@@ -447,10 +459,7 @@ void onFingerDown(const TouchSample &s) {
     return;
   }
   if (timer.alarming) {
-    timer.alarming = false;
-    hal::backlight(backlightLevel());
-    if (mode == Mode::Drawer) mode = Mode::Face;
-    dirty = true;
+    dismissAlarm();
     finger.ignore = true;
     return;
   }
@@ -680,10 +689,7 @@ void pollBoot() {
     boot.checkOpened = false;
     noteLooking();
     if (timer.alarming) {
-      timer.alarming = false;
-      hal::backlight(backlightLevel());
-      if (mode == Mode::Drawer) mode = Mode::Face;
-      dirty = true;
+      dismissAlarm();
       return;
     }
     if (mode == Mode::Flashlight) {
@@ -754,12 +760,19 @@ void runSerialCommand(const char *line) {
   }
 }
 
+// The computer is talking: stay out of light sleep a while, so the rest of its lines arrive.
+void holdForSerial() {
+  serialHoldUntil = hal::ms() + SERIAL_HOLD_MS;
+  if (!serialHoldUntil) serialHoldUntil = 1;
+}
+
 // Takes only the bytes already waiting, so a line sent in pieces never stalls the interface.
 void pollSerial() {
   static serialcmd::LineBuffer lineIn;
   for (int n = 0; n < SERIAL_BYTES_PER_POLL && Serial.available() > 0; n++) {
     int c = Serial.read();
     if (c < 0) break;
+    holdForSerial();
     if (lineIn.push((char)c)) runSerialCommand(lineIn.line());
   }
 }

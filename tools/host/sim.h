@@ -56,6 +56,8 @@ extern Accel accel;               // what the sensor reads now
 extern int dozes, lowPowerDozes;  // screen-off waits, and how many could use light sleep
 extern int motionDozes;           // waits with the motion line armed
 extern uint64_t dozedMs;          // time spent in screen-off waits
+extern int serialLost;          // serial bytes dropped because they arrived in light sleep
+extern std::string serialSent;  // bytes the computer is sending; they arrive during the next wait
 extern uint32_t imuLineEdges[2];
 
 // Wake on motion. While armed, a change of more than the threshold on any axis from the pose

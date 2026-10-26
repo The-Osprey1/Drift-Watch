@@ -160,7 +160,8 @@ Wake Controller::step(const Inputs &in, uint32_t untilMs, GestureFn feed) {
   uint32_t left = before(now, untilMs) ? untilMs - now : 1;
   uint32_t longest = left < options.maxSleepMs ? left : options.maxSleepMs;
   hal::DozeArm arm;
-  arm.lowPower = options.lightSleep && !sleepBroken_;
+  arm.lowPower = options.lightSleep && !sleepBroken_ && !in.serialHold;
+  arm.serial = true;
   uint32_t wait = longest;
   switch (state_) {
     case State::StandbyIdle: break;
@@ -216,6 +217,7 @@ Wake Controller::step(const Inputs &in, uint32_t untilMs, GestureFn feed) {
   // Touch and BOOT come first: they always wake the screen straight away.
   if (bits & hal::WAKE_TOUCH) return Wake::Touch;
   if (bits & hal::WAKE_BUTTON) return Wake::Button;
+  if ((bits & hal::WAKE_SERIAL) && !(bits & hal::WAKE_MOTION)) return Wake::Serial;
   if (!(bits & hal::WAKE_MOTION) || state_ != State::StandbyWom) return Wake::None;
 
   stats_.motionWakes++;

@@ -2602,19 +2602,19 @@ void motionScenarios() {
   touchUp();
   untilFace();
 
-  printf("Motion: the settings panel follows the finger up\n");
-  touchDown(120, 200);
-  moveTo(120, 140, 200);
-  CHECK(screen() == "face+slide", "the panel is coming up under the finger, got %s", screen().c_str());
+  printf("Motion: the settings panel follows the finger down\n");
+  touchDown(120, 40);
+  moveTo(120, 100, 200);
+  CHECK(screen() == "face+slide", "the panel is coming down under the finger, got %s", screen().c_str());
   snap("panel_drag_60px");
-  moveTo(120, 190, 200);  // back down most of the way
+  moveTo(120, 50, 200);  // back up most of the way
   runFor(150);
   touchUp();
   settle();
-  CHECK(screen() == "face", "let go low, it drops back to the face, got %s", screen().c_str());
+  CHECK(screen() == "face", "let go high, it springs back to the face, got %s", screen().c_str());
   swipeUp();
   settle();
-  CHECK(screen() == "panel", "a full swipe up opens it, got %s", screen().c_str());
+  CHECK(screen() == "panel", "a full slide down opens it, got %s", screen().c_str());
 
   printf("Motion: a tapped control keeps its accent briefly\n");
   goTo(screens::Button::Brightness);

@@ -531,10 +531,10 @@ void onFingerMove(const TouchSample &s) {
       tr.dragging = true;
       dirty = true;  // clears any hold ring
     }
-    if (mode == Mode::Face && finger.axis == Axis::Vertical && dy < 0 && haveSpare && motionOn()) startPanelDrag();
+    if (mode == Mode::Face && finger.axis == Axis::Vertical && dy > 0 && haveSpare && motionOn()) startPanelDrag();
   }
 
-  if (tr.kind == Slide::PanelOpen && tr.dragging) tr.pos = constrain((float)-dy, 0.0f, (float)H);  // pinned to the finger
+  if (tr.kind == Slide::PanelOpen && tr.dragging) tr.pos = constrain((float)dy, 0.0f, (float)H);  // pinned to the finger
 
   if (tr.kind == Slide::Face && tr.dragging) {
     // Dragging a whole screen width lands on the neighbour and carries on, so
@@ -565,9 +565,9 @@ void onFingerUp() {
     return;
   }
   if (tr.kind == Slide::PanelOpen && tr.dragging) {
-    // Same rule as before the panel followed the finger: far enough up, or flicked up, opens.
-    bool open = (dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS) && vy <= motion::FLICK_PX_PER_MS;
-    settleTo(open ? H : 0, -vy);
+    // Slide down opens settings panel
+    bool open = (dy >= SWIPE_PX || vy > motion::FLICK_PX_PER_MS) && vy >= -motion::FLICK_PX_PER_MS;
+    settleTo(open ? H : 0, vy);
     return;
   }
   // Sideways swipes are scoped to the mode: faces on a face, pages on a paged
@@ -581,10 +581,10 @@ void onFingerUp() {
   if (finger.axis == Axis::Vertical) {
     bool up = dy <= -SWIPE_PX || vy < -motion::FLICK_PX_PER_MS;
     bool down = dy >= SWIPE_PX || vy > motion::FLICK_PX_PER_MS;
-    if (mode == Mode::Face && up) openPanel(vy ? -vy : 0.01f);
-    else if (mode == Mode::Face && down) openDrawer(vy ? vy : 0.01f);
-    else if (mode == Mode::Drawer && up) closeDrawer(vy ? -vy : -0.01f);
-    else if (pagedMode() && down) goBack(vy ? -vy : -0.01f);
+    if (mode == Mode::Face && up) openDrawer(vy ? -vy : 0.01f);
+    else if (mode == Mode::Face && down) openPanel(vy ? vy : 0.01f);
+    else if (mode == Mode::Drawer && down) closeDrawer(vy ? vy : -0.01f);
+    else if (pagedMode() && up) goBack(vy ? -vy : -0.01f);
     return;
   }
   if (finger.axis == Axis::None) {
@@ -751,12 +751,52 @@ void runSerialCommand(const char *line) {
     Serial.printf("Configuring Wi-Fi for SSID: %s\n", cmd.ssid);
   } else if (cmd.kind == serialcmd::Kind::Faces) {
     settings.activeFaces = (cmd.facesMask & ALL_FACES_MASK) ? (cmd.facesMask & ALL_FACES_MASK) : ALL_FACES_MASK;
+    if (!(settings.activeFaces & (1u << currentFace()))) settings.face = nextActiveFace(currentFace(), +1);
     saveSettings();
+    cacheValid = false;
     dirty = true;
     Serial.printf("Faces mask set to 0x%04X\n", (unsigned int)settings.activeFaces);
   } else if (cmd.kind == serialcmd::Kind::Info) {
-    Serial.printf("DRIFT:VER=" FW_VERSION ",TIME=%ld,BAT=%d,FACES=0x%04X\n",
-                  (long)hal::now(), batteryPct, (unsigned int)settings.activeFaces);
+    Serial.printf("DRIFT:VER=" FW_VERSION ",TIME=%ld,BAT=%d,FACES=0x%04X,FACE=%d,BRIGHT=%d,MOTION=%d,FORMAT=%d\n",
+                  (long)hal::now(), batteryPct, (unsigned int)settings.activeFaces,
+                  (int)settings.face, (int)settings.brightnessLevel, (int)settings.motion, settings.use12h ? 12 : 24);
+  } else if (cmd.kind == serialcmd::Kind::Timer) {
+    if (cmd.value <= 0) {
+      resetTimer();
+      Serial.printf("%s\n", "Timer reset");
+    } else {
+      startTimer((uint32_t)cmd.value * 1000u);
+      Serial.printf("Timer started for %d s\n", cmd.value);
+    }
+  } else if (cmd.kind == serialcmd::Kind::Bright) {
+    settings.brightnessLevel = (uint8_t)cmd.value;
+    if (awake) hal::backlight(backlightLevel());
+    saveSettings();
+    dirty = true;
+    Serial.printf("Brightness set to %d\n", cmd.value);
+  } else if (cmd.kind == serialcmd::Kind::Motion) {
+    settings.motion = (uint8_t)cmd.value;
+    saveSettings();
+    dirty = true;
+    Serial.printf("Motion set to %d\n", cmd.value);
+  } else if (cmd.kind == serialcmd::Kind::Format) {
+    settings.use12h = (cmd.value == 12);
+    saveSettings();
+    cacheValid = false;
+    dirty = true;
+    Serial.printf("Format set to %dh\n", cmd.value);
+  } else if (cmd.kind == serialcmd::Kind::Night) {
+    settings.night = (uint8_t)cmd.value;
+    saveSettings();
+    dirty = true;
+    Serial.printf("Night mode set to %d\n", cmd.value);
+  } else if (cmd.kind == serialcmd::Kind::Face) {
+    settings.face = (uint8_t)(cmd.value % FACE_COUNT);
+    settings.activeFaces |= (1u << settings.face);
+    saveSettings();
+    cacheValid = false;
+    dirty = true;
+    Serial.printf("Active face set to %d\n", cmd.value);
   }
 }
 

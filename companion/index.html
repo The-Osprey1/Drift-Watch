@@ -1,78 +1,813 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Drift sync</title>
 <meta name="description" content="Set a Drift-Watch's time, time zone, hot swap watch faces, and Wi-Fi from this browser over Bluetooth.">
+<meta property="og:title" content="Drift sync">
+<meta property="og:description" content="Set a Drift-Watch's time, time zone, hot swap watch faces, and Wi-Fi from this browser over Bluetooth.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
-  :root {
-    --bg: #07080b; --panel: #0e1016; --line: #2a303c; --text: #dce2ea; --text2: #9aa2b4;
-    --cyan: #00f0ff; --yellow: #fcee0a; --warn: #ff7a1a; --ok: #19ffb0;
-  }
-  @media (prefers-color-scheme: light) {
-    :root:not([data-theme="dark"]) {
-      --bg: #f4f6f9; --panel: #ffffff; --line: #c9d0db; --text: #11141a; --text2: #4a5263;
-      --cyan: #006a73; --yellow: #6b6400; --warn: #a84300; --ok: #00704c;
-    }
-  }
-  * { box-sizing: border-box; }
-  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
-  main { max-width: 36rem; margin: 0 auto; padding: 24px 16px 48px; }
-  h1 { font-size: 1.6rem; margin: 0 0 4px; letter-spacing: 0.02em; }
-  h1 span { color: var(--yellow); }
-  p.lead { color: var(--text2); margin: 0 0 24px; }
-  section { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 16px; }
-  h2 { font-size: 1.05rem; margin: 0 0 8px; display: flex; align-items: center; justify-content: space-between; }
-  ol { margin: 0; padding-left: 1.2rem; color: var(--text2); }
-  button { font: inherit; font-weight: 600; min-height: 48px; padding: 0 20px; border-radius: 10px; border: 2px solid var(--cyan);
-           background: transparent; color: var(--cyan); cursor: pointer; width: 100%; margin-top: 12px; }
-  button.primary { background: var(--cyan); color: var(--bg); }
-  button:disabled { opacity: 0.4; cursor: default; }
-  label { display: block; color: var(--text2); font-size: 0.9rem; margin-top: 12px; }
-  input { font: inherit; width: 100%; min-height: 44px; padding: 8px 12px; border-radius: 8px; border: 1px solid var(--line);
-          background: var(--bg); color: var(--text); }
-  .status { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85rem; color: var(--text2); word-break: break-all; }
-  .msg { margin-top: 12px; }
-  .msg.ok { color: var(--ok); }
-  .msg.err { color: var(--warn); }
-  .note { color: var(--text2); font-size: 0.9rem; }
-  dl { display: grid; grid-template-columns: max-content 1fr; gap: 4px 12px; margin: 8px 0 0; font-size: 0.95rem; }
-  dt { color: var(--text2); }
-  dd { margin: 0; word-break: break-word; }
+  :root,
+  [data-theme="dark"] {
+    --bg: #000000;
+    --bg-elevated: #141416;
+    --panel: rgba(28, 28, 30, 0.82);
+    --panel-solid: #1c1c1e;
+    --panel-inset: #2c2c2e;
+    --panel-hover: #3a3a3c;
+    --line: rgba(255, 255, 255, 0.1);
+    --line-strong: rgba(255, 255, 255, 0.18);
+    --text: #f5f5f7;
+    --text2: #98989d;
+    --text3: #636366;
+    --cyan: #32ade6;
+    --yellow: #ffd60a;
+    --warn: #ff9f0a;
+    --ok: #30d158;
+    --magenta: #ff375f;
+    --card-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    --topbar-bg: rgba(14, 14, 16, 0.76);
+    --titanium-case: radial-gradient(circle at 30% 24%, #484a4f 0%, #26272b 55%, #151619 100%);
+    --titanium-rim: #52555c;
+    --titanium-lug: linear-gradient(90deg, #1f2024 0%, #3d3f45 50%, #1f2024 100%);
 
-  /* Watch face selector grid */
-  .face-count-badge {
-    font-size: 0.85rem;
-    color: var(--cyan);
+    /* Dynamic Face-Synced Theme Tokens */
+    --theme-primary: #32ade6;
+    --theme-secondary: #ffd60a;
+    --theme-dim: rgba(50, 173, 230, 0.15);
+    --theme-glow: rgba(50, 173, 230, 0.08);
+  }
+
+  [data-theme="light"] {
+    --bg: #f5f5f7;
+    --bg-elevated: #ffffff;
+    --panel: rgba(255, 255, 255, 0.86);
+    --panel-solid: #ffffff;
+    --panel-inset: #f2f2f7;
+    --panel-hover: #e5e5ea;
+    --line: rgba(0, 0, 0, 0.08);
+    --line-strong: rgba(0, 0, 0, 0.15);
+    --text: #1d1d1f;
+    --text2: #6e6e73;
+    --text3: #8e8e93;
+    --cyan: #0071e3;
+    --yellow: #b25000;
+    --warn: #c93400;
+    --ok: #007d35;
+    --magenta: #d70040;
+    --card-shadow: 0 6px 24px rgba(0, 0, 0, 0.05);
+    --topbar-bg: rgba(245, 245, 247, 0.8);
+    --titanium-case: radial-gradient(circle at 30% 24%, #e3e1dc 0%, #b5b2ab 56%, #85827b 100%);
+    --titanium-rim: #c7c4bc;
+    --titanium-lug: linear-gradient(90deg, #8c8982 0%, #cbc8c1 50%, #8c8982 100%);
+  }
+
+  :root {
+    --font-display: -apple-system, BlinkMacSystemFont, "SF Pro Display", "Plus Jakarta Sans", sans-serif;
+    --font-sans: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Plus Jakarta Sans", system-ui, sans-serif;
+    --font-Watch: "Chakra Petch", -apple-system, BlinkMacSystemFont, sans-serif;
+    --font-mono: "SF Mono", "IBM Plex Mono", ui-monospace, Menlo, monospace;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    margin: 0;
+    background-color: var(--bg);
+    background-image:
+      radial-gradient(circle at 16% 10%, var(--theme-glow), transparent 44%),
+      radial-gradient(circle at 84% 88%, rgba(10, 132, 255, 0.04), transparent 44%);
+    color: var(--text);
+    font: 15px/1.55 var(--font-sans);
+    -webkit-font-smoothing: antialiased;
+    min-height: 100vh;
+    transition: background-color 220ms ease, color 220ms ease;
+  }
+
+  /* Strict 3-Zone Top Bar Contract (Apple Glass Header with Integrated View Tabs) */
+  .topbar {
+    position: sticky;
+    top: 0;
+    z-index: 50;
+    background: var(--topbar-bg);
+    backdrop-filter: saturate(180%) blur(20px);
+    -webkit-backdrop-filter: saturate(180%) blur(20px);
+    border-bottom: 1px solid var(--line);
+  }
+
+  .topbar-inner {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 10px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 24px;
+  }
+
+  .brand-wordmark {
+    font-family: var(--font-display);
+    font-size: 1.08rem;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+    color: var(--text);
+    text-decoration: none;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+
+  .brand-wordmark span {
+    color: var(--theme-primary);
+    transition: color 180ms ease;
+  }
+
+  .deck-tabs {
+    display: flex;
+    align-items: center;
+    gap: 3px;
+    padding: 3px;
+    background: var(--panel-inset);
+    border-radius: 11px;
+  }
+
+  .deck-tab {
+    width: auto;
+    min-height: 30px;
+    margin: 0;
+    padding: 0 14px;
+    border: none;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text2);
+    font-size: 0.8rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  }
+
+  .deck-tab:hover {
+    color: var(--text);
+  }
+
+  .deck-tab.active {
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.14);
+  }
+
+  .topbar-cta {
+    width: auto;
+    min-height: 34px;
+    margin-top: 0;
+    padding: 0 16px;
+    font-size: 0.81rem;
+    font-weight: 600;
+    border-radius: 980px;
+    border: none;
+    background: var(--theme-primary);
+    color: #000000;
+    white-space: nowrap;
+    flex-shrink: 0;
+    cursor: pointer;
+    transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1), opacity 150ms ease, background-color 180ms ease;
+  }
+
+  .topbar-cta:hover {
+    opacity: 0.9;
+  }
+
+  /* Simplified Cupertino Studio Shell */
+  .console-shell {
+    max-width: 1140px;
+    margin: 0 auto;
+    padding: 20px 24px 56px;
+  }
+
+  /* Quiet 1-Line Studio Status Bar */
+  .studio-subbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 18px;
+    padding: 0 4px;
+    font-size: 0.8rem;
+    color: var(--text2);
+  }
+
+  .studio-subbar-meta {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .studio-subbar-meta strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+
+  .appearance-pill {
+    width: auto;
+    min-height: 28px;
+    margin: 0;
+    padding: 0 11px;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    background: var(--panel-inset);
+    color: var(--text2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .appearance-pill:hover {
+    color: var(--text);
+  }
+
+  /* Clean 2-Column Studio Grid */
+  .workspace-grid {
+    display: grid;
+    grid-template-columns: 380px minmax(0, 1fr);
+    gap: 24px;
+    align-items: start;
+  }
+
+  /* Left Sticky Watch Stage (Clean Apple Watch Showcase) */
+  .watch-stage-panel {
+    position: sticky;
+    top: 68px;
+    background: var(--panel);
+    backdrop-filter: saturate(180%) blur(20px);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 20px 22px;
+    box-shadow: var(--card-shadow);
+  }
+
+  .stage-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 4px;
+  }
+
+  .stage-title {
+    font-family: var(--font-display);
+    font-size: 0.98rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0;
+  }
+
+  .stage-meta {
+    font-family: var(--font-mono);
+    font-size: 0.73rem;
+    color: var(--theme-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .gesture-hint-bar {
+    font-size: 0.74rem;
+    color: var(--text2);
+    text-align: center;
+    margin-bottom: 8px;
+  }
+
+  /* Pure Buttonless Circular Touch Watch Case (Waveshare ESP32-S3-Touch-LCD-1.28) */
+  .watch-housing-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 8px 0 14px;
+  }
+
+  .watch-bezel {
+    position: relative;
+    width: 284px;
+    height: 284px;
+    border-radius: 50%;
+    background: var(--titanium-case);
+    border: 2px solid var(--titanium-rim);
+    box-shadow:
+      0 18px 40px rgba(0, 0, 0, 0.32),
+      0 0 28px var(--theme-glow),
+      inset 0 2px 4px rgba(255, 255, 255, 0.35),
+      inset 0 -3px 8px rgba(0, 0, 0, 0.65);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: box-shadow 250ms ease;
+  }
+
+  .watch-inner-ring {
+    width: 256px;
+    height: 256px;
+    border-radius: 50%;
+    background: #000000;
+    border: 2px solid #1c1d21;
+    box-shadow: inset 0 0 10px rgba(0, 0, 0, 0.9);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  #watchCanvas {
+    width: 240px;
+    height: 240px;
+    border-radius: 50%;
+    background: #000000;
+    cursor: grab;
+    display: block;
+    user-select: none;
+    touch-action: none;
+  }
+
+  #watchCanvas:active {
+    cursor: grabbing;
+  }
+
+  .stage-controls {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  /* Apple Segmented Control */
+  .segmented-bar {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 3px;
+    padding: 3px;
+    background: var(--panel-inset);
+    border-radius: 10px;
+  }
+
+  .segmented-bar.cols-3 {
+    grid-template-columns: repeat(3, 1fr);
+  }
+
+  .seg-btn {
+    min-height: 30px;
+    margin: 0;
+    padding: 0 6px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+    transition: background-color 160ms ease, color 160ms ease, box-shadow 160ms ease;
+  }
+
+  .seg-btn:hover:not(:disabled) {
+    color: var(--text);
+  }
+
+  .seg-btn.active {
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: 0 1px 5px rgba(0, 0, 0, 0.15);
+  }
+
+  .face-cycle-row {
+    display: grid;
+    grid-template-columns: 38px 1fr 38px;
+    gap: 8px;
+    align-items: center;
+  }
+
+  .icon-step-btn {
+    min-height: 36px;
+    margin: 0;
+    padding: 0;
+    border-radius: 10px;
+    border: 1px solid var(--line);
+    background: var(--panel-inset);
+    color: var(--text);
+    font-family: var(--font-mono);
+    font-size: 0.88rem;
+    cursor: pointer;
+  }
+
+  .icon-step-btn:hover {
+    background: var(--panel-hover);
+  }
+
+  .active-face-readout {
+    background: var(--panel-inset);
+    border-radius: 10px;
+    padding: 6px 10px;
+    text-align: center;
+    min-width: 0;
+  }
+
+  .active-face-readout-name {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.88rem;
+    color: var(--text);
+  }
+
+  .active-face-readout-sub {
+    font-size: 0.73rem;
+    color: var(--text2);
+  }
+
+  /* Clean Apple Disclosure Drawer (<details>) */
+  details.apple-disclosure {
+    margin-top: 6px;
+    border-top: 1px solid var(--line);
+    padding-top: 10px;
+  }
+
+  details.apple-disclosure > summary {
+    list-style: none;
+    cursor: pointer;
+    font-size: 0.78rem;
+    font-weight: 600;
+    color: var(--text2);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    user-select: none;
+    padding: 2px 0;
+  }
+
+  details.apple-disclosure > summary::-webkit-details-marker {
+    display: none;
+  }
+
+  details.apple-disclosure > summary::after {
+    content: "Show";
+    font-size: 0.72rem;
+    color: var(--theme-primary);
     font-weight: 500;
   }
+
+  details.apple-disclosure[open] > summary::after {
+    content: "Hide";
+  }
+
+  .disclosure-body {
+    margin-top: 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .stage-action-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr 1fr;
+    gap: 6px;
+  }
+
+  .mini-stage-btn {
+    min-height: 30px;
+    margin: 0;
+    padding: 0 6px;
+    font-size: 0.73rem;
+    border-radius: 8px;
+    border: 1px solid var(--line);
+    color: var(--text2);
+    background: var(--panel-inset);
+  }
+
+  .mini-stage-btn:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--panel-hover);
+  }
+
+  .stage-specs {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px 12px;
+    font-size: 0.73rem;
+  }
+
+  .spec-pair {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+
+  .spec-k { color: var(--text2); }
+  .spec-v {
+    font-family: var(--font-mono);
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Right Column: Focused Single-Tab Workspace */
+  .deck-column {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+  }
+
+  .sections-stack {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  section {
+    background: var(--panel);
+    backdrop-filter: saturate(180%) blur(20px);
+    border: 1px solid var(--line);
+    border-radius: 22px;
+    padding: 22px 24px;
+    margin: 0;
+    box-shadow: var(--card-shadow);
+  }
+
+  section[data-deck-hidden="true"] {
+    display: none;
+  }
+
+  h2 {
+    font-family: var(--font-display);
+    font-size: 1.08rem;
+    font-weight: 600;
+    letter-spacing: -0.015em;
+    margin: 0 0 6px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  h3 {
+    font-family: var(--font-display);
+    font-size: 0.9rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    margin: 12px 0 6px;
+    color: var(--text);
+  }
+
+  ol {
+    margin: 0 0 10px;
+    padding-left: 1.2rem;
+    color: var(--text2);
+    font-size: 0.86rem;
+  }
+
+  ol li + li {
+    margin-top: 3px;
+  }
+
+  button {
+    font: inherit;
+    font-weight: 600;
+    min-height: 42px;
+    padding: 0 16px;
+    border-radius: 11px;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-inset);
+    color: var(--text);
+    cursor: pointer;
+    width: 100%;
+    margin-top: 10px;
+    white-space: nowrap;
+    transition: transform 150ms cubic-bezier(0.22, 1, 0.36, 1), background-color 150ms ease, border-color 150ms ease, color 150ms ease, opacity 150ms ease;
+  }
+
+  button:active:not(:disabled) {
+    transform: scale(0.985);
+  }
+
+  button:focus-visible,
+  input:focus-visible,
+  select:focus-visible {
+    outline: 2px solid var(--theme-primary);
+    outline-offset: 2px;
+  }
+
+  button.primary {
+    background: var(--theme-primary);
+    border-color: var(--theme-primary);
+    color: #000000;
+  }
+
+  button.primary:hover:not(:disabled) {
+    opacity: 0.92;
+  }
+
+  button:hover:not(:disabled):not(.primary):not(.seg-btn):not(.deck-tab) {
+    background: var(--panel-hover);
+  }
+
+  button:disabled {
+    opacity: 0.38;
+    cursor: default;
+  }
+
+  label {
+    display: block;
+    color: var(--text2);
+    font-size: 0.82rem;
+    font-weight: 500;
+    margin-top: 10px;
+    margin-bottom: 4px;
+  }
+
+  input,
+  select {
+    font: inherit;
+    width: 100%;
+    min-height: 40px;
+    padding: 7px 12px;
+    border-radius: 10px;
+    border: 1px solid var(--line-strong);
+    background: var(--panel-inset);
+    color: var(--text);
+    transition: border-color 150ms ease, background-color 150ms ease;
+  }
+
+  input:focus,
+  select:focus {
+    border-color: var(--theme-primary);
+    background: var(--bg-elevated);
+    outline: none;
+  }
+
+  .status {
+    font-family: var(--font-mono);
+    font-size: 0.8rem;
+    color: var(--text2);
+    word-break: break-all;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .msg {
+    margin: 8px 0 0;
+    font-size: 0.84rem;
+    min-height: 1.4em;
+  }
+
+  .msg:empty {
+    display: none;
+  }
+
+  .msg.ok { color: var(--ok); }
+  .msg.err { color: var(--warn); }
+
+  .note {
+    color: var(--text2);
+    font-size: 0.84rem;
+    margin: 4px 0;
+  }
+
+  .conn-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .conn-grid button {
+    margin-top: 0;
+  }
+
+  .sim-btn.active {
+    border-color: var(--theme-primary);
+    color: var(--theme-primary);
+    background: var(--theme-dim);
+  }
+
+  /* Time & Timezone Calibration Grid */
+  .tz-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 10px 0 12px;
+  }
+
+  .tz-box {
+    background: var(--panel-inset);
+    border-radius: 11px;
+    padding: 10px 14px;
+  }
+
+  .tz-box dt {
+    font-size: 0.72rem;
+    color: var(--text2);
+    margin-bottom: 2px;
+  }
+
+  .tz-box dd {
+    margin: 0;
+    font-family: var(--font-mono);
+    font-size: 0.84rem;
+    color: var(--text);
+    font-variant-numeric: tabular-nums;
+    word-break: break-word;
+  }
+
+  /* Apple Watch Face Gallery Grid */
+  .face-count-badge {
+    font-family: var(--font-mono);
+    font-size: 0.78rem;
+    color: var(--theme-primary);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .studio-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 10px;
+  }
+
+  .collection-tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 3px;
+    background: var(--panel-inset);
+    border-radius: 10px;
+    padding: 3px;
+  }
+
+  .col-tab {
+    min-height: 28px;
+    margin: 0;
+    padding: 0 11px;
+    border: none;
+    border-radius: 7px;
+    background: transparent;
+    color: var(--text2);
+    font-size: 0.75rem;
+    font-weight: 600;
+    width: auto;
+  }
+
+  .col-tab.active {
+    background: var(--bg-elevated);
+    color: var(--text);
+    box-shadow: 0 1px 4px rgba(0, 0, 0, 0.12);
+  }
+
   .face-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(145px, 1fr));
-    gap: 8px;
-    margin: 14px 0 10px;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin: 12px 0;
   }
+
   .face-card {
     display: flex;
     align-items: center;
-    gap: 10px;
-    background: var(--bg);
-    border: 1px solid var(--line);
-    border-radius: 8px;
-    padding: 8px 10px;
-    margin-top: 0;
+    gap: 12px;
+    background: var(--panel-inset);
+    border: 1.5px solid transparent;
+    border-radius: 14px;
+    padding: 10px 14px;
+    margin: 0;
     cursor: pointer;
     user-select: none;
-    transition: border-color 0.15s ease, background-color 0.15s ease;
+    transition: border-color 160ms ease, background-color 160ms ease;
   }
+
+  .face-card[data-filtered-out="true"] {
+    display: none;
+  }
+
   .face-card:hover {
-    border-color: var(--card-color, var(--cyan));
+    background: var(--panel-hover);
   }
+
   .face-card.selected {
-    border-color: var(--card-color, var(--cyan));
-    background: rgba(255, 255, 255, 0.04);
+    border-color: var(--card-color, var(--theme-primary));
   }
+
+  .face-card.previewing {
+    background: var(--bg-elevated);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.14);
+  }
+
   .face-card input[type="checkbox"] {
     appearance: none;
     -webkit-appearance: none;
@@ -81,138 +816,707 @@
     min-height: 18px;
     padding: 0;
     margin: 0;
-    border-radius: 4px;
-    border: 1px solid var(--line);
+    border-radius: 50%;
+    border: 1.5px solid var(--line-strong);
     background: transparent;
     cursor: pointer;
     display: grid;
     place-content: center;
     flex-shrink: 0;
   }
+
   .face-card input[type="checkbox"]:checked {
-    background: var(--card-color, var(--cyan));
-    border-color: var(--card-color, var(--cyan));
+    background: var(--card-color, var(--theme-primary));
+    border-color: var(--card-color, var(--theme-primary));
   }
+
   .face-card input[type="checkbox"]:checked::before {
     content: "";
     width: 8px;
     height: 8px;
-    background: var(--bg);
+    background: #000000;
     clip-path: polygon(14% 44%, 0 60%, 40% 100%, 100% 20%, 82% 6%, 38% 68%);
   }
+
+  .face-thumb {
+    width: 42px;
+    height: 42px;
+    border-radius: 50%;
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    background: #000;
+    flex-shrink: 0;
+    display: block;
+  }
+
   .face-info {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    flex: 1;
   }
+
+  .face-name-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
   .face-name {
+    font-family: var(--font-display);
     font-weight: 600;
     font-size: 0.9rem;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
     color: var(--text);
   }
-  .face-badge {
-    font-size: 0.72rem;
+
+  .face-index {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
     color: var(--text2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+    font-variant-numeric: tabular-nums;
   }
+
+  .face-badge {
+    font-size: 0.76rem;
+    color: var(--text2);
+    line-height: 1.3;
+  }
+
   .face-active-tag {
-    color: var(--yellow);
+    color: var(--theme-primary);
     font-weight: 700;
+    font-family: var(--font-mono);
   }
+
   .btn-row {
     display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-top: 8px;
+  }
+
+  .btn-row button {
+    flex: 1;
+    min-width: 100px;
+    margin-top: 0;
+    min-height: 34px;
+    font-size: 0.76rem;
+    padding: 0 10px;
+    border-radius: 9px;
+  }
+
+  button.ghost {
+    border-color: var(--line);
+    background: var(--panel-inset);
+    color: var(--text2);
+  }
+
+  button.ghost:hover:not(:disabled) {
+    color: var(--text);
+    background: var(--panel-hover);
+  }
+
+  /* Profile Manager & Grouped Hardware Settings */
+  .profile-cards-row {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(165px, 1fr));
     gap: 8px;
     margin-top: 6px;
   }
-  .btn-row button {
-    margin-top: 0;
-    min-height: 38px;
-    font-size: 0.85rem;
-    padding: 0 12px;
+
+  .profile-card {
+    background: var(--panel-inset);
+    border-radius: 11px;
+    padding: 10px 12px;
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
   }
-  button.ghost {
-    border-color: var(--line);
+
+  .profile-card-title {
+    font-family: var(--font-display);
+    font-weight: 600;
+    font-size: 0.82rem;
+    color: var(--text);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .profile-card-meta {
+    font-family: var(--font-mono);
+    font-size: 0.7rem;
     color: var(--text2);
   }
-  button.ghost:hover:not(:disabled) {
-    border-color: var(--text2);
-    color: var(--text);
+
+  .profile-card-actions {
+    display: flex;
+    gap: 5px;
+    margin-top: 2px;
+  }
+
+  .profile-card-actions button {
+    min-height: 28px;
+    margin: 0;
+    padding: 0 8px;
+    font-size: 0.72rem;
+    border-radius: 7px;
+  }
+
+  .hw-settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+    margin-top: 6px;
+  }
+
+  .hw-setting-box {
+    background: var(--panel-inset);
+    border-radius: 11px;
+    padding: 10px 12px;
+  }
+
+  .hw-setting-title {
+    font-size: 0.74rem;
+    color: var(--text2);
+    margin-bottom: 6px;
+    display: flex;
+    justify-content: space-between;
+  }
+
+  /* Complications: Timer, Stopwatch, Alarm */
+  .complications-grid {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 12px;
+    margin-top: 10px;
+  }
+
+  .comp-panel {
+    background: var(--panel-inset);
+    border-radius: 14px;
+    padding: 14px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+  }
+
+  .comp-readout {
+    font-family: var(--font-mono);
+    font-size: 1.55rem;
+    font-weight: 600;
+    color: var(--theme-primary);
+    font-variant-numeric: tabular-nums;
+    margin: 4px 0 8px;
+    letter-spacing: -0.01em;
+  }
+
+  .lap-list {
+    max-height: 86px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.74rem;
+    color: var(--text2);
+    border-top: 1px solid var(--line);
+    margin-top: 6px;
+    padding-top: 6px;
+  }
+
+  .lap-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 2px 0;
+  }
+
+  /* Telemetry Graphs & CLI Terminal */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 12px;
+    margin: 10px 0 14px;
+  }
+
+  .chart-card {
+    background: var(--panel-inset);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+
+  .chart-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 6px;
+  }
+
+  .chart-title {
+    font-size: 0.76rem;
+    color: var(--text2);
+    font-weight: 600;
+  }
+
+  .chart-val {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    color: var(--theme-primary);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .telemetry-canvas {
+    width: 100%;
+    height: 104px;
+    display: block;
+  }
+
+  .terminal-box {
+    background: var(--panel-inset);
+    border-radius: 14px;
+    padding: 12px 14px;
+    margin-top: 8px;
+  }
+
+  .cli-log {
+    max-height: 128px;
+    overflow-y: auto;
+    font-family: var(--font-mono);
+    font-size: 0.76rem;
+    color: var(--text2);
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid var(--line);
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+
+  .cli-input-row {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .cli-input-row input {
+    font-family: var(--font-mono);
+    font-size: 0.82rem;
+    min-height: 36px;
+    background: var(--bg-elevated);
+  }
+
+  .cli-input-row button {
+    width: auto;
+    margin-top: 0;
+    min-height: 36px;
+  }
+
+  .wifi-inputs-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+    margin-top: 4px;
+  }
+
+  .firmware-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-top: 12px;
+    padding-top: 12px;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+    color: var(--text2);
+  }
+
+  .firmware-links {
+    display: flex;
+    gap: 10px;
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+  }
+
+  .firmware-links a {
+    color: var(--theme-primary);
+    text-decoration: none;
+  }
+
+  .firmware-links a:hover {
+    text-decoration: underline;
+  }
+
+  @media (max-width: 980px) {
+    .workspace-grid {
+      grid-template-columns: 1fr;
+    }
+    .watch-stage-panel {
+      position: static;
+    }
+    .face-grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .complications-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
+  @media (max-width: 680px) {
+    .topbar-inner {
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .conn-grid,
+    .tz-grid,
+    .wifi-inputs-grid,
+    .charts-grid,
+    .hw-settings-grid,
+    .face-grid {
+      grid-template-columns: 1fr;
+    }
   }
 </style>
 </head>
 <body>
-<main>
-  <h1><span>DRIFT</span> sync</h1>
-  <p class="lead">Sets your Drift-Watch's time, time zone, active watch faces and Wi-Fi over Bluetooth. Nothing is installed and nothing leaves this page except what you send to the watch.</p>
 
-  <section id="unsupported" hidden>
-    <h2>This browser can't use Bluetooth</h2>
-    <p class="note">On an iPhone or iPad, open this page in the free <b>Bluefy</b> app. On Android, Windows, macOS, Linux or a Chromebook, use <b>Chrome</b> or <b>Edge</b>. The page must be opened over https.</p>
-  </section>
-
-  <section>
-    <h2>1. Open phone sync on the watch</h2>
-    <ol>
-      <li>Swipe up on the watch face to open Settings.</li>
-      <li>Find <b>Phone sync</b> (page 2) and tap it. The watch shows its name, such as Drift-1A2B, for 3 minutes.</li>
-    </ol>
-    <p class="note"><b>Windows users:</b> Connect directly from this page. Do <i>not</i> pair the watch in Windows Bluetooth Settings (if paired, click "Remove device" in Windows Settings first, or Windows will disconnect the link every second).</p>
-    <div style="display: flex; gap: 8px; margin-top: 12px;">
-      <button id="connect" class="primary" style="flex: 1; margin-top: 0;">Bluetooth</button>
-      <button id="connectUsb" class="primary" style="flex: 1; margin-top: 0;">USB-C Cable</button>
+<header class="topbar">
+  <div class="topbar-inner">
+    <a href="#" class="brand-wordmark"><span>Drift</span> Watch Studio</a>
+    <div class="deck-tabs" role="tablist" aria-label="Studio workspace view">
+      <button type="button" class="deck-tab active" data-deck="faces">Face Gallery</button>
+      <button type="button" class="deck-tab" data-deck="sync">Sync &amp; Wi-Fi</button>
+      <button type="button" class="deck-tab" data-deck="complications">Quick Actions</button>
+      <button type="button" class="deck-tab" data-deck="telemetry">Diagnostics</button>
     </div>
-    <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer;">
-      <input type="checkbox" id="autoSyncUsb" checked style="width: 18px; min-height: 18px; margin: 0;">
-      <span>Auto-sync whenever USB-C cable is plugged in</span>
-    </label>
-    <p id="connMsg" class="msg" role="status"></p>
-  </section>
+    <button type="button" id="headerConnectBtn" class="topbar-cta">Connect Watch</button>
+  </div>
+</header>
 
-  <section>
-    <h2>2. Set the time</h2>
-    <dl>
-      <dt>Time zone</dt><dd id="zoneName">-</dd>
-      <dt>Rules sent</dt><dd id="zonePosix" class="status">-</dd>
-    </dl>
-    <button id="sync" disabled>Sync time</button>
-    <p id="syncMsg" class="msg" role="status"></p>
-  </section>
-
-  <section id="facesSection">
-    <h2><span>3. Active watch faces (Hot swap)</span> <span id="faceCountBadge" class="face-count-badge"></span></h2>
-    <p class="note">Choose which faces you want active when swiping left or right on the watch. Selecting just <b>two</b> enables fast hot-swap switching between your favorites.</p>
-    <div class="face-grid" id="faceGrid"></div>
-    <div class="btn-row">
-      <button type="button" id="selectAllFaces" class="ghost" disabled>Select all (12)</button>
-      <button type="button" id="selectTwoFaces" class="ghost" disabled>Pair (Digital + Orbit)</button>
-      <button type="button" id="clearFaces" class="ghost" disabled>Clear</button>
+<main class="console-shell">
+  <div class="studio-subbar">
+    <div class="studio-subbar-meta" aria-label="Live chronometer telemetry">
+      <strong id="liveClockReadout">--:--:--</strong>
+      <span>·</span>
+      <span id="liveThemeReadout">Digital · Core</span>
+      <span>·</span>
+      <span id="liveMaskReadout">0x0FFF · 12/12</span>
+      <span>·</span>
+      <span id="liveTransportReadout">Standby</span>
     </div>
-    <button id="saveFaces" disabled>Save active faces to watch</button>
-    <p id="facesMsg" class="msg" role="status"></p>
-  </section>
+    <button type="button" id="themeAppearanceBtn" class="appearance-pill" title="Switch between Dark and Light Cupertino appearance">Appearance: Dark</button>
+  </div>
 
-  <section>
-    <h2>4. Wi-Fi (optional)</h2>
-    <p class="note">Lets the watch keep itself right over the internet. It only works with 2.4 GHz networks. The password goes straight to the watch, over a Bluetooth link that is not encrypted, so only do this with the watch close to you.</p>
-    <p class="note">Using an iPhone Personal Hotspot? Turn on <b>Maximize Compatibility</b> in Settings &gt; Personal Hotspot so it broadcasts on 2.4 GHz, and keep that screen open while the watch joins.</p>
-    <label for="ssid">Network name</label>
-    <input id="ssid" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
-    <label for="pass">Password</label>
-    <input id="pass" type="password" autocomplete="off" maxlength="64">
-    <button id="wifi" disabled>Send Wi-Fi to the watch</button>
-    <p id="wifiMsg" class="msg" role="status"></p>
-  </section>
+  <div class="workspace-grid">
+    <!-- Left Sticky Column: Buttonless Touch Watch Showcase -->
+    <aside class="watch-stage-panel" aria-label="Interactive 240x240 watch simulator">
+      <div class="stage-header">
+        <h2 class="stage-title">240×240 OLED Touch</h2>
+        <span class="stage-meta" id="stageFpsLabel">Touch Ready · 60 Hz</span>
+      </div>
 
-  <section>
-    <h2>Watch says</h2>
-    <p id="status" class="status">Not connected.</p>
-  </section>
+      <div class="gesture-hint-bar" id="gestureHintBar">
+        Swipe up: Quick Actions · Slide down: Settings
+      </div>
+
+      <div class="watch-housing-wrap">
+        <div class="watch-bezel" id="watchBezel">
+          <div class="watch-inner-ring">
+            <canvas id="watchCanvas" width="480" height="480" aria-label="Interactive 240x240 Drift-Watch OLED display"></canvas>
+          </div>
+        </div>
+      </div>
+
+      <div class="stage-controls">
+        <div class="segmented-bar cols-3" role="tablist" aria-label="Watch screen mode">
+          <button type="button" class="seg-btn active" data-screen="face" id="modeFaceBtn">Watch Face</button>
+          <button type="button" class="seg-btn" data-screen="drawer" id="modeDrawerBtn">Quick Actions</button>
+          <button type="button" class="seg-btn" data-screen="settings" id="modeSettingsBtn">Settings</button>
+        </div>
+
+        <div class="face-cycle-row">
+          <button type="button" class="icon-step-btn" id="prevFaceBtn" aria-label="Previous watch face">&larr;</button>
+          <div class="active-face-readout">
+            <div class="active-face-readout-name" id="previewFaceTitle">01 · Digital</div>
+            <div class="active-face-readout-sub" id="previewFaceSub">Vector numerals</div>
+          </div>
+          <button type="button" class="icon-step-btn" id="nextFaceBtn" aria-label="Next watch face">&rarr;</button>
+        </div>
+
+        <details class="apple-disclosure">
+          <summary>Motion &amp; Hardware Controls</summary>
+          <div class="disclosure-body">
+            <div class="segmented-bar cols-3" aria-label="Motion profile">
+              <button type="button" class="seg-btn" data-motion="off">Motion: Off</button>
+              <button type="button" class="seg-btn active" data-motion="subtle">Motion: Subtle</button>
+              <button type="button" class="seg-btn" data-motion="expressive">Expressive</button>
+            </div>
+            <div class="stage-action-row">
+              <button type="button" class="mini-stage-btn" id="replayEntranceBtn">Replay Entrance</button>
+              <button type="button" class="mini-stage-btn" id="replayBootBtn">Boot Ignition</button>
+              <button type="button" class="mini-stage-btn" id="toggleIrisBtn">Iris Sleep/Wake</button>
+            </div>
+            <div class="stage-specs">
+              <div class="spec-pair"><span class="spec-k">Display</span><span class="spec-v" id="specBrightLabel">Bri 3/4 · 24h</span></div>
+              <div class="spec-pair"><span class="spec-k">IMU Temp</span><span class="spec-v" id="specTempLabel">28.4 °C · QMI8658</span></div>
+              <div class="spec-pair"><span class="spec-k">Battery</span><span class="spec-v" id="simBatLabel">86% · 4082 mV</span></div>
+              <div class="spec-pair"><span class="spec-k">Clock Drift</span><span class="spec-v" id="specDriftLabel">-142 ppb · Cal</span></div>
+            </div>
+          </div>
+        </details>
+      </div>
+    </aside>
+
+    <!-- Right Column: Focused Single-Tab Cupertino Workspace -->
+    <div class="deck-column">
+      <div class="sections-stack">
+        <section id="unsupported" hidden>
+          <h2>This browser can't use Web Bluetooth or Web Serial directly</h2>
+          <p class="note">On an iPhone or iPad, open this page in the free <b>Bluefy</b> app. On Android, Windows, macOS, Linux or a Chromebook, use <b>Chrome</b> or <b>Edge</b> over HTTPS. You can also click <b>Virtual Watch</b> in Sync &amp; Wi-Fi to test all controls right now.</p>
+        </section>
+
+        <!-- TAB 1 (DEFAULT): WATCH FACE GALLERY -->
+        <section id="facesSection" data-deck-group="faces">
+          <h2><span>Watch Face Gallery</span> <span id="faceCountBadge" class="face-count-badge">All 12 active</span></h2>
+          <p class="note">Click any face to preview it on the watch, or toggle its checkmark for your swipe loop. Selecting two faces enables instant hot-swap.</p>
+
+          <div class="studio-toolbar">
+            <div class="collection-tabs" role="tablist" aria-label="Filter watch faces by collection">
+              <button type="button" class="col-tab active" data-col-filter="all">All 12</button>
+              <button type="button" class="col-tab" data-col-filter="Core">Core (6)</button>
+              <button type="button" class="col-tab" data-col-filter="Space">Astronomy (2)</button>
+              <button type="button" class="col-tab" data-col-filter="Sakura">Sakura (2)</button>
+              <button type="button" class="col-tab" data-col-filter="Fallout">Pip-Boy (2)</button>
+            </div>
+            <label style="display: flex; align-items: center; gap: 6px; margin: 0; font-size: 0.78rem; cursor: pointer;">
+              <input type="checkbox" id="syncThemeToggle" checked style="width: 15px; min-height: 15px; margin: 0;">
+              <span>Match accent</span>
+            </label>
+          </div>
+
+          <div class="face-grid" id="faceGrid"></div>
+
+          <div class="btn-row">
+            <button type="button" id="selectAllFaces" class="ghost" disabled>All 12</button>
+            <button type="button" id="selectTwoFaces" class="ghost" disabled>Digital + Orbit</button>
+            <button type="button" id="selectSpaceFaces" class="ghost" disabled>Astronomy</button>
+            <button type="button" id="selectSakuraFaces" class="ghost" disabled>Sakura</button>
+            <button type="button" id="selectFalloutFaces" class="ghost" disabled>Pip-Boy</button>
+            <button type="button" id="clearFaces" class="ghost" disabled>Clear</button>
+          </div>
+          <button id="saveFaces" class="primary" disabled>Save active faces to watch</button>
+          <p id="facesMsg" class="msg" role="status"></p>
+
+          <details class="apple-disclosure" style="margin-top: 14px;">
+            <summary>Saved Collections &amp; Display Settings</summary>
+            <div class="disclosure-body">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap;">
+                <span style="font-size: 0.8rem; font-weight: 600;">Collections</span>
+                <div style="display: flex; gap: 6px; align-items: center;">
+                  <input id="newProfileName" placeholder="Collection name" maxlength="24" style="width: 180px; min-height: 32px; font-size: 0.78rem;">
+                  <button type="button" id="saveProfileBtn" class="ghost" style="width: auto; margin: 0; min-height: 32px; padding: 0 11px; font-size: 0.76rem;">Save</button>
+                </div>
+              </div>
+              <div class="profile-cards-row" id="profilesContainer"></div>
+
+              <div class="hw-settings-grid">
+                <div class="hw-setting-box">
+                  <div class="hw-setting-title"><span>OLED Brightness</span><span id="hwBrightVal">Level 3 (75%)</span></div>
+                  <div class="segmented-bar">
+                    <button type="button" class="seg-btn" data-bright="0">Low</button>
+                    <button type="button" class="seg-btn" data-bright="1">Med</button>
+                    <button type="button" class="seg-btn active" data-bright="2">High</button>
+                    <button type="button" class="seg-btn" data-bright="3">Max</button>
+                  </div>
+                </div>
+                <div class="hw-setting-box">
+                  <div class="hw-setting-title"><span>Time Format &amp; Night Mode</span><span id="hwFormatVal">24-Hour · Night Auto</span></div>
+                  <div class="segmented-bar">
+                    <button type="button" class="seg-btn active" id="fmt24Btn">24h</button>
+                    <button type="button" class="seg-btn" id="fmt12Btn">12h</button>
+                    <button type="button" class="seg-btn active" id="nightToggleBtn">Night: Auto</button>
+                    <button type="button" class="seg-btn" id="turnToggleBtn">Turn: 0°</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </details>
+        </section>
+
+        <!-- TAB 2: SYNC, TIME & WI-FI -->
+        <section id="connectionSection" data-deck-group="sync" data-deck-hidden="true">
+          <h2><span>Connect &amp; Sync Watch</span> <span class="face-count-badge" id="connBadge">Disconnected</span></h2>
+          <p class="note">Connect via Bluetooth (tap <b>Phone sync</b> on the watch), a USB-C cable, or use <b>Virtual Watch</b> to test right in the browser.</p>
+          <div class="conn-grid">
+            <button id="connect" class="primary">Bluetooth</button>
+            <button id="connectUsb" class="primary">USB-C Cable</button>
+            <button id="connectSim" type="button" class="sim-btn">Virtual Watch</button>
+          </div>
+          <label style="display: flex; align-items: center; gap: 8px; margin-top: 10px; cursor: pointer;">
+            <input type="checkbox" id="autoSyncUsb" checked style="width: 16px; min-height: 16px; margin: 0;">
+            <span>Auto-sync time when USB-C cable is plugged in</span>
+          </label>
+          <p id="connMsg" class="msg" role="status"></p>
+        </section>
+
+        <section id="timeSection" data-deck-group="sync" data-deck-hidden="true">
+          <h2><span>Precision Time &amp; Time Zone</span> <span class="face-count-badge" id="epochBadge">UTC</span></h2>
+          <dl class="tz-grid">
+            <div class="tz-box">
+              <dt>IANA Time Zone</dt>
+              <dd id="zoneName">-</dd>
+            </div>
+            <div class="tz-box">
+              <dt>POSIX DST Rule (`Z=`)</dt>
+              <dd id="zonePosix" class="status">-</dd>
+            </div>
+          </dl>
+          <button id="sync" class="primary" disabled>Sync time to watch</button>
+          <p id="syncMsg" class="msg" role="status"></p>
+        </section>
+
+        <section id="wifiSection" data-deck-group="sync" data-deck-hidden="true">
+          <h2><span>2.4 GHz Wi-Fi (Optional)</span></h2>
+          <p class="note">Allows autonomous NTP sync every 6 hours while the screen is asleep.</p>
+          <div class="wifi-inputs-grid">
+            <div>
+              <label for="ssid">Network Name (SSID)</label>
+              <input id="ssid" placeholder="Home-2.4G" autocomplete="off" autocapitalize="off" spellcheck="false" maxlength="32">
+            </div>
+            <div>
+              <label for="pass">Password</label>
+              <input id="pass" type="password" placeholder="Passphrase" autocomplete="off" maxlength="64">
+            </div>
+          </div>
+          <button id="wifi" disabled>Send Wi-Fi to watch</button>
+          <p id="wifiMsg" class="msg" role="status"></p>
+        </section>
+
+        <!-- TAB 3: QUICK ACTIONS -->
+        <section id="complicationsSection" data-deck-group="complications" data-deck-hidden="true">
+          <h2><span>Quick Actions</span> <span class="face-count-badge" id="compStatusBadge">Ready</span></h2>
+          <p class="note">Swipe up on the watch face to access Quick Actions: Countdown Timer, Stopwatch, Daily Alarm, and OLED Torch.</p>
+
+          <div class="complications-grid">
+            <div class="comp-panel">
+              <div>
+                <div class="telemetry-label">Countdown Timer</div>
+                <div class="comp-readout" id="studioTimerReadout">03:00</div>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px;">
+                  <div>
+                    <label for="customTimerMin" style="margin-top: 0; font-size: 0.72rem;">Min</label>
+                    <input type="number" id="customTimerMin" min="0" max="180" value="3" style="min-height: 32px; padding: 4px 8px;">
+                  </div>
+                  <div>
+                    <label for="customTimerSec" style="margin-top: 0; font-size: 0.72rem;">Sec</label>
+                    <input type="number" id="customTimerSec" min="0" max="59" value="0" style="min-height: 32px; padding: 4px 8px;">
+                  </div>
+                </div>
+              </div>
+              <div>
+                <div class="btn-row" style="margin-bottom: 6px;">
+                  <button type="button" class="ghost" data-quick-timer="60" style="min-width: 0;">1m</button>
+                  <button type="button" class="ghost" data-quick-timer="180" style="min-width: 0;">3m</button>
+                  <button type="button" class="ghost" data-quick-timer="300" style="min-width: 0;">5m</button>
+                  <button type="button" class="ghost" data-quick-timer="1500" style="min-width: 0;">25m</button>
+                </div>
+                <div style="display: flex; gap: 6px;">
+                  <button type="button" id="startTimerBtn" class="primary" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Start</button>
+                  <button type="button" id="resetTimerBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem; width: auto;">Reset</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="comp-panel">
+              <div>
+                <div class="telemetry-label">Stopwatch</div>
+                <div class="comp-readout" id="studioSwReadout">00:00.00</div>
+                <div class="lap-list" id="swLapList">
+                  <div class="lap-row"><span>No laps</span><span>--:--.--</span></div>
+                </div>
+              </div>
+              <div style="display: flex; gap: 6px; margin-top: 8px;">
+                <button type="button" id="swToggleBtn" class="primary" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Start</button>
+                <button type="button" id="swLapBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Lap</button>
+                <button type="button" id="swResetBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Reset</button>
+              </div>
+            </div>
+
+            <div class="comp-panel">
+              <div>
+                <div class="telemetry-label">Alarm &amp; Torch</div>
+                <div class="comp-readout" id="studioAlarmReadout">07:30</div>
+                <label for="alarmTimeInput" style="margin-top: 0; font-size: 0.72rem;">Alarm Time</label>
+                <input type="time" id="alarmTimeInput" value="07:30" style="min-height: 34px; padding: 4px 8px;">
+              </div>
+              <div style="display: flex; flex-direction: column; gap: 6px; margin-top: 8px;">
+                <button type="button" id="toggleAlarmBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Arm Alarm (07:30)</button>
+                <button type="button" id="toggleTorchBtn" class="ghost" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Watch Flashlight</button>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- TAB 4: TELEMETRY & SERIAL CONSOLE -->
+        <section id="telemetrySection" data-deck-group="telemetry" data-deck-hidden="true">
+          <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge">v0.15.2</span></h2>
+
+          <div class="charts-grid">
+            <div class="chart-card">
+              <div class="chart-header">
+                <span class="chart-title">Battery Curve</span>
+                <span class="chart-val" id="chartBatVal">86% · 4082 mV</span>
+              </div>
+              <canvas id="batChartCanvas" class="telemetry-canvas" width="380" height="104"></canvas>
+            </div>
+            <div class="chart-card">
+              <div class="chart-header">
+                <span class="chart-title">IMU Temp &amp; Drift</span>
+                <span class="chart-val" id="chartTempVal">28.4 °C · -142 ppb</span>
+              </div>
+              <canvas id="tempChartCanvas" class="telemetry-canvas" width="380" height="104"></canvas>
+            </div>
+          </div>
+
+          <div class="terminal-box">
+            <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.75rem; color: var(--text2);">
+              <span>Watch Status</span>
+              <span>115200 8N1 / BLE</span>
+            </div>
+            <p id="status" class="status" style="margin: 4px 0 0;">Not connected.</p>
+            <div class="cli-log" id="cliLog"></div>
+            <div class="btn-row" style="margin-top: 6px;">
+              <button type="button" class="ghost" data-cli-cmd="INFO?" style="min-width: 0; min-height: 28px; font-size: 0.72rem;">INFO?</button>
+              <button type="button" class="ghost" data-cli-cmd="TIME:NOW" style="min-width: 0; min-height: 28px; font-size: 0.72rem;">TIME:&lt;now&gt;</button>
+              <button type="button" class="ghost" data-cli-cmd="FACES:0x0FFF" style="min-width: 0; min-height: 28px; font-size: 0.72rem;">FACES:0x0FFF</button>
+              <button type="button" class="ghost" data-cli-cmd="TIMER:180" style="min-width: 0; min-height: 28px; font-size: 0.72rem;">TIMER:180</button>
+            </div>
+            <div class="cli-input-row">
+              <input id="cliInput" placeholder="Command (e.g. INFO?, FACES:0x0041, TIMER:60)" autocomplete="off">
+              <button type="button" id="cliSendBtn" class="primary">Send</button>
+            </div>
+          </div>
+
+          <div class="firmware-row">
+            <span>ESP32-S3 Firmware (<code>0x0</code>):</span>
+            <div class="firmware-links">
+              <a href="https://github.com/The-Osprey1/DriftWatch/releases/latest" target="_blank" rel="noopener">GitHub Releases (Latest .bin)</a>
+              <span>·</span>
+              <a href="/firmware/drift_watch_v0.15.0.bin" download>drift_watch_v0.15.0.bin</a>
+            </div>
+          </div>
+
+          <div class="firmware-row" style="margin-top: 8px; padding-top: 8px;">
+            <span>GitHub <code>v0.15.2</code> Export:</span>
+            <div class="firmware-links">
+              <a href="/v0.15.2.patch" download="v0.15.2.patch">v0.15.2.patch</a>
+              <span>·</span>
+              <a href="/index.html" download="index.html">companion/index.html</a>
+            </div>
+          </div>
+        </section>
+      </div>
+    </div>
+  </div>
 </main>
+
 <script>
 "use strict";
 const SERVICE = "8f1d0001-6b5c-4c8e-9d3a-2a6b7c8d9e01";
@@ -220,31 +1524,1243 @@ const COMMAND = "8f1d0002-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const STATUS = "8f1d0003-6b5c-4c8e-9d3a-2a6b7c8d9e01";
 const $ = (id) => document.getElementById(id);
 let device = null, command = null;
+let isSimulated = false;
 
+// All 12 Drift-Watch faces with concise, unclipped descriptions
 const FACES = [
-  { id: 0, name: "Digital", color: "#00f0ff", desc: "CRT glow & colon pulse" },
-  { id: 1, name: "Stealth", color: "#9aa2b4", desc: "Monochrome hands" },
-  { id: 2, name: "Corpo", color: "#fcee0a", desc: "Gold executive dial" },
-  { id: 3, name: "Hologram", color: "#00f0ff", desc: "Neon wireframe" },
-  { id: 4, name: "Radar", color: "#19ffb0", desc: "Phosphor sweep & blips" },
-  { id: 5, name: "Phantom", color: "#b026ff", desc: "Floating ghost rings" },
-  { id: 6, name: "Orbit", color: "#00f0ff", desc: "Planetary orbit & stars" },
-  { id: 7, name: "Lunar", color: "#c9d0db", desc: "Moon phase & craters" },
-  { id: 8, name: "Yozakura", color: "#ff2a6d", desc: "Night cherry blossoms" },
-  { id: 9, name: "Hanami", color: "#ff7eb6", desc: "Spring blossoms" },
-  { id: 10, name: "Wasteland", color: "#39ff14", desc: "Pip CRT & scanlines" },
-  { id: 11, name: "Mojave", color: "#ff9e00", desc: "Warm amber glow" }
+  { id: 0, name: "Digital", collection: "Core", color: "#32ade6", secondary: "#ffd60a", desc: "Vector numerals" },
+  { id: 1, name: "Stealth", collection: "Core", color: "#98989d", secondary: "#32ade6", desc: "Baton chronometer" },
+  { id: 2, name: "Corpo", collection: "Core", color: "#ffd60a", secondary: "#ff453a", desc: "Gold & red sweep" },
+  { id: 3, name: "Hologram", collection: "Core", color: "#00f0ff", secondary: "#ffffff", desc: "Cyan skeleton" },
+  { id: 4, name: "Radar", collection: "Core", color: "#30d158", secondary: "#ff375f", desc: "Phosphor sweep" },
+  { id: 5, name: "Phantom", collection: "Core", color: "#e5e5ea", secondary: "#ff375f", desc: "Balance wheel" },
+  { id: 6, name: "Orbit", collection: "Space", color: "#0a84ff", secondary: "#64d2ff", desc: "Ringed planet" },
+  { id: 7, name: "Lunar", collection: "Space", color: "#64d2ff", secondary: "#e2e8f0", desc: "Moonphase dial" },
+  { id: 8, name: "Yozakura", collection: "Sakura", color: "#ff375f", secondary: "#ffd1e3", desc: "Night sakura" },
+  { id: 9, name: "Hanami", collection: "Sakura", color: "#bf5af2", secondary: "#ff9f0a", desc: "Porcelain & plum" },
+  { id: 10, name: "Wasteland", collection: "Fallout", color: "#30d158", secondary: "#39ff14", desc: "Pip-Boy green" },
+  { id: 11, name: "Mojave", collection: "Fallout", color: "#ff9f0a", secondary: "#ffd60a", desc: "Amber field dial" }
 ];
 
+// Watch Simulator & Hardware State
 let currentWatchFace = -1;
+let previewFaceIdx = 0;
+let previewScreenMode = "face"; // "face" | "drawer" | "radial" | "settings" | "boot"
+let previewMotionMode = "subtle"; // "off" | "subtle" | "expressive"
+let previewSettingsHub = 0; // 0: Display, 1: Clock, 2: Gestures, 3: System
+let drawerPage = 0; // 0: Timers, 1: Stopwatch, 2: Alarm & Torch
+let smartStackScroll = 0; // smooth interpolated scroll index 0..2
+
+// Digital Crown & Bezel Scroll Indicator State
+let crownKnurlOffset = 0;
+let crownIndicatorUntilMs = 0;
+
+// Entrance & Transition State
+let entranceStartMs = performance.now();
+let entranceDurationMs = 600;
+let bootStartMs = 0;
+let irisState = "awake"; // "awake" | "sleeping" | "waking"
+let irisStartMs = 0;
+
+// Drag & Gesture Physics State
+let pointerDown = false;
+let dragStartX = 0, dragStartY = 0, dragStartTime = 0;
+let dragDx = 0, dragDy = 0;
+let dragAxis = null; // "x" | "y" | null
+let settleStartMs = 0, settleDurationMs = 180, settleFromX = 0;
+let holdTriggered = false;
+
+// Watch Settings & Complications State
+let hwBrightness = 2; // 0..3
+let hwUse12h = false;
+let hwNightMode = 1; // 0: Off, 1: Auto, 2: On
+let hwScreenTurn = 0; // 0..3
+let drawerTimerEndMs = 0;
+let drawerTimerTotalSec = 180;
+let drawerFlashlight = false;
+let swRunning = false, swStartMs = 0, swAccumMs = 0, swLaps = [];
+let alarmEnabled = false, alarmTimeStr = "07:30";
+let simTimeOffsetMs = 0;
+let simBatteryPct = 86;
+let simBatteryMv = 4082;
+let simTempC = 28.4;
+let simDriftPpb = -142;
+
+// Telemetry Ring Buffers (40 points)
+const teleHistory = {
+  bat: Array.from({ length: 40 }, (_, i) => 86 - (39 - i) * 0.04),
+  temp: Array.from({ length: 40 }, (_, i) => 28.1 + Math.sin(i * 0.25) * 0.4)
+};
+
+function easeOut(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  const u = 1 - t;
+  return 1 - u * u * u;
+}
+
+function easeInOut(t) {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
+  return t * t * (3 - 2 * t);
+}
+
+function hexToRgba(hex, alpha) {
+  const clean = hex.replace("#", "");
+  const r = parseInt(clean.substring(0, 2), 16) || 0;
+  const g = parseInt(clean.substring(2, 4), 16) || 173;
+  const b = parseInt(clean.substring(4, 6), 16) || 230;
+  return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+}
+
+function setAppearance(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const btn = $("themeAppearanceBtn");
+  if (btn) btn.textContent = `Appearance: ${theme === "light" ? "Light" : "Dark"}`;
+  try { localStorage.setItem("drift_studio_appearance", theme); } catch (e) {}
+  applyDynamicTheme(previewFaceIdx);
+}
+
+function applyDynamicTheme(faceIdx) {
+  const f = FACES[faceIdx] || FACES[0];
+  $("liveThemeReadout").textContent = `${f.name} · ${f.collection}`;
+  const syncToggle = $("syncThemeToggle");
+  if (syncToggle && !syncToggle.checked) return;
+  const root = document.documentElement;
+  root.style.setProperty("--theme-primary", f.color);
+  root.style.setProperty("--theme-secondary", f.secondary);
+  root.style.setProperty("--theme-dim", hexToRgba(f.color, 0.14));
+  root.style.setProperty("--theme-glow", hexToRgba(f.color, 0.08));
+}
+
+function pulseCrownScroll(deltaSteps) {
+  crownKnurlOffset = (crownKnurlOffset + deltaSteps * 5) % 40;
+  const crownEl = $("hwBootBtn");
+  if (crownEl) {
+    crownEl.style.backgroundPositionY = `${crownKnurlOffset}px`;
+  }
+  crownIndicatorUntilMs = performance.now() + 950;
+}
+
+function triggerEntrance(faceId) {
+  if (previewMotionMode === "off") {
+    entranceStartMs = 0;
+    return;
+  }
+  const durMap = { 6: 500, 7: 350, 8: 900, 9: 600, 10: 420, 11: 600 };
+  const base = durMap[faceId] || 420;
+  entranceDurationMs = previewMotionMode === "expressive" ? base * 1.5 : base;
+  entranceStartMs = performance.now();
+}
+
+function getEntranceProgress() {
+  if (!entranceStartMs || previewMotionMode === "off") return 1;
+  const elapsed = performance.now() - entranceStartMs;
+  if (elapsed >= entranceDurationMs) return 1;
+  return easeOut(elapsed / entranceDurationMs);
+}
+
+function getWatchDate() {
+  return new Date(Date.now() + simTimeOffsetMs);
+}
+
+function fmtTwo(n) {
+  return String(n).padStart(2, "0");
+}
+
+function formatHourDigits(d) {
+  let h = d.getHours();
+  if (hwUse12h) h = h % 12 || 12;
+  return fmtTwo(h);
+}
+
+function fmtDateStr(d) {
+  const days = ["SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"];
+  const months = ["JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"];
+  return `${days[d.getDay()]} ${d.getDate()} ${months[d.getMonth()]}`;
+}
+
+function drawBatteryIcon(ctx, x, y, pct, color = "#dce2ea", textColor = "#9aa2b4") {
+  ctx.save();
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 1.4;
+  ctx.strokeRect(x - 18, y - 5, 16, 10);
+  ctx.fillStyle = color;
+  ctx.fillRect(x - 2, y - 2.5, 2, 5);
+  const fillW = Math.max(1, Math.round((pct / 100) * 12));
+  ctx.fillStyle = pct <= 15 ? "#ff9f0a" : color;
+  ctx.fillRect(x - 16, y - 3, fillW, 6);
+  ctx.fillStyle = textColor;
+  ctx.font = "500 10.5px 'IBM Plex Mono', monospace";
+  ctx.textAlign = "left";
+  ctx.textBaseline = "middle";
+  ctx.fillText(`${pct}%`, x + 4, y + 0.5);
+  ctx.restore();
+}
+
+function drawDialTicks(ctx, cx, cy, rOuter, tickColor, cardinalColor, style = "standard") {
+  for (let i = 0; i < 60; i++) {
+    const ang = (i * 6 - 90) * (Math.PI / 180);
+    const isHour = i % 5 === 0;
+    const isCardinal = i % 15 === 0;
+    if (style === "minimal" && !isHour) continue;
+    const r1 = rOuter;
+    const r2 = isCardinal ? rOuter - 11 : isHour ? rOuter - 8 : rOuter - 4;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(ang) * r2, cy + Math.sin(ang) * r2);
+    ctx.lineTo(cx + Math.cos(ang) * r1, cy + Math.sin(ang) * r1);
+    ctx.strokeStyle = isHour ? cardinalColor : tickColor;
+    ctx.lineWidth = isCardinal ? 3 : isHour ? 2.2 : 1;
+    ctx.stroke();
+
+    if (i === 0 && (style === "baton" || style === "corpo" || style === "hologram")) {
+      ctx.save();
+      ctx.translate(cx, cy - rOuter + 6);
+      ctx.fillStyle = cardinalColor;
+      ctx.fillRect(-5, -5, 3.2, 11);
+      ctx.fillRect(1.8, -5, 3.2, 11);
+      ctx.restore();
+    }
+  }
+}
+
+function drawAnalogHands(ctx, cx, cy, d, opts) {
+  const sec = d.getSeconds() + (previewMotionMode === "off" ? 0 : d.getMilliseconds() / 1000);
+  const min = d.getMinutes() + sec / 60;
+  const hr = (d.getHours() % 12) + min / 60;
+
+  const hrAng = (hr * 30 - 90) * (Math.PI / 180);
+  const minAng = (min * 6 - 90) * (Math.PI / 180);
+  const secAng = (sec * 6 - 90) * (Math.PI / 180);
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(hrAng);
+  ctx.strokeStyle = opts.handColor || "#dce2ea";
+  ctx.lineWidth = opts.skeleton ? 2.2 : 5;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-10, 0);
+  ctx.lineTo(54, 0);
+  ctx.stroke();
+  if (opts.inlayColor) {
+    ctx.strokeStyle = opts.inlayColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(8, 0);
+    ctx.lineTo(48, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.rotate(minAng);
+  ctx.strokeStyle = opts.handColor || "#dce2ea";
+  ctx.lineWidth = opts.skeleton ? 2 : 3.8;
+  ctx.lineCap = "round";
+  ctx.beginPath();
+  ctx.moveTo(-14, 0);
+  ctx.lineTo(82, 0);
+  ctx.stroke();
+  if (opts.inlayColor) {
+    ctx.strokeStyle = opts.inlayColor;
+    ctx.lineWidth = 1.6;
+    ctx.beginPath();
+    ctx.moveTo(10, 0);
+    ctx.lineTo(74, 0);
+    ctx.stroke();
+  }
+  ctx.restore();
+
+  if (!opts.hideSecondHand) {
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(secAng);
+    ctx.strokeStyle = opts.secColor || "#00f0ff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(-18, 0);
+    ctx.lineTo(88, 0);
+    ctx.stroke();
+    ctx.restore();
+  }
+
+  ctx.beginPath();
+  ctx.arc(cx, cy, 4.5, 0, Math.PI * 2);
+  ctx.fillStyle = opts.handColor || "#dce2ea";
+  ctx.fill();
+  ctx.beginPath();
+  ctx.arc(cx, cy, 2, 0, Math.PI * 2);
+  ctx.fillStyle = opts.secColor || "#00f0ff";
+  ctx.fill();
+}
+
+function drawDateWindow(ctx, x, y, dayNum, borderColor, textColor, bgColor = "#07080b") {
+  ctx.save();
+  ctx.fillStyle = bgColor;
+  ctx.strokeStyle = borderColor;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.roundRect(x - 15, y - 10, 30, 20, 4);
+  ctx.fill();
+  ctx.stroke();
+  ctx.fillStyle = textColor;
+  ctx.font = "600 13px 'Chakra Petch', sans-serif";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(dayNum), x, y + 1);
+  ctx.restore();
+}
+
+function drawBatteryRing(ctx, cx, cy, r, pct, ringColor, textColor = "#9aa2b4") {
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, 0, Math.PI * 2);
+  ctx.strokeStyle = "rgba(148, 163, 184, 0.2)";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  const endAng = -Math.PI / 2 + (pct / 100) * Math.PI * 2;
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, -Math.PI / 2, endAng);
+  ctx.strokeStyle = ringColor;
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+
+  ctx.fillStyle = textColor;
+  ctx.font = "600 10px 'IBM Plex Mono', monospace";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(String(pct), cx, cy + 0.5);
+  ctx.restore();
+}
+
+// watchOS Curved Bezel Scroll Indicator along upper-right arc
+function drawWatchOsScrollArc(ctx, activeIndex, totalItems, color) {
+  const cx = 120, cy = 120, r = 114;
+  const trackStart = -0.52; // ~ -30 deg
+  const trackEnd = 0.36;    // ~ +20 deg
+  const totalSpan = trackEnd - trackStart;
+
+  ctx.save();
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, trackStart, trackEnd);
+  ctx.strokeStyle = "rgba(255, 255, 255, 0.22)";
+  ctx.lineWidth = 3.2;
+  ctx.lineCap = "round";
+  ctx.stroke();
+
+  const thumbSpan = Math.max(0.16, totalSpan / Math.max(1, totalItems));
+  const norm = Math.max(0, Math.min(1, activeIndex / Math.max(1, totalItems - 1)));
+  const t0 = trackStart + norm * (totalSpan - thumbSpan);
+  ctx.beginPath();
+  ctx.arc(cx, cy, r, t0, t0 + thumbSpan);
+  ctx.strokeStyle = color || "#30d158";
+  ctx.lineWidth = 3.6;
+  ctx.lineCap = "round";
+  ctx.stroke();
+  ctx.restore();
+}
+
+function renderSingleFace(ctx, faceId, offsetX = 0, isThumb = false, entP = 1) {
+  ctx.save();
+  ctx.translate(offsetX, 0);
+
+  const cx = 120, cy = 120;
+  const d = getWatchDate();
+  const hh = formatHourDigits(d);
+  const mm = fmtTwo(d.getMinutes());
+  const ss = d.getSeconds();
+  const dateStr = fmtDateStr(d);
+
+  ctx.fillStyle = "#050608";
+  ctx.fillRect(0, 0, 240, 240);
+
+  if (faceId === 0) {
+    drawDialTicks(ctx, cx, cy, 115, "#222834", "#464e5e");
+    const secAng = ((ss * 6) - 90) * (Math.PI / 180);
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(secAng) * 104, cy + Math.sin(secAng) * 104);
+    ctx.lineTo(cx + Math.cos(secAng) * 116, cy + Math.sin(secAng) * 116);
+    ctx.strokeStyle = "#00f0ff";
+    ctx.lineWidth = 2.8;
+    ctx.stroke();
+
+    if (!isThumb) drawBatteryIcon(ctx, cx - 2, 46, simBatteryPct);
+    ctx.fillStyle = "#e5ebf2";
+    ctx.font = "500 66px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${hh}:${mm}`, cx, 105);
+
+    if (previewMotionMode === "expressive" && !isThumb) {
+      const scanY = 74 + ((performance.now() / 18) % 62);
+      ctx.fillStyle = "rgba(0, 240, 255, 0.12)";
+      ctx.fillRect(44, scanY, 152, 2);
+    }
+
+    ctx.strokeStyle = "#fcee0a";
+    ctx.lineWidth = 1.8;
+    const bracketSpread = 62 * entP;
+    ctx.beginPath();
+    ctx.moveTo(cx - bracketSpread, 145); ctx.lineTo(cx - bracketSpread, 161);
+    ctx.moveTo(cx + bracketSpread, 145); ctx.lineTo(cx + bracketSpread, 161);
+    ctx.stroke();
+
+    ctx.fillStyle = "#9aa2b4";
+    ctx.font = "500 12px 'IBM Plex Mono', monospace";
+    ctx.fillText(dateStr, cx, 153);
+
+    ctx.strokeStyle = "#1e2430";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(76, 178); ctx.lineTo(164, 178);
+    ctx.stroke();
+
+    ctx.fillStyle = "#6b7385";
+    ctx.font = "500 10.5px 'Chakra Petch', sans-serif";
+    ctx.fillText("DRIFT", cx, 193);
+
+  } else if (faceId === 1) {
+    ctx.fillStyle = "#07090d";
+    ctx.fillRect(0, 0, 240, 240);
+    drawDialTicks(ctx, cx, cy, 114, "#2a303c", "#dce2ea", "baton");
+    ctx.fillStyle = "#6b7385";
+    ctx.font = "500 11px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("DRIFT", cx, 72);
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#464e5e", "#dce2ea");
+    drawBatteryRing(ctx, cx, 168, 15, Math.round(simBatteryPct * entP), "#00f0ff");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#dce2ea", inlayColor: "#9aa2b4", secColor: "#00f0ff" });
+
+  } else if (faceId === 2) {
+    ctx.fillStyle = "#08080a";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 116, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * entP);
+    ctx.strokeStyle = "#8a8208";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+    drawDialTicks(ctx, cx, cy, 112, "#5c5604", "#fcee0a", "corpo");
+    ctx.fillStyle = "#9aa2b4";
+    ctx.font = "600 11px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("CORPO", cx, 72);
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#8a8208", "#dce2ea");
+    drawBatteryRing(ctx, cx, 168, 15, simBatteryPct, "#fcee0a", "#fcee0a");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#dce2ea", secColor: "#ff3b30" });
+
+  } else if (faceId === 3) {
+    ctx.fillStyle = "#030b0e";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 74 * entP, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(0, 240, 255, 0.24)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    drawDialTicks(ctx, cx, cy, 114, "#0a4a55", "#00f0ff", "hologram");
+    ctx.fillStyle = "#00f0ff";
+    ctx.font = "500 10.5px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("HOLOGRAM", cx, 72);
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#00f0ff", "#dce2ea", "#05191e");
+    drawBatteryRing(ctx, cx, 168, 15, simBatteryPct, "#00f0ff");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#00f0ff", inlayColor: "#ffffff", secColor: "#dce2ea", skeleton: true });
+
+  } else if (faceId === 4) {
+    ctx.fillStyle = "#04080a";
+    ctx.fillRect(0, 0, 240, 240);
+    [56, 76, 96, 114].forEach((r, idx) => {
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = idx === 3 ? "#0d5966" : "rgba(25, 255, 176, 0.14)";
+      ctx.lineWidth = idx === 3 ? 2 : 1;
+      ctx.stroke();
+    });
+
+    const sweepDeg = previewMotionMode === "off"
+      ? (ss * 6 - 90)
+      : (((performance.now() % 3600) / 3600) * 360 - 90);
+    for (let i = 0; i < 24; i++) {
+      const a1 = (sweepDeg - i * 3.5) * (Math.PI / 180);
+      const a2 = (sweepDeg - (i + 1) * 3.5) * (Math.PI / 180);
+      ctx.beginPath();
+      ctx.arc(cx, cy, 86, a2, a1);
+      ctx.strokeStyle = `rgba(25, 255, 176, ${(1 - i / 24) * 0.38})`;
+      ctx.lineWidth = 18;
+      ctx.stroke();
+    }
+
+    const minAng = (d.getMinutes() * 6 - 90) * (Math.PI / 180);
+    ctx.fillStyle = "#fcee0a";
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(minAng) * 96, cy + Math.sin(minAng) * 96, 3.2, 0, Math.PI * 2);
+    ctx.fill();
+
+    const secAng = (ss * 6 - 90) * (Math.PI / 180);
+    ctx.fillStyle = "#ff2a6d";
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(secAng) * 86, cy + Math.sin(secAng) * 86, 3, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (!isThumb) drawBatteryIcon(ctx, cx - 2, 68, simBatteryPct);
+    ctx.fillStyle = "#e5ebf2";
+    ctx.font = "500 52px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${hh}:${mm}`, cx, 114);
+
+    ctx.fillStyle = "#9aa2b4";
+    ctx.font = "500 11px 'IBM Plex Mono', monospace";
+    ctx.fillText(dateStr, cx, 148);
+
+  } else if (faceId === 5) {
+    ctx.fillStyle = "#090b0f";
+    ctx.fillRect(0, 0, 240, 240);
+    drawDialTicks(ctx, cx, cy, 114, "#2a303c", "#9aa2b4", "baton");
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.moveTo(82, 26);
+    ctx.lineTo(158, 26);
+    ctx.lineTo(136, 92);
+    ctx.lineTo(104, 92);
+    ctx.closePath();
+    ctx.fillStyle = "#161a22";
+    ctx.fill();
+    ctx.strokeStyle = "#464e5e";
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
+
+    const wheelY = 56;
+    const osc = previewMotionMode === "off" ? 0 : Math.sin(performance.now() / 90) * 0.65;
+    ctx.translate(cx, wheelY);
+    ctx.rotate(osc);
+    ctx.beginPath();
+    ctx.arc(0, 0, 20, 0, Math.PI * 2);
+    ctx.strokeStyle = "#d4af37";
+    ctx.lineWidth = 2.2;
+    ctx.stroke();
+    for (let k = 0; k < 3; k++) {
+      const a = (k * 120) * (Math.PI / 180);
+      ctx.beginPath();
+      ctx.moveTo(0, 0);
+      ctx.lineTo(Math.cos(a) * 19, Math.sin(a) * 19);
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.arc(0, 0, 3.5, 0, Math.PI * 2);
+    ctx.fillStyle = "#ff2a6d";
+    ctx.fill();
+    ctx.restore();
+
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#464e5e", "#dce2ea");
+    drawBatteryRing(ctx, cx, 168, 15, simBatteryPct, "#6b7385");
+    const hideSec = (ss >= 58 || ss <= 2);
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#dce2ea", secColor: "#dce2ea", hideSecondHand: hideSec });
+
+  } else if (faceId === 6) {
+    ctx.fillStyle = "#04060c";
+    ctx.fillRect(0, 0, 240, 240);
+    const stars = [[38, 52], [188, 46], [52, 172], [85, 34], [196, 108], [44, 118], [98, 185]];
+    stars.forEach(([sx, sy], i) => {
+      const tw = (previewMotionMode === "expressive" && ((Math.floor(performance.now() / 350) + i) % 3 === 0)) ? 0.35 : 0.9;
+      ctx.fillStyle = `rgba(220, 226, 234, ${tw})`;
+      ctx.fillRect(sx, sy, 2, 2);
+    });
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(166, 166, 26, 0, Math.PI * 2);
+    ctx.fillStyle = "#162038";
+    ctx.fill();
+    ctx.translate(166, 166);
+    ctx.rotate(-0.38);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, 44, 9, 0, 0, Math.PI * 2);
+    ctx.strokeStyle = "#6c84b5";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    ctx.restore();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 110, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * entP);
+    ctx.strokeStyle = "#1c355e";
+    ctx.lineWidth = 1.6;
+    ctx.stroke();
+
+    const targetDeg = d.getMinutes() * 6 * entP;
+    const minAng = (targetDeg - 90) * (Math.PI / 180);
+    ctx.beginPath();
+    ctx.arc(cx + Math.cos(minAng) * 110, cy + Math.sin(minAng) * 110, 4.2, 0, Math.PI * 2);
+    ctx.fillStyle = "#00f0ff";
+    ctx.fill();
+
+    if (!isThumb) drawBatteryIcon(ctx, cx - 2, 42, simBatteryPct);
+    ctx.fillStyle = "#f4f6f9";
+    ctx.font = "500 62px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${hh}:${mm}`, cx, 100);
+
+    ctx.fillStyle = "#9aa2b4";
+    ctx.font = "500 11.5px 'IBM Plex Mono', monospace";
+    ctx.fillText(dateStr, cx, 142);
+
+  } else if (faceId === 7) {
+    ctx.fillStyle = "#080d1a";
+    ctx.fillRect(0, 0, 240, 240);
+    drawDialTicks(ctx, cx, cy, 114, "#1e293b", "#cbd5e1", "baton");
+    drawBatteryRing(ctx, cx, 70, 14, simBatteryPct, "#60a5fa", "#cbd5e1");
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, 166, 18, 0, Math.PI * 2);
+    ctx.fillStyle = "#0f172a";
+    ctx.fill();
+    ctx.strokeStyle = "#334155";
+    ctx.lineWidth = 1.4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(cx - 2, 166, 11 * entP, 0, Math.PI * 2);
+    ctx.fillStyle = "#e2e8f0";
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(cx + 4, 163, 9, 0, Math.PI * 2);
+    ctx.fillStyle = "#0f172a";
+    ctx.fill();
+    ctx.restore();
+
+    drawDateWindow(ctx, 168, cx, d.getDate(), "#334155", "#cbd5e1", "#0b1324");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#e2e8f0", secColor: "#60a5fa" });
+
+  } else if (faceId === 8) {
+    ctx.fillStyle = "#120c18";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 86, 0, Math.PI * 2);
+    ctx.fillStyle = "#1a1124";
+    ctx.fill();
+
+    const drawBlossom = (bx, by, r, alpha = 1) => {
+      ctx.save();
+      ctx.globalAlpha = alpha;
+      ctx.translate(bx, by);
+      ctx.fillStyle = "#ff85b3";
+      for (let p = 0; p < 5; p++) {
+        const a = (p * 72) * (Math.PI / 180);
+        ctx.beginPath();
+        ctx.arc(Math.cos(a) * r, Math.sin(a) * r, r * 0.75, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = "#ffd1e3";
+      ctx.beginPath();
+      ctx.arc(0, 0, r * 0.35, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.restore();
+    };
+    const shimmer = previewMotionMode === "expressive" ? 0.85 + Math.sin(performance.now() / 300) * 0.15 : 1;
+    drawBlossom(154, 62, 6.5, shimmer);
+    drawBlossom(174, 56, 7.5, 1);
+    drawBlossom(190, 48, 8, shimmer);
+    drawBlossom(54, 178, 8, 1);
+    drawBlossom(76, 170, 6.5, shimmer);
+    drawBlossom(104, 178, 5.5, 1);
+
+    if (entP < 1 && !isThumb) {
+      ctx.fillStyle = "#ff9ec4";
+      ctx.beginPath();
+      ctx.ellipse(42 + entP * 14, 72 + entP * 75, 4, 2.2, entP * 2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.ellipse(196 - entP * 12, 82 + entP * 68, 3.8, 2, -entP * 2, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (!isThumb) drawBatteryIcon(ctx, cx - 10, 56, simBatteryPct, "#e2d4f0", "#d8b4e2");
+    ctx.fillStyle = "#f9f5ff";
+    ctx.font = "500 58px 'Chakra Petch', sans-serif";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${hh}:${mm}`, cx, 110);
+
+    ctx.fillStyle = "#e598b8";
+    ctx.font = "500 11.5px 'IBM Plex Mono', monospace";
+    ctx.fillText(dateStr, cx, 148);
+
+  } else if (faceId === 9) {
+    ctx.fillStyle = "#f4ebe6";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 115, 0, Math.PI * 2);
+    ctx.strokeStyle = "#d9c5bc";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    drawDialTicks(ctx, cx, cy, 108, "#bda69e", "#6d2e46", "minimal");
+
+    ctx.strokeStyle = "#5c3a38";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.moveTo(28, 152);
+    ctx.quadraticCurveTo(64, 188, 28 + 88 * entP, 152 + 54 * entP);
+    ctx.stroke();
+
+    [[48, 174], [68, 192], [92, 202], [112, 206]].forEach(([bx, by], idx) => {
+      if (entP > idx * 0.2) {
+        ctx.fillStyle = "#f294b6";
+        ctx.beginPath();
+        ctx.arc(bx, by, 6 * Math.min(1, (entP - idx * 0.2) * 2), 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#6d2e46", "#4a1c2f", "#f4ebe6");
+    drawBatteryRing(ctx, cx, 168, 14, simBatteryPct, "#c86d8a", "#6d2e46");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#6d2e46", inlayColor: "#d88ca6", secColor: "#c86d8a" });
+
+  } else if (faceId === 10) {
+    ctx.fillStyle = "#040d04";
+    ctx.fillRect(0, 0, 240, 240);
+
+    ctx.fillStyle = "#39ff14";
+    ctx.font = "600 11px 'IBM Plex Mono', monospace";
+    ctx.textAlign = "left";
+    ctx.fillText("PWR", 46, 56);
+    const bars = Math.round((simBatteryPct / 100) * 8 * entP);
+    for (let b = 0; b < 8; b++) {
+      ctx.strokeStyle = "#39ff14";
+      ctx.lineWidth = 1.2;
+      ctx.strokeRect(82 + b * 12, 48, 9, 9);
+      if (b < bars) {
+        ctx.fillStyle = "#39ff14";
+        ctx.fillRect(83 + b * 12, 49, 7, 7);
+      }
+    }
+
+    const brH = 74 * entP;
+    ctx.strokeStyle = "#1b8a0c";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(42, 78); ctx.lineTo(34, 78); ctx.lineTo(34, 78 + brH); ctx.lineTo(42, 78 + brH);
+    ctx.moveTo(198, 78); ctx.lineTo(206, 78); ctx.lineTo(206, 78 + brH); ctx.lineTo(198, 78 + brH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#39ff14";
+    ctx.font = "700 60px 'Chakra Petch', monospace";
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText(`${hh}:${mm}`, cx, 112);
+
+    ctx.fillStyle = "#62e849";
+    ctx.font = "500 11.5px 'IBM Plex Mono', monospace";
+    ctx.fillText(dateStr, cx, 150);
+
+    ctx.strokeStyle = "#1b8a0c";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.moveTo(cx - 74 * entP, 168); ctx.lineTo(cx + 74 * entP, 168);
+    ctx.stroke();
+
+    ctx.font = "500 10.5px 'IBM Plex Mono', monospace";
+    ctx.fillText(`SYNC OK      ${simBatteryPct}%`, cx, 184);
+
+  } else if (faceId === 11) {
+    ctx.fillStyle = "#1b1107";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.beginPath();
+    ctx.arc(cx, cy, 114, 0, Math.PI * 2);
+    ctx.strokeStyle = "#6b4417";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+    if (entP < 1 && !isThumb) {
+      const hlAng = -Math.PI / 2 + entP * Math.PI * 2;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 114, hlAng - 0.5, hlAng + 0.5);
+      ctx.strokeStyle = "#ff9e00";
+      ctx.lineWidth = 3;
+      ctx.stroke();
+    }
+    drawDialTicks(ctx, cx, cy, 109, "#6b4417", "#ff9e00", "minimal");
+    drawDateWindow(ctx, 165, cx, d.getDate(), "#ff9e00", "#f4e6d2", "#1b1107");
+    drawBatteryRing(ctx, cx, 168, 15, Math.round(simBatteryPct * entP), "#ff9e00", "#f4e6d2");
+    drawAnalogHands(ctx, cx, cy, d, { handColor: "#ff9e00", inlayColor: "#f4e6d2", secColor: "#ff9e00" });
+  }
+
+  ctx.restore();
+}
+
+// ============================================================================
+// watchOS 11 Smart Stack Widget Drawer Renderer
+// ============================================================================
+function renderQuickDrawer(ctx) {
+  const cx = 120;
+  const themeCol = FACES[previewFaceIdx].color;
+  const d = getWatchDate();
+
+  if (drawerFlashlight) {
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, 240, 240);
+    ctx.fillStyle = "#1d1d1f";
+    ctx.font = "700 14px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("Torch Active", cx, 110);
+    ctx.font = "500 11px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.fillText("Tap screen to dismiss", cx, 130);
+    return;
+  }
+
+  // Translucent dark watchOS Smart Stack backdrop
+  ctx.fillStyle = "#08090c";
+  ctx.fillRect(0, 0, 240, 240);
+
+  // Smooth spring interpolation toward drawerPage
+  smartStackScroll += (drawerPage - smartStackScroll) * 0.22;
+
+  // watchOS Top Status Bar: Date pill on left, Mini Clock on right
+  ctx.fillStyle = "#8e8e93";
+  ctx.font = "600 10.5px -apple-system, 'Plus Jakarta Sans', sans-serif";
+  ctx.textAlign = "left";
+  ctx.fillText(fmtDateStr(d).slice(0, 6), 54, 28);
+
+  ctx.fillStyle = "#f5f5f7";
+  ctx.textAlign = "right";
+  ctx.fillText(`${formatHourDigits(d)}:${fmtTwo(d.getMinutes())}`, 186, 28);
+
+  const now = Date.now();
+  const remSec = drawerTimerEndMs > now ? Math.ceil((drawerTimerEndMs - now) / 1000) : 0;
+
+  if (drawerPage === 0) {
+    // Widget Platter 1: Countdown Timer
+    ctx.save();
+    ctx.fillStyle = "#1c1c1e";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(24, 42, 192, 92, 20);
+    ctx.fill();
+    ctx.stroke();
+
+    // Circular timer ring inside left of platter
+    const frac = remSec > 0 ? remSec / drawerTimerTotalSec : 1;
+    ctx.beginPath();
+    ctx.arc(58, 76, 19, 0, Math.PI * 2);
+    ctx.strokeStyle = "rgba(255, 159, 10, 0.22)";
+    ctx.lineWidth = 4;
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(58, 76, 19, -Math.PI / 2, -Math.PI / 2 + frac * Math.PI * 2);
+    ctx.strokeStyle = "#ff9f0a";
+    ctx.lineWidth = 4;
+    ctx.lineCap = "round";
+    ctx.stroke();
+
+    ctx.fillStyle = "#ff9f0a";
+    ctx.font = "600 10px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("TIMER", 88, 62);
+
+    const dispMin = fmtTwo(Math.floor(remSec / 60));
+    const dispSec = fmtTwo(remSec % 60);
+    ctx.fillStyle = "#f5f5f7";
+    ctx.font = "700 24px 'IBM Plex Mono', monospace";
+    ctx.fillText(remSec > 0 ? `${dispMin}:${dispSec}` : "03:00", 88, 86);
+
+    // 1m / 3m / 5m watchOS pill buttons inside platter bottom
+    const presets = [
+      { label: "1m", x: 36 },
+      { label: "3m", x: 94 },
+      { label: "5m", x: 152 }
+    ];
+    presets.forEach(p => {
+      ctx.fillStyle = "#2c2c2e";
+      ctx.beginPath();
+      ctx.roundRect(p.x, 100, 50, 26, 13);
+      ctx.fill();
+      ctx.fillStyle = "#ffd60a";
+      ctx.font = "600 11.5px -apple-system, 'Plus Jakarta Sans', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText(p.label, p.x + 25, 117);
+    });
+    ctx.restore();
+
+    // Widget Platter 2: Torch & Next Stack Card
+    ctx.save();
+    ctx.fillStyle = "#1c1c1e";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.1)";
+    ctx.beginPath();
+    ctx.roundRect(32, 144, 176, 44, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = themeCol;
+    ctx.beginPath();
+    ctx.arc(56, 166, 13, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = "#f5f5f7";
+    ctx.font = "600 12.5px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText("Flashlight Torch", 78, 170);
+    ctx.restore();
+  } else {
+    // Smart Stack Page 2: Stopwatch & Daily Alarm Platters
+    const swMs = getStopwatchMs();
+    ctx.save();
+    ctx.fillStyle = "#1c1c1e";
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.12)";
+    ctx.beginPath();
+    ctx.roundRect(24, 42, 192, 92, 20);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#30d158";
+    ctx.font = "600 10px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText("STOPWATCH", cx, 58);
+
+    ctx.fillStyle = "#f5f5f7";
+    ctx.font = "700 23px 'IBM Plex Mono', monospace";
+    ctx.fillText(formatSw(swMs), cx, 82);
+
+    // Start/Pause & Reset pills
+    ctx.fillStyle = swRunning ? "rgba(255, 69, 58, 0.25)" : "rgba(48, 209, 88, 0.25)";
+    ctx.beginPath();
+    ctx.roundRect(38, 96, 78, 28, 14);
+    ctx.fill();
+    ctx.fillStyle = swRunning ? "#ff453a" : "#30d158";
+    ctx.font = "600 11.5px -apple-system, sans-serif";
+    ctx.fillText(swRunning ? "Stop" : "Start", 77, 114);
+
+    ctx.fillStyle = "#2c2c2e";
+    ctx.beginPath();
+    ctx.roundRect(124, 96, 78, 28, 14);
+    ctx.fill();
+    ctx.fillStyle = "#f5f5f7";
+    ctx.fillText("Reset", 163, 114);
+    ctx.restore();
+
+    // Alarm Platter
+    ctx.save();
+    ctx.fillStyle = "#1c1c1e";
+    ctx.strokeStyle = alarmEnabled ? "#30d158" : "rgba(255, 255, 255, 0.1)";
+    ctx.beginPath();
+    ctx.roundRect(32, 144, 176, 44, 18);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = alarmEnabled ? "#30d158" : "#98989d";
+    ctx.font = "600 12.5px -apple-system, sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(`Alarm ${alarmTimeStr} · ${alarmEnabled ? "ON" : "OFF"}`, cx, 170);
+    ctx.restore();
+  }
+
+  drawWatchOsScrollArc(ctx, drawerPage, 2, themeCol);
+}
+
+// ============================================================================
+// Settings Platter List (Slide down from watch face)
+// ============================================================================
+function renderSettingsHub(ctx) {
+  const cx = 120;
+  const themeCol = FACES[previewFaceIdx].color;
+
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, 240, 240);
+
+  const nightNames = ["Off", "Auto", "On"];
+  const turnNames = ["0° Normal", "90° Right", "180° Half", "270° Left"];
+  const hubs = [
+    {
+      title: "Display",
+      item1: { label: "Brightness", val: `Level ${hwBrightness + 1} of 4` },
+      item2: { label: "Motion", val: previewMotionMode.charAt(0).toUpperCase() + previewMotionMode.slice(1) }
+    },
+    {
+      title: "Clock & Sync",
+      item1: { label: "Time Format", val: hwUse12h ? "12-Hour" : "24-Hour" },
+      item2: { label: "Hot Swap", val: `${countBits(getFaceMask())} Faces Active` }
+    },
+    {
+      title: "Gestures",
+      item1: { label: "Night Mode", val: nightNames[hwNightMode] },
+      item2: { label: "Orientation", val: turnNames[hwScreenTurn] }
+    },
+    {
+      title: "System Info",
+      item1: { label: "Battery", val: `${simBatteryPct}% · ${simBatteryMv} mV` },
+      item2: { label: "QMI8658 IMU", val: `${simTempC.toFixed(1)}°C · ${simDriftPpb} ppb` }
+    }
+  ];
+  const hub = hubs[previewSettingsHub % hubs.length];
+
+  // watchOS Top Title Header
+  ctx.fillStyle = themeCol;
+  ctx.font = "600 13px -apple-system, 'Plus Jakarta Sans', sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText(`${hub.title} ▾`, cx, 34);
+
+  [54, 114].forEach((y, idx) => {
+    const it = idx === 0 ? hub.item1 : hub.item2;
+    ctx.fillStyle = "#1c1c1e";
+    ctx.strokeStyle = idx === 0 ? hexToRgba(themeCol, 0.5) : "rgba(255, 255, 255, 0.1)";
+    ctx.lineWidth = 1.2;
+    ctx.beginPath();
+    ctx.roundRect(24, y, 192, 50, 16);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#98989d";
+    ctx.font = "500 10.5px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.textAlign = "left";
+    ctx.fillText(it.label, 40, y + 20);
+
+    ctx.fillStyle = "#f5f5f7";
+    ctx.font = "600 13px -apple-system, 'Plus Jakarta Sans', sans-serif";
+    ctx.fillText(it.val, 40, y + 38);
+  });
+
+  drawWatchOsScrollArc(ctx, previewSettingsHub, 4, themeCol);
+
+  ctx.fillStyle = "#636366";
+  ctx.font = "500 10px -apple-system, sans-serif";
+  ctx.textAlign = "center";
+  ctx.fillText("Tap header to cycle", cx, 194);
+}
+
+function renderBootIgnition(ctx, t) {
+  const cx = 120, cy = 120;
+  ctx.fillStyle = "#000000";
+  ctx.fillRect(0, 0, 240, 240);
+
+  const r1 = 6 + 110 * easeOut(Math.min(1, t / 0.4));
+  ctx.beginPath();
+  ctx.arc(cx, cy, r1, 0, Math.PI * 2);
+  ctx.strokeStyle = "#32ade6";
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  for (let i = 0; i < 12; i++) {
+    const tp = easeOut((t - (0.06 + i * 0.02)) / 0.18);
+    if (tp <= 0) continue;
+    const ang = (i * 30 - 90) * (Math.PI / 180);
+    const rOut = 115, rIn = rOut - (i % 3 === 0 ? 10 : 6) * tp;
+    ctx.beginPath();
+    ctx.moveTo(cx + Math.cos(ang) * rIn, cy + Math.sin(ang) * rIn);
+    ctx.lineTo(cx + Math.cos(ang) * rOut, cy + Math.sin(ang) * rOut);
+    ctx.strokeStyle = (i === 0 || i === 6) ? "#32ade6" : (i % 3 === 0) ? "#ff375f" : "#636366";
+    ctx.lineWidth = i % 3 === 0 ? 2.5 : 1.5;
+    ctx.stroke();
+  }
+
+  const ap = easeOut((t - 0.12) / 0.5);
+  if (ap > 0) {
+    const spin = (1 - ap) * 2.4;
+    ctx.beginPath();
+    ctx.arc(cx, cy, 100, spin - 0.8 * ap, spin + 0.8 * ap);
+    ctx.strokeStyle = "#32ade6";
+    ctx.lineWidth = 2.5;
+    ctx.stroke();
+
+    ctx.beginPath();
+    ctx.arc(cx, cy, 93, -spin + 1.2, -spin + 1.2 + 0.9 * ap);
+    ctx.strokeStyle = "#ff375f";
+    ctx.lineWidth = 2;
+    ctx.stroke();
+  }
+
+  const split = easeOut((t - 0.28) / 0.28);
+  const reveal = easeInOut((t - 0.4) / 0.4);
+  if (split > 0) {
+    const gap = 22 * split;
+    const half = 80 * split;
+    ctx.fillStyle = "#32ade6";
+    ctx.fillRect(cx - half, cy - gap, half * 2, 2);
+    ctx.fillStyle = "#ff375f";
+    ctx.fillRect(cx - half, cy + gap, half * 2, 2);
+
+    if (reveal > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(cx - 75, cy - gap + 2, 150 * reveal, gap * 2 - 4);
+      ctx.clip();
+      ctx.fillStyle = "#ffd60a";
+      ctx.font = "700 32px 'Chakra Petch', sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText("DRIFT", cx, cy + 1);
+      ctx.restore();
+
+      if (reveal < 0.99) {
+        const scanX = cx - 75 + 150 * reveal;
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(scanX - 1, cy - gap, 2.5, gap * 2);
+      }
+    }
+  }
+
+  if (t > 0.7) {
+    ctx.fillStyle = "#98989d";
+    ctx.font = "500 11px 'IBM Plex Mono', monospace";
+    ctx.textAlign = "center";
+    ctx.fillText("Drift Watch · v0.15.2", cx, cy + 40);
+  }
+}
+
+function getNeighborActiveFace(fromIdx, dir) {
+  const mask = getFaceMask();
+  if (mask === 0) return (fromIdx + dir + FACES.length) % FACES.length;
+  let idx = fromIdx;
+  for (let step = 0; step < FACES.length; step++) {
+    idx = (idx + dir + FACES.length) % FACES.length;
+    if (mask & (1 << idx)) return idx;
+  }
+  return fromIdx;
+}
+
+function renderWatchViewport(ctx, w, h) {
+  const scale = w / 240;
+  ctx.save();
+  ctx.scale(scale, scale);
+
+  const cx = 120, cy = 120;
+  ctx.beginPath();
+  ctx.arc(cx, cy, 119, 0, Math.PI * 2);
+  ctx.clip();
+
+  const nowPerf = performance.now();
+
+  if (previewScreenMode === "boot") {
+    const bt = (nowPerf - bootStartMs) / 1750;
+    if (bt >= 1) {
+      setScreenMode("face");
+      triggerEntrance(previewFaceIdx);
+    } else {
+      renderBootIgnition(ctx, bt);
+      ctx.restore();
+      return;
+    }
+  }
+
+  const entP = getEntranceProgress();
+
+  let slideOffset = 0;
+  if (previewScreenMode === "face") {
+    if (pointerDown && dragAxis === "x") {
+      slideOffset = Math.max(-240, Math.min(240, dragDx));
+    } else if (settleDurationMs > 0 && nowPerf - settleStartMs < settleDurationMs) {
+      const p = easeOut((nowPerf - settleStartMs) / settleDurationMs);
+      slideOffset = settleFromX * (1 - p);
+    }
+  }
+
+  if (previewScreenMode === "face") {
+    renderSingleFace(ctx, previewFaceIdx, slideOffset, false, entP);
+    if (Math.abs(slideOffset) > 1) {
+      const neighborDir = slideOffset < 0 ? 1 : -1;
+      const neighborIdx = getNeighborActiveFace(previewFaceIdx, neighborDir);
+      const neighborOffset = slideOffset + (slideOffset < 0 ? 240 : -240);
+      renderSingleFace(ctx, neighborIdx, neighborOffset, false, 1);
+    }
+
+    // Show Digital Crown scroll indicator on face when rotated
+    if (nowPerf < crownIndicatorUntilMs) {
+      drawWatchOsScrollArc(ctx, previewFaceIdx, FACES.length, FACES[previewFaceIdx].color);
+    }
+
+    // Long-press hold ring feedback
+    if (pointerDown && !dragAxis && !holdTriggered) {
+      const heldMs = nowPerf - dragStartTime;
+      if (heldMs > 120) {
+        const hp = Math.min(1, (heldMs - 120) / 480);
+        ctx.beginPath();
+        ctx.arc(cx, cy, 114, -Math.PI / 2, -Math.PI / 2 + hp * Math.PI * 2);
+        ctx.strokeStyle = FACES[previewFaceIdx].color;
+        ctx.lineWidth = 3.5;
+        ctx.stroke();
+      }
+    }
+  } else if (previewScreenMode === "drawer") {
+    renderQuickDrawer(ctx);
+  } else {
+    renderSettingsHub(ctx);
+  }
+
+  // Simulated hardware brightness dimming overlay
+  const dimLevels = [0.38, 0.18, 0.05, 0];
+  const dimAlpha = dimLevels[hwBrightness] || 0;
+  if (dimAlpha > 0 && !drawerFlashlight) {
+    ctx.fillStyle = `rgba(0, 0, 0, ${dimAlpha})`;
+    ctx.fillRect(0, 0, 240, 240);
+  }
+
+  // Radial Iris Wake / Sleep Transition
+  if (irisState === "sleeping" || irisState === "waking") {
+    const elapsed = nowPerf - irisStartMs;
+    const dur = 300;
+    const p = Math.min(1, elapsed / dur);
+    const openFrac = irisState === "sleeping" ? (1 - easeOut(p)) : easeOut(p);
+    const irisR = Math.max(0, openFrac * 122);
+
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(0, 0, 240, 240);
+    ctx.arc(cx, cy, irisR, 0, Math.PI * 2, true);
+    ctx.fillStyle = "#000000";
+    ctx.fill("evenodd");
+    if (irisR > 2 && irisR < 118) {
+      ctx.beginPath();
+      ctx.arc(cx, cy, irisR, 0, Math.PI * 2);
+      ctx.strokeStyle = FACES[previewFaceIdx].color;
+      ctx.lineWidth = 2;
+      ctx.stroke();
+    }
+    ctx.restore();
+
+    if (p >= 1 && irisState === "waking") {
+      irisState = "awake";
+    }
+  }
+
+  ctx.restore();
+}
+
+function countBits(mask) {
+  let c = 0;
+  for (let i = 0; i < 12; i++) if (mask & (1 << i)) c++;
+  return c;
+}
+
+function setPreviewFace(idx, playEntrance = true) {
+  previewFaceIdx = (idx + FACES.length) % FACES.length;
+  const f = FACES[previewFaceIdx];
+  $("previewFaceTitle").textContent = `${String(f.id + 1).padStart(2, "0")} · ${f.name}`;
+  $("previewFaceSub").textContent = f.desc;
+  for (let i = 0; i < FACES.length; i++) {
+    const card = $("face-card-" + i);
+    if (card) card.classList.toggle("previewing", i === previewFaceIdx);
+  }
+  applyDynamicTheme(previewFaceIdx);
+  if (playEntrance) triggerEntrance(previewFaceIdx);
+}
+
+function setScreenMode(mode) {
+  previewScreenMode = mode;
+  drawerFlashlight = false;
+  document.querySelectorAll("[data-screen]").forEach(btn => {
+    btn.classList.toggle("active", btn.getAttribute("data-screen") === mode);
+  });
+}
 
 function buildFaceGrid() {
   const container = $("faceGrid");
   container.innerHTML = "";
   FACES.forEach(f => {
     const card = document.createElement("label");
-    card.className = "face-card selected";
+    card.className = "face-card selected" + (f.id === previewFaceIdx ? " previewing" : "");
     card.id = "face-card-" + f.id;
+    card.dataset.collection = f.collection;
     card.style.setProperty("--card-color", f.color);
 
     const cb = document.createElement("input");
@@ -253,28 +2769,68 @@ function buildFaceGrid() {
     cb.checked = true;
     cb.addEventListener("change", () => {
       card.classList.toggle("selected", cb.checked);
+      setPreviewFace(f.id, true);
       updateFaceCount();
     });
+
+    const thumb = document.createElement("canvas");
+    thumb.className = "face-thumb";
+    thumb.width = 84;
+    thumb.height = 84;
+    thumb.id = "face-thumb-" + f.id;
 
     const info = document.createElement("div");
     info.className = "face-info";
 
+    const nameRow = document.createElement("div");
+    nameRow.className = "face-name-row";
+
     const name = document.createElement("div");
     name.className = "face-name";
     name.textContent = f.name;
+
+    const idxSpan = document.createElement("span");
+    idxSpan.className = "face-index";
+    idxSpan.textContent = f.collection;
+
+    nameRow.appendChild(name);
+    nameRow.appendChild(idxSpan);
 
     const badge = document.createElement("div");
     badge.className = "face-badge";
     badge.id = "face-badge-" + f.id;
     badge.textContent = f.desc;
 
-    info.appendChild(name);
+    info.appendChild(nameRow);
     info.appendChild(badge);
     card.appendChild(cb);
+    card.appendChild(thumb);
     card.appendChild(info);
+
+    card.addEventListener("mouseenter", () => {
+      setPreviewFace(f.id, false);
+    });
+
     container.appendChild(card);
   });
   updateFaceCount();
+  renderAllThumbnails();
+}
+
+function renderAllThumbnails() {
+  FACES.forEach(f => {
+    const c = $("face-thumb-" + f.id);
+    if (c) {
+      const tCtx = c.getContext("2d");
+      tCtx.save();
+      tCtx.scale(c.width / 240, c.height / 240);
+      tCtx.beginPath();
+      tCtx.arc(120, 120, 119, 0, Math.PI * 2);
+      tCtx.clip();
+      renderSingleFace(tCtx, f.id, 0, true, 1);
+      tCtx.restore();
+    }
+  });
 }
 
 function updateFaceCount() {
@@ -283,12 +2839,16 @@ function updateFaceCount() {
     const cb = $("face-cb-" + i);
     if (cb && cb.checked) count++;
   }
+  const mask = getFaceMask();
+  const hexMask = "0x" + mask.toString(16).toUpperCase().padStart(3, "0");
   const badge = $("faceCountBadge");
   if (badge) {
     if (count === 12) badge.textContent = "All 12 active";
     else if (count === 2) badge.textContent = "2 faces (Hot Swap Pair)";
     else badge.textContent = count + " of 12 active";
   }
+  const liveMask = $("liveMaskReadout");
+  if (liveMask) liveMask.textContent = `${hexMask} · ${count}/12`;
 }
 
 function setFaceMask(mask) {
@@ -299,6 +2859,8 @@ function setFaceMask(mask) {
     if (cb) cb.checked = checked;
     if (card) card.classList.toggle("selected", checked);
   }
+  const firstActive = FACES.findIndex((_, i) => (mask & (1 << i)) !== 0);
+  if (firstActive >= 0) setPreviewFace(firstActive, true);
   updateFaceCount();
 }
 
@@ -313,11 +2875,14 @@ function getFaceMask() {
 
 function highlightWatchFace(faceIdx) {
   currentWatchFace = faceIdx;
+  if (faceIdx >= 0 && faceIdx < FACES.length) {
+    setPreviewFace(faceIdx, false);
+  }
   for (let i = 0; i < FACES.length; i++) {
     const badge = $("face-badge-" + i);
     if (!badge) continue;
     if (i === faceIdx) {
-      badge.innerHTML = '<span class="face-active-tag">[ON WATCH]</span> ' + FACES[i].desc;
+      badge.innerHTML = '<span class="face-active-tag">Active · </span>' + FACES[i].desc;
     } else {
       badge.textContent = FACES[i].desc;
     }
@@ -325,32 +2890,29 @@ function highlightWatchFace(faceIdx) {
 }
 
 function parseWatchStatus(txt) {
-  // Bluetooth status says faces=4095 (decimal); the USB-C reply to INFO? says FACES=0x0FFF (hex).
   const mHex = txt.match(/FACES=0x([0-9a-f]+)/i);
   const mFaces = txt.match(/faces=(\d+)(?!x)/);
   if (mHex) setFaceMask(parseInt(mHex[1], 16));
   else if (mFaces) setFaceMask(parseInt(mFaces[1], 10));
-  const mFace = txt.match(/face=(\d+)/);
-  if (mFace) {
-    const face = parseInt(mFace[1], 10);
-    highlightWatchFace(face);
+  const mFace = txt.match(/face=(\d+)/i);
+  if (mFace) highlightWatchFace(parseInt(mFace[1], 10));
+  const mBat = txt.match(/bat=(\d+)/i);
+  if (mBat) {
+    simBatteryPct = Math.max(0, Math.min(100, parseInt(mBat[1], 10)));
   }
 }
 
-// A POSIX time zone string for this browser's zone, including its summer time rules, worked
-// out by finding this year's offset changes. The watch's C library understands these.
 function posixZone(now = new Date()) {
   const year = now.getFullYear();
-  const offsetAt = (ms) => new Date(ms).getTimezoneOffset();  // minutes west of UTC, like POSIX
+  const offsetAt = (ms) => new Date(ms).getTimezoneOffset();
   const fmt = (min) => {
     const sign = min < 0 ? "-" : "", a = Math.abs(min);
     return sign + Math.floor(a / 60) + (a % 60 ? ":" + String(a % 60).padStart(2, "0") : "");
   };
-  const name = (min) => {  // <+0100> style names: no letters are needed
+  const name = (min) => {
     const east = -min, a = Math.abs(east);
     return "<" + (east < 0 ? "-" : "+") + String(Math.floor(a / 60)).padStart(2, "0") + String(a % 60).padStart(2, "0") + ">";
   };
-  // Find each change by stepping through the year an hour at a time, then to the minute.
   const start = Date.UTC(year, 0, 1), end = Date.UTC(year + 1, 0, 1), hour = 3600000;
   const changes = [];
   for (let t = start; t < end; t += hour) {
@@ -361,10 +2923,9 @@ function posixZone(now = new Date()) {
     changes.push({ at, from: a, to: b });
   }
   const jan = offsetAt(start);
-  if (changes.length !== 2) return name(jan) + fmt(jan);  // no summer time (or something unusual): fixed
+  if (changes.length !== 2) return name(jan) + fmt(jan);
   const std = Math.max(changes[0].from, changes[0].to), dst = Math.min(changes[0].from, changes[0].to);
   const rule = (c) => {
-    // The rule is written in the local time that applies just before the change.
     const d = new Date(c.at - c.from * 60000);
     const day = d.getUTCDate(), month = d.getUTCMonth() + 1;
     const daysInMonth = new Date(Date.UTC(d.getUTCFullYear(), month, 0)).getUTCDate();
@@ -378,8 +2939,21 @@ function posixZone(now = new Date()) {
 
 function say(id, text, kind) {
   const el = $(id);
+  if (!el) return;
   el.textContent = text;
   el.className = "msg" + (kind ? " " + kind : "");
+}
+
+function logCli(dir, text) {
+  const box = $("cliLog");
+  if (!box) return;
+  const row = document.createElement("div");
+  const ts = new Date().toLocaleTimeString();
+  row.style.color = dir === "TX" ? "var(--theme-primary)" : "var(--text2)";
+  row.textContent = `[${ts}] ${dir}: ${text}`;
+  box.appendChild(row);
+  while (box.children.length > 30) box.removeChild(box.firstChild);
+  box.scrollTop = box.scrollHeight;
 }
 
 async function writeRaw(bytes) {
@@ -388,7 +2962,6 @@ async function writeRaw(bytes) {
 }
 
 let serialPort = null, serialWriter = null, serialReader = null, isSerial = false;
-// Lines the page is waiting for from the watch over USB-C: {re, resolve} until they arrive.
 let serialWaiters = [];
 
 function waitForLine(re, ms) {
@@ -404,9 +2977,6 @@ function waitForLine(re, ms) {
 
 const sleepMs = ms => new Promise(r => setTimeout(r, ms));
 
-// Opening the port can restart the watch (its USB chip's control lines are wired to reset), and
-// a watch with its screen off loses the bytes that wake it. So keep sending a newline and INFO?
-// until it answers, up to 5 s, before sending anything that matters.
 async function serialHandshake() {
   const until = Date.now() + 5000;
   while (Date.now() < until && isSerial) {
@@ -420,6 +2990,51 @@ async function serialHandshake() {
 }
 
 async function send(line) {
+  logCli("TX", line);
+  if (isSimulated) {
+    await sleepMs(45);
+    let reply = "";
+    if (line.startsWith("H=") || line.startsWith("FACES:")) {
+      const raw = line.startsWith("H=") ? line.slice(2) : line.slice(6);
+      const m = parseInt(raw, raw.startsWith("0x") || raw.startsWith("0X") ? 16 : 10);
+      if (m > 0) setFaceMask(m);
+      reply = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x${getFaceMask().toString(16).toUpperCase().padStart(4, "0")},FACE=${previewFaceIdx}`;
+    } else if (line.startsWith("T=") || line.startsWith("TIME:")) {
+      simTimeOffsetMs = 0;
+      const sec = Math.floor(Date.now() / 1000);
+      reply = `Time set to ${sec} | DRIFT:VER=0.15.2,TIME=${sec},BAT=${simBatteryPct},FACES=0x${getFaceMask().toString(16).toUpperCase().padStart(4, "0")}`;
+    } else if (line.startsWith("TIMER:")) {
+      const sec = parseInt(line.slice(6), 10) || 0;
+      if (sec > 0) {
+        drawerTimerTotalSec = sec;
+        drawerTimerEndMs = Date.now() + sec * 1000;
+        reply = `Timer started for ${sec} s`;
+      } else {
+        drawerTimerEndMs = 0;
+        reply = "Timer reset";
+      }
+    } else if (line.startsWith("BRIGHT:") || line.startsWith("B=")) {
+      const b = parseInt(line.split(/[:=]/)[1], 10);
+      if (!isNaN(b)) setHardwareBrightness(b, false);
+      reply = `Brightness set to ${hwBrightness}`;
+    } else if (line.startsWith("MOTION:") || line.startsWith("M=")) {
+      const m = parseInt(line.split(/[:=]/)[1], 10);
+      const modes = ["off", "subtle", "expressive"];
+      if (modes[m]) setMotionMode(modes[m], false);
+      reply = `Motion set to ${previewMotionMode}`;
+    } else if (line === "INFO?" || line === "?") {
+      reply = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x${getFaceMask().toString(16).toUpperCase().padStart(4, "0")},FACE=${previewFaceIdx},BRIGHT=${hwBrightness},MOTION=${previewMotionMode}`;
+    } else if (line.startsWith("WIFI:") || line === "J") {
+      reply = `DRIFT:WIFI=JOINED,NTP=SYNC_OK,BAT=${simBatteryPct}%`;
+    } else {
+      reply = `OK (${line})`;
+    }
+    if (reply) {
+      $("status").textContent = reply;
+      logCli("RX", reply);
+    }
+    return;
+  }
   if (isSerial && serialWriter) {
     const data = new TextEncoder().encode(line + "\n");
     await serialWriter.write(data);
@@ -434,8 +3049,6 @@ async function send(line) {
   try {
     await writeRaw(data);
   } catch (err) {
-    // Fallback for iOS Web Bluetooth wrappers that cap each write at 20 bytes:
-    // 0x01 marks a piece with more to come, 0x02 marks the last piece.
     for (let i = 0; i < data.byteLength; i += 19) {
       const slice = data.subarray(i, Math.min(i + 19, data.byteLength));
       const pkt = new Uint8Array(slice.byteLength + 1);
@@ -447,6 +3060,8 @@ async function send(line) {
 }
 
 async function connectSerial(portArg = null) {
+  isSimulated = false;
+  $("connectSim").classList.remove("active");
   say("connMsg", "Connecting to watch over USB-C...");
   try {
     let port = portArg;
@@ -461,10 +3076,9 @@ async function connectSerial(portArg = null) {
         });
       }
     }
-    if (isSerial && serialPort === port) return true;  // already open
+    if (isSerial && serialPort === port) return true;
     serialPort = port;
     await serialPort.open({ baudRate: 115200, bufferSize: 1024 });
-    // Keep the reset line released where the browser allows it.
     try { await serialPort.setSignals({ dataTerminalReady: false, requestToSend: false }); } catch (e) {}
     serialWriter = serialPort.writable.getWriter();
     isSerial = true;
@@ -474,10 +3088,10 @@ async function connectSerial(portArg = null) {
       await closeSerial("The watch did not answer over USB-C within 5 s. Is another program using the port?");
       return false;
     }
-    connected(true);
-    $("connect").textContent = "Connected via USB-C";
+    connected(true, "USB-C Serial");
+    $("connect").textContent = "Bluetooth";
     $("connectUsb").textContent = "Connected (USB-C)";
-    say("connMsg", "Connected via USB-C.", "ok");
+    say("connMsg", "Connected via USB-C (115200 baud).", "ok");
     return true;
   } catch (err) {
     await closeSerial("USB-C connect error: " + err.message);
@@ -485,7 +3099,6 @@ async function connectSerial(portArg = null) {
   }
 }
 
-// Unplugged, failed or not answering: back to not connected, and say why.
 async function closeSerial(why) {
   const port = serialPort;
   isSerial = false;
@@ -516,6 +3129,7 @@ async function readSerialLoop() {
       buf = lines.pop();
       for (const line of lines) {
         if (line.trim()) {
+          logCli("RX", line);
           serialWaiters = serialWaiters.filter(w => {
             if (!w.re.test(line)) return true;
             w.resolve(line);
@@ -533,27 +3147,52 @@ async function readSerialLoop() {
   }
 }
 
-function connected(on) {
+function connected(on, modeLabel = "Disconnected") {
   $("sync").disabled = !on;
   $("wifi").disabled = !on;
   $("saveFaces").disabled = !on;
   $("selectAllFaces").disabled = !on;
   $("selectTwoFaces").disabled = !on;
+  $("selectSpaceFaces").disabled = !on;
+  $("selectSakuraFaces").disabled = !on;
+  $("selectFalloutFaces").disabled = !on;
   $("clearFaces").disabled = !on;
-  $("connect").textContent = on ? "Connected to " + (device && device.name || "the watch") : "Connect to the watch";
+  $("connect").textContent = on && device ? "Connected to " + (device.name || "watch") : "Bluetooth";
+  $("connBadge").textContent = on ? modeLabel : "Disconnected";
+  $("liveTransportReadout").textContent = on ? modeLabel : "Standby";
+  $("headerConnectBtn").textContent = on ? modeLabel : "Connect Watch";
   if (!on) {
     $("status").textContent = "Not connected.";
     highlightWatchFace(-1);
   }
 }
 
+function toggleSimulatedWatch() {
+  if (isSimulated) {
+    isSimulated = false;
+    $("connectSim").classList.remove("active");
+    $("connectSim").textContent = "Virtual Watch";
+    connected(false);
+    say("connMsg", "Virtual watch disconnected.", "");
+    return;
+  }
+  isSimulated = true;
+  $("connectSim").classList.add("active");
+  $("connectSim").textContent = "Virtual Watch (Active)";
+  connected(true, "Virtual Watch");
+  const initStatus = `DRIFT:VER=0.15.2,TIME=${Math.floor(Date.now() / 1000)},BAT=${simBatteryPct},FACES=0x0FFF,FACE=${previewFaceIdx}`;
+  $("status").textContent = initStatus;
+  logCli("RX", initStatus);
+  parseWatchStatus(initStatus);
+  say("connMsg", "Virtual Watch active — test syncing time, faces, Quick Actions timers, and Wi-Fi right in this browser.", "ok");
+}
+
 async function connect() {
+  isSimulated = false;
+  $("connectSim").classList.remove("active");
+  $("connectSim").textContent = "Virtual Watch";
   say("connMsg", "Connecting to the watch...");
   try {
-    // Always show the picker. Reusing a remembered watch from getDevices() skipped it and failed at
-    // once when the phone could not reach that watch, so Bluetooth never connected (v0.15.0).
-    // The 128-bit service UUID is in the primary advertisement (the name is in the scan response),
-    // so listing the service filter first lets iPhones spot the watch straight away.
     device = await navigator.bluetooth.requestDevice({ filters: [{ services: [SERVICE] }, { namePrefix: "Drift" }], optionalServices: [SERVICE] });
     device.addEventListener("gattserverdisconnected", () => {
       command = null;
@@ -567,6 +3206,7 @@ async function connect() {
     status.addEventListener("characteristicvaluechanged", (e) => {
       const txt = new TextDecoder().decode(e.target.value);
       $("status").textContent = txt;
+      logCli("RX", txt);
       parseWatchStatus(txt);
     });
     await status.startNotifications().catch(() => {});
@@ -574,16 +3214,15 @@ async function connect() {
     if (initial) {
       const txt = new TextDecoder().decode(initial);
       $("status").textContent = txt;
+      logCli("RX", txt);
       parseWatchStatus(txt);
     }
-    connected(true);
-    say("connMsg", "Connected.", "ok");
-    // Request current status from the watch
+    connected(true, "BLE · " + (device.name || "Drift"));
+    say("connMsg", "Connected via Bluetooth Low Energy.", "ok");
     try { await send("?"); } catch (e) {}
   } catch (err) {
     command = null;
     connected(false);
-    // Some phone Web Bluetooth browsers reject with a bare string or nothing, not an Error.
     const reason = (err && (err.message || err.name)) || (err ? String(err) : "the browser gave no reason");
     let msg = "Could not connect: " + reason;
     if (err && err.name === "NotFoundError") {
@@ -609,8 +3248,8 @@ async function syncTime() {
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     if (zone) await send("N=" + zone);
     await send("Z=" + posixZone());
-    await send("T=" + (Date.now() / 1000).toFixed(3));  // last, so the time lands as fresh as possible
-    say("syncMsg", "Time sent. The watch should show it now.", "ok");
+    await send("T=" + (Date.now() / 1000).toFixed(3));
+    say("syncMsg", "Time & POSIX DST rules sent (" + new Date().toLocaleTimeString() + "). The watch is calibrated.", "ok");
     return true;
   } catch (err) {
     say("syncMsg", "Could not send: " + err.message, "err");
@@ -635,7 +3274,7 @@ async function saveActiveFaces() {
     }
     const count = FACES.filter((_, i) => (mask & (1 << i))).length;
     if (count === 2) {
-      say("facesMsg", "Saved! Hot Swap Pair enabled - swipe left or right on the watch to toggle between your 2 chosen faces.", "ok");
+      say("facesMsg", "Saved! Hot Swap Pair enabled — swipe left or right on the watch to toggle between your 2 chosen faces.", "ok");
     } else if (count === 12) {
       say("facesMsg", "Saved! All 12 watch faces are enabled.", "ok");
     } else {
@@ -665,12 +3304,247 @@ async function sendWifi() {
   }
 }
 
+function stepActiveOrAllFace(dir) {
+  setScreenMode("face");
+  pulseCrownScroll(dir);
+  const target = getNeighborActiveFace(previewFaceIdx, dir);
+  settleFromX = dir > 0 ? 180 : -180;
+  settleStartMs = performance.now();
+  settleDurationMs = 190;
+  setPreviewFace(target, true);
+  if (isSimulated) highlightWatchFace(target);
+}
+
+// Handle Digital Crown rotation in any screen mode
+function handleCrownStep(dir) {
+  pulseCrownScroll(dir);
+  if (previewScreenMode === "face") {
+    stepActiveOrAllFace(dir);
+  } else if (previewScreenMode === "drawer") {
+    drawerPage = (drawerPage + (dir > 0 ? 1 : -1) + 2) % 2;
+  } else if (previewScreenMode === "settings" || previewScreenMode === "radial") {
+    previewSettingsHub = (previewSettingsHub + (dir > 0 ? 1 : -1) + 4) % 4;
+  }
+}
+
+// ============================================================================
+// Preset Profile Manager (localStorage + Default Profiles)
+// ============================================================================
+const DEFAULT_PROFILES = [
+  { id: "p_all", name: "Full Gallery (12)", mask: 0x0FFF, face: 0, motion: "subtle", bright: 2, use12h: false },
+  { id: "p_exec", name: "Executive Chrono", mask: (1 << 1) | (1 << 2), face: 2, motion: "subtle", bright: 2, use12h: false },
+  { id: "p_space", name: "Astronomy Pair", mask: (1 << 6) | (1 << 7), face: 6, motion: "expressive", bright: 2, use12h: false },
+  { id: "p_sakura", name: "Sakura Bloom", mask: (1 << 8) | (1 << 9), face: 8, motion: "expressive", bright: 3, use12h: false },
+  { id: "p_vault", name: "Pip-Boy Field", mask: (1 << 10) | (1 << 11), face: 10, motion: "subtle", bright: 1, use12h: false }
+];
+
+function loadProfiles() {
+  try {
+    const raw = localStorage.getItem("drift_watch_profiles_v1");
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+    }
+  } catch (e) {}
+  return DEFAULT_PROFILES;
+}
+
+function saveProfiles(list) {
+  try {
+    localStorage.setItem("drift_watch_profiles_v1", JSON.stringify(list));
+  } catch (e) {}
+}
+
+function renderProfiles() {
+  const container = $("profilesContainer");
+  if (!container) return;
+  const list = loadProfiles();
+  container.innerHTML = "";
+  list.forEach(p => {
+    const card = document.createElement("div");
+    card.className = "profile-card";
+    const count = countBits(p.mask);
+    const hex = "0x" + p.mask.toString(16).toUpperCase().padStart(3, "0");
+
+    const title = document.createElement("div");
+    title.className = "profile-card-title";
+    title.innerHTML = `<span>${p.name}</span><span style="color: ${FACES[p.face]?.color || "#32ade6"}; font-size:0.74rem;">${FACES[p.face]?.name || "Digital"}</span>`;
+
+    const meta = document.createElement("div");
+    meta.className = "profile-card-meta";
+    meta.textContent = `${hex} · ${count} faces · ${p.motion}`;
+
+    const actions = document.createElement("div");
+    actions.className = "profile-card-actions";
+
+    const applyBtn = document.createElement("button");
+    applyBtn.type = "button";
+    applyBtn.className = "primary";
+    applyBtn.textContent = "Apply";
+    applyBtn.addEventListener("click", async () => {
+      setFaceMask(p.mask);
+      setPreviewFace(p.face, true);
+      setMotionMode(p.motion, true);
+      setHardwareBrightness(p.bright ?? 2, true);
+      hwUse12h = !!p.use12h;
+      updateHardwareSpecLabels();
+      if (isSimulated || isSerial || command) {
+        await saveActiveFaces();
+      }
+      say("facesMsg", `Applied collection "${p.name}".`, "ok");
+    });
+
+    actions.appendChild(applyBtn);
+
+    if (!p.id.startsWith("p_")) {
+      const delBtn = document.createElement("button");
+      delBtn.type = "button";
+      delBtn.className = "ghost";
+      delBtn.style.width = "auto";
+      delBtn.textContent = "×";
+      delBtn.title = "Delete collection";
+      delBtn.addEventListener("click", () => {
+        const next = loadProfiles().filter(x => x.id !== p.id);
+        saveProfiles(next);
+        renderProfiles();
+      });
+      actions.appendChild(delBtn);
+    }
+
+    card.appendChild(title);
+    card.appendChild(meta);
+    card.appendChild(actions);
+    container.appendChild(card);
+  });
+}
+
+function setHardwareBrightness(lvl, dispatch = true) {
+  hwBrightness = Math.max(0, Math.min(3, lvl));
+  const pcts = ["25%", "50%", "75%", "100%"];
+  $("hwBrightVal").textContent = `Level ${hwBrightness + 1} (${pcts[hwBrightness]})`;
+  document.querySelectorAll("[data-bright]").forEach(btn => {
+    btn.classList.toggle("active", parseInt(btn.getAttribute("data-bright"), 10) === hwBrightness);
+  });
+  updateHardwareSpecLabels();
+  if (dispatch && (isSimulated || isSerial || command)) {
+    send(isSerial ? `BRIGHT:${hwBrightness}` : `B=${hwBrightness}`).catch(() => {});
+  }
+}
+
+function setMotionMode(mode, dispatch = true) {
+  previewMotionMode = mode;
+  document.querySelectorAll("[data-motion]").forEach(b => {
+    b.classList.toggle("active", b.getAttribute("data-motion") === mode);
+  });
+  if (dispatch && (isSimulated || isSerial || command)) {
+    const idx = mode === "off" ? 0 : mode === "subtle" ? 1 : 2;
+    send(isSerial ? `MOTION:${idx}` : `M=${idx}`).catch(() => {});
+  }
+}
+
+function updateHardwareSpecLabels() {
+  const nightNames = ["Off", "Auto", "On"];
+  const turnDegs = [0, 90, 180, 270];
+  $("specBrightLabel").textContent = `Bri ${hwBrightness + 1}/4 · ${hwUse12h ? "12h" : "24h"}`;
+  $("hwFormatVal").textContent = `${hwUse12h ? "12-Hour" : "24-Hour"} · Night ${nightNames[hwNightMode]}`;
+  $("fmt24Btn").classList.toggle("active", !hwUse12h);
+  $("fmt12Btn").classList.toggle("active", hwUse12h);
+  $("nightToggleBtn").textContent = `Night: ${nightNames[hwNightMode]}`;
+  $("turnToggleBtn").textContent = `Turn: ${turnDegs[hwScreenTurn]}°`;
+}
+
+// ============================================================================
+// Stopwatch & Complications Helpers
+// ============================================================================
+function getStopwatchMs() {
+  return swAccumMs + (swRunning ? (performance.now() - swStartMs) : 0);
+}
+
+function formatSw(ms) {
+  const totalCs = Math.floor(ms / 10);
+  const cs = totalCs % 100;
+  const totalSec = Math.floor(totalCs / 100);
+  const s = totalSec % 60;
+  const m = Math.floor(totalSec / 60);
+  return `${fmtTwo(m)}:${fmtTwo(s)}.${fmtTwo(cs)}`;
+}
+
+function renderSwLaps() {
+  const list = $("swLapList");
+  if (!list) return;
+  if (swLaps.length === 0) {
+    list.innerHTML = `<div class="lap-row"><span>No laps recorded</span><span>--:--.--</span></div>`;
+    return;
+  }
+  list.innerHTML = swLaps.map((l, i) =>
+    `<div class="lap-row"><span>Lap ${String(i + 1).padStart(2, "0")}</span><span>${formatSw(l)}</span></div>`
+  ).reverse().join("");
+}
+
+// ============================================================================
+// Live Telemetry Charts (Battery mV/% & IMU Temp/Drift)
+// ============================================================================
+function drawTelemetryChart(canvasId, data, color, minV, maxV) {
+  const c = $(canvasId);
+  if (!c) return;
+  const ctx = c.getContext("2d");
+  const w = c.width, h = c.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const isLight = document.documentElement.getAttribute("data-theme") === "light";
+  ctx.strokeStyle = isLight ? "rgba(0, 0, 0, 0.07)" : "rgba(255, 255, 255, 0.09)";
+  ctx.lineWidth = 1;
+  for (let i = 1; i <= 3; i++) {
+    const y = (h / 4) * i;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(w, y);
+    ctx.stroke();
+  }
+
+  if (data.length < 2) return;
+  const stepX = w / (data.length - 1);
+
+  ctx.beginPath();
+  data.forEach((v, i) => {
+    const norm = Math.max(0, Math.min(1, (v - minV) / (maxV - minV || 1)));
+    const x = i * stepX;
+    const y = h - 10 - norm * (h - 20);
+    if (i === 0) ctx.moveTo(x, y);
+    else ctx.lineTo(x, y);
+  });
+  ctx.strokeStyle = color;
+  ctx.lineWidth = 2.2;
+  ctx.stroke();
+
+  ctx.lineTo(w, h);
+  ctx.lineTo(0, h);
+  ctx.closePath();
+  ctx.fillStyle = hexToRgba(color, 0.14);
+  ctx.fill();
+}
+
 (function start() {
+  // Restore saved Cupertino appearance (Dark default)
+  try {
+    const savedApp = localStorage.getItem("drift_studio_appearance");
+    if (savedApp === "light" || savedApp === "dark") setAppearance(savedApp);
+  } catch (e) {}
+
+  $("themeAppearanceBtn").addEventListener("click", () => {
+    const cur = document.documentElement.getAttribute("data-theme") || "dark";
+    setAppearance(cur === "dark" ? "light" : "dark");
+  });
+
   buildFaceGrid();
+  renderProfiles();
+  setPreviewFace(0, true);
+  updateHardwareSpecLabels();
+
   try {
     $("zoneName").textContent = Intl.DateTimeFormat().resolvedOptions().timeZone || "Unknown";
     $("zonePosix").textContent = posixZone();
-  } catch (e) { /* the zone is shown when it can be worked out */ }
+  } catch (e) {}
 
   if (navigator.bluetooth) {
     $("connect").addEventListener("click", connect);
@@ -703,6 +3577,14 @@ async function sendWifi() {
     $("unsupported").hidden = false;
   }
 
+  $("connectSim").addEventListener("click", toggleSimulatedWatch);
+  $("headerConnectBtn").addEventListener("click", () => {
+    const syncTab = document.querySelector('[data-deck="sync"]');
+    if (syncTab) syncTab.click();
+    if (navigator.bluetooth) connect();
+    else toggleSimulatedWatch();
+  });
+
   $("sync").addEventListener("click", syncTime);
   $("selectAllFaces").addEventListener("click", () => setFaceMask(0x0FFF));
   $("selectTwoFaces").addEventListener("click", () => {
@@ -710,9 +3592,423 @@ async function sendWifi() {
     let p2 = (p1 === 6) ? 0 : 6;
     setFaceMask((1 << p1) | (1 << p2));
   });
+  $("selectSpaceFaces").addEventListener("click", () => setFaceMask((1 << 6) | (1 << 7)));
+  $("selectSakuraFaces").addEventListener("click", () => setFaceMask((1 << 8) | (1 << 9)));
+  $("selectFalloutFaces").addEventListener("click", () => setFaceMask((1 << 10) | (1 << 11)));
   $("clearFaces").addEventListener("click", () => setFaceMask(0));
   $("saveFaces").addEventListener("click", saveActiveFaces);
   $("wifi").addEventListener("click", sendWifi);
+
+  // Command Deck View Filter Tabs
+  document.querySelectorAll("[data-deck]").forEach(tab => {
+    tab.addEventListener("click", () => {
+      const target = tab.getAttribute("data-deck");
+      document.querySelectorAll("[data-deck]").forEach(t => t.classList.toggle("active", t === tab));
+      document.querySelectorAll("section[data-deck-group]").forEach(sec => {
+        const grp = sec.getAttribute("data-deck-group");
+        sec.setAttribute("data-deck-hidden", target !== "all" && grp !== target ? "true" : "false");
+      });
+    });
+  });
+
+  // Collection filter tabs in Face Studio
+  document.querySelectorAll("[data-col-filter]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const col = btn.getAttribute("data-col-filter");
+      document.querySelectorAll("[data-col-filter]").forEach(b => b.classList.toggle("active", b === btn));
+      FACES.forEach(f => {
+        const card = $("face-card-" + f.id);
+        if (card) {
+          card.setAttribute("data-filtered-out", col !== "all" && f.collection !== col ? "true" : "false");
+        }
+      });
+    });
+  });
+
+  $("syncThemeToggle").addEventListener("change", () => applyDynamicTheme(previewFaceIdx));
+
+  // Save Custom Profile
+  $("saveProfileBtn").addEventListener("click", () => {
+    const nameInput = $("newProfileName");
+    const name = (nameInput.value || "").trim() || `Custom (${countBits(getFaceMask())} faces)`;
+    const list = loadProfiles();
+    list.push({
+      id: "cust_" + Date.now(),
+      name,
+      mask: getFaceMask() || 0x0FFF,
+      face: previewFaceIdx,
+      motion: previewMotionMode,
+      bright: hwBrightness,
+      use12h: hwUse12h
+    });
+    saveProfiles(list);
+    nameInput.value = "";
+    renderProfiles();
+    say("facesMsg", `Saved collection "${name}".`, "ok");
+  });
+
+  // Hardware Quick Settings
+  document.querySelectorAll("[data-bright]").forEach(btn => {
+    btn.addEventListener("click", () => setHardwareBrightness(parseInt(btn.getAttribute("data-bright"), 10), true));
+  });
+  $("fmt24Btn").addEventListener("click", () => {
+    hwUse12h = false;
+    updateHardwareSpecLabels();
+    if (isSimulated || isSerial) send("FORMAT:24").catch(() => {});
+  });
+  $("fmt12Btn").addEventListener("click", () => {
+    hwUse12h = true;
+    updateHardwareSpecLabels();
+    if (isSimulated || isSerial) send("FORMAT:12").catch(() => {});
+  });
+  $("nightToggleBtn").addEventListener("click", () => {
+    hwNightMode = (hwNightMode + 1) % 3;
+    updateHardwareSpecLabels();
+    if (isSimulated || isSerial) send(`NIGHT:${hwNightMode}`).catch(() => {});
+  });
+  $("turnToggleBtn").addEventListener("click", () => {
+    hwScreenTurn = (hwScreenTurn + 1) % 4;
+    updateHardwareSpecLabels();
+  });
+
+  // Complications: Countdown Timer
+  document.querySelectorAll("[data-quick-timer]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      const sec = parseInt(btn.getAttribute("data-quick-timer"), 10);
+      $("customTimerMin").value = Math.floor(sec / 60);
+      $("customTimerSec").value = sec % 60;
+      drawerTimerTotalSec = sec;
+      drawerTimerEndMs = Date.now() + sec * 1000;
+      setScreenMode("drawer");
+      drawerPage = 0;
+      if (isSimulated || isSerial) send(`TIMER:${sec}`).catch(() => {});
+    });
+  });
+
+  $("startTimerBtn").addEventListener("click", () => {
+    const m = Math.max(0, parseInt($("customTimerMin").value, 10) || 0);
+    const s = Math.max(0, parseInt($("customTimerSec").value, 10) || 0);
+    const total = Math.max(5, m * 60 + s);
+    drawerTimerTotalSec = total;
+    drawerTimerEndMs = Date.now() + total * 1000;
+    setScreenMode("drawer");
+    drawerPage = 0;
+    if (isSimulated || isSerial) send(`TIMER:${total}`).catch(() => {});
+  });
+
+  $("resetTimerBtn").addEventListener("click", () => {
+    drawerTimerEndMs = 0;
+    if (isSimulated || isSerial) send("TIMER:0").catch(() => {});
+  });
+
+  // Complications: Split-Lap Stopwatch
+  $("swToggleBtn").addEventListener("click", () => {
+    if (swRunning) {
+      swAccumMs += performance.now() - swStartMs;
+      swRunning = false;
+      $("swToggleBtn").textContent = "Resume";
+    } else {
+      swStartMs = performance.now();
+      swRunning = true;
+      $("swToggleBtn").textContent = "Pause";
+    }
+  });
+
+  $("swLapBtn").addEventListener("click", () => {
+    const cur = getStopwatchMs();
+    if (cur > 0) {
+      swLaps.push(cur);
+      renderSwLaps();
+    }
+  });
+
+  $("swResetBtn").addEventListener("click", () => {
+    swRunning = false;
+    swAccumMs = 0;
+    swLaps = [];
+    $("swToggleBtn").textContent = "Start";
+    renderSwLaps();
+  });
+
+  // Complications: Daily Alarm & Flashlight
+  $("alarmTimeInput").addEventListener("change", (e) => {
+    alarmTimeStr = e.target.value || "07:30";
+    $("studioAlarmReadout").textContent = alarmTimeStr;
+    $("toggleAlarmBtn").textContent = alarmEnabled ? `Disarm Alarm (${alarmTimeStr})` : `Arm Alarm (${alarmTimeStr})`;
+  });
+
+  $("toggleAlarmBtn").addEventListener("click", () => {
+    alarmEnabled = !alarmEnabled;
+    $("toggleAlarmBtn").textContent = alarmEnabled ? `Disarm Alarm (${alarmTimeStr})` : `Arm Alarm (${alarmTimeStr})`;
+    $("toggleAlarmBtn").classList.toggle("primary", alarmEnabled);
+    $("compStatusBadge").textContent = alarmEnabled ? `Alarm ${alarmTimeStr}` : "Ready";
+  });
+
+  $("toggleTorchBtn").addEventListener("click", () => {
+    setScreenMode("drawer");
+    drawerFlashlight = !drawerFlashlight;
+  });
+
+  // Interactive CLI Terminal
+  document.querySelectorAll("[data-cli-cmd]").forEach(btn => {
+    btn.addEventListener("click", () => {
+      let cmd = btn.getAttribute("data-cli-cmd");
+      if (cmd === "TIME:NOW") cmd = "TIME:" + Math.floor(Date.now() / 1000);
+      $("cliInput").value = cmd;
+      send(cmd).catch(e => logCli("ERR", e.message));
+    });
+  });
+
+  $("cliSendBtn").addEventListener("click", () => {
+    const val = ($("cliInput").value || "").trim();
+    if (!val) return;
+    send(val).catch(e => logCli("ERR", e.message));
+    $("cliInput").value = "";
+  });
+
+  $("cliInput").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") $("cliSendBtn").click();
+  });
+
+  // Watch Stage Controls
+  $("prevFaceBtn").addEventListener("click", () => stepActiveOrAllFace(-1));
+  $("nextFaceBtn").addEventListener("click", () => stepActiveOrAllFace(1));
+
+  // Optional wheel scroll on touch watch canvas
+  let wheelAccum = 0;
+  $("watchBezel").addEventListener("wheel", (e) => {
+    e.preventDefault();
+    wheelAccum += e.deltaY;
+    if (Math.abs(wheelAccum) >= 36) {
+      const dir = wheelAccum > 0 ? 1 : -1;
+      wheelAccum = 0;
+      handleCrownStep(dir);
+    }
+  }, { passive: false });
+
+  $("replayEntranceBtn").addEventListener("click", () => {
+    setScreenMode("face");
+    triggerEntrance(previewFaceIdx);
+  });
+
+  $("replayBootBtn").addEventListener("click", () => {
+    bootStartMs = performance.now();
+    setScreenMode("boot");
+  });
+
+  $("toggleIrisBtn").addEventListener("click", () => {
+    irisState = irisState === "sleeping" ? "waking" : "sleeping";
+    irisStartMs = performance.now();
+  });
+
+  document.querySelectorAll("[data-screen]").forEach(btn => {
+    btn.addEventListener("click", () => setScreenMode(btn.getAttribute("data-screen")));
+  });
+
+  document.querySelectorAll("[data-motion]").forEach(btn => {
+    btn.addEventListener("click", () => setMotionMode(btn.getAttribute("data-motion"), true));
+  });
+
+  // ============================================================================
+  // Interactive Pointer Drag, Swipe, Flick & Radial Hub Physics on 240x240 Canvas
+  // ============================================================================
+  const watchCanvas = $("watchCanvas");
+
+  function getCanvasCoord(e) {
+    const rect = watchCanvas.getBoundingClientRect();
+    return {
+      x: ((e.clientX - rect.left) / rect.width) * 240,
+      y: ((e.clientY - rect.top) / rect.height) * 240
+    };
+  }
+
+  watchCanvas.addEventListener("pointerdown", (e) => {
+    if (irisState === "sleeping") {
+      irisState = "waking";
+      irisStartMs = performance.now();
+      return;
+    }
+    const pt = getCanvasCoord(e);
+    pointerDown = true;
+    dragStartX = pt.x;
+    dragStartY = pt.y;
+    dragStartTime = performance.now();
+    dragDx = 0;
+    dragDy = 0;
+    dragAxis = null;
+    holdTriggered = false;
+    watchCanvas.setPointerCapture(e.pointerId);
+  });
+
+  watchCanvas.addEventListener("pointermove", (e) => {
+    if (!pointerDown) return;
+    const pt = getCanvasCoord(e);
+    dragDx = pt.x - dragStartX;
+    dragDy = pt.y - dragStartY;
+    if (!dragAxis && (Math.abs(dragDx) > 10 || Math.abs(dragDy) > 10)) {
+      dragAxis = Math.abs(dragDx) >= Math.abs(dragDy) ? "x" : "y";
+    }
+  });
+
+  watchCanvas.addEventListener("pointerup", (e) => {
+    if (!pointerDown) return;
+    pointerDown = false;
+    const pt = getCanvasCoord(e);
+    const dt = Math.max(1, performance.now() - dragStartTime);
+    const vx = dragDx / dt;
+
+    if (dragAxis === "x" && previewScreenMode === "face") {
+      if (Math.abs(dragDx) > 52 || Math.abs(vx) > 0.42) {
+        const dir = dragDx < 0 ? 1 : -1;
+        const nextIdx = getNeighborActiveFace(previewFaceIdx, dir);
+        settleFromX = dragDx + (dir > 0 ? 240 : -240);
+        settleStartMs = performance.now();
+        settleDurationMs = 175;
+        pulseCrownScroll(dir);
+        setPreviewFace(nextIdx, true);
+        if (isSimulated) highlightWatchFace(nextIdx);
+      } else {
+        settleFromX = dragDx;
+        settleStartMs = performance.now();
+        settleDurationMs = 140;
+      }
+      return;
+    }
+
+    if (dragAxis === "y") {
+      // Swipe UP from Watch Face -> Quick Actions ("drawer")
+      if (dragDy < -42 && previewScreenMode === "face") {
+        setScreenMode("drawer");
+        return;
+      }
+      // Slide DOWN from Watch Face -> Settings ("settings")
+      if (dragDy > 42 && previewScreenMode === "face") {
+        setScreenMode("settings");
+        return;
+      }
+      // Inside Quick Actions: swipe up/down pages or closes back to Watch Face
+      if (dragDy < -42 && previewScreenMode === "drawer") {
+        if (drawerPage === 0) drawerPage = 1;
+        return;
+      }
+      if (dragDy > 42 && previewScreenMode === "drawer") {
+        if (drawerPage === 1) drawerPage = 0;
+        else setScreenMode("face");
+        return;
+      }
+      // Inside Settings: swipe up closes back to Watch Face
+      if (dragDy < -42 && previewScreenMode === "settings") {
+        setScreenMode("face");
+        return;
+      }
+    }
+
+    if (holdTriggered) return;
+
+    // Tap Handling per Screen Mode
+    const x = pt.x, y = pt.y;
+    if (previewScreenMode === "drawer") {
+      if (drawerFlashlight) {
+        drawerFlashlight = false;
+        return;
+      }
+      if (y <= 38) {
+        drawerPage = (drawerPage + 1) % 2;
+        return;
+      }
+      if (drawerPage === 0) {
+        if (y >= 94 && y <= 132) {
+          const sec = x < 90 ? 60 : x < 146 ? 180 : 300;
+          drawerTimerTotalSec = sec;
+          drawerTimerEndMs = Date.now() + sec * 1000;
+        } else if (y >= 142 && y <= 190) {
+          drawerFlashlight = true;
+        }
+      } else {
+        if (y >= 94 && y <= 132) {
+          if (x < 120) $("swToggleBtn").click();
+          else $("swResetBtn").click();
+        } else if (y >= 142 && y <= 190) {
+          $("toggleAlarmBtn").click();
+        }
+      }
+    } else if (previewScreenMode === "settings") {
+      if (y <= 46) {
+        previewSettingsHub = (previewSettingsHub + 1) % 4;
+      } else if (y >= 54 && y <= 106) {
+        if (previewSettingsHub === 0) setHardwareBrightness((hwBrightness + 1) % 4, true);
+        else if (previewSettingsHub === 1) { hwUse12h = !hwUse12h; updateHardwareSpecLabels(); }
+        else if (previewSettingsHub === 2) $("nightToggleBtn").click();
+      } else if (y >= 114 && y <= 166) {
+        if (previewSettingsHub === 0) {
+          const modes = ["off", "subtle", "expressive"];
+          setMotionMode(modes[(modes.indexOf(previewMotionMode) + 1) % 3], true);
+        } else if (previewSettingsHub === 2) {
+          $("turnToggleBtn").click();
+        }
+      } else {
+        setScreenMode("face");
+      }
+    } else if (previewScreenMode === "face") {
+      stepActiveOrAllFace(x < 120 ? -1 : 1);
+    }
+  });
+
+  // Main 60Hz Chronometer Render & Telemetry Loop
+  const mainCtx = watchCanvas.getContext("2d");
+  let lastThumbSec = -1;
+
+  function tick() {
+    const now = new Date();
+    const nowPerf = performance.now();
+
+    if (pointerDown && !dragAxis && !holdTriggered && previewScreenMode === "face") {
+      if (nowPerf - dragStartTime >= 600) {
+        holdTriggered = true;
+        setScreenMode("settings");
+      }
+    }
+
+    $("liveClockReadout").textContent = now.toLocaleTimeString();
+    $("epochBadge").textContent = "EPOCH " + Math.floor(now.getTime() / 1000);
+
+    const remSec = drawerTimerEndMs > Date.now() ? Math.ceil((drawerTimerEndMs - Date.now()) / 1000) : 0;
+    if (remSec > 0) {
+      $("studioTimerReadout").textContent = `${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
+      $("compStatusBadge").textContent = `Timer ${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
+    } else {
+      const m = parseInt($("customTimerMin").value, 10) || 0;
+      const s = parseInt($("customTimerSec").value, 10) || 0;
+      $("studioTimerReadout").textContent = `${fmtTwo(m)}:${fmtTwo(s)}`;
+    }
+    $("studioSwReadout").textContent = formatSw(getStopwatchMs());
+
+    renderWatchViewport(mainCtx, watchCanvas.width, watchCanvas.height);
+
+    if (now.getSeconds() !== lastThumbSec) {
+      lastThumbSec = now.getSeconds();
+      renderAllThumbnails();
+
+      simTempC = 28.2 + Math.sin(Date.now() / 9000) * 0.35;
+      simBatteryMv = Math.round(3500 + (simBatteryPct / 100) * 680);
+      teleHistory.bat.push(simBatteryPct);
+      if (teleHistory.bat.length > 40) teleHistory.bat.shift();
+      teleHistory.temp.push(simTempC);
+      if (teleHistory.temp.length > 40) teleHistory.temp.shift();
+
+      const primaryCol = FACES[previewFaceIdx].color;
+      drawTelemetryChart("batChartCanvas", teleHistory.bat, primaryCol, 0, 100);
+      drawTelemetryChart("tempChartCanvas", teleHistory.temp, "#ff9f0a", 25, 32);
+
+      $("chartBatVal").textContent = `${simBatteryPct}% · ${simBatteryMv} mV`;
+      $("chartTempVal").textContent = `${simTempC.toFixed(1)} °C · ${simDriftPpb} ppb`;
+      $("specTempLabel").textContent = `${simTempC.toFixed(1)} °C · QMI8658`;
+      $("simBatLabel").textContent = `${simBatteryPct}% · ${simBatteryMv} mV`;
+    }
+
+    requestAnimationFrame(tick);
+  }
+  requestAnimationFrame(tick);
 })();
 </script>
 </body>

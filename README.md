@@ -1,10 +1,13 @@
-# Drift-Watch firmware (v0.15.2)
+# Drift-Watch firmware (v0.15.3 unreleased candidate)
 
 Our own watch software for the Waveshare ESP32-S3-Touch-LCD-1.28, written from scratch.
 
+The [standalone v1.0 roadmap](notes/DriftWatch-v1.0-roadmap.md) and [acceptance checklist](notes/DriftWatch-v1.0-acceptance-checklist.md) describe the next milestones and proposed qualification targets.
+
 ## Status
 
-- **v0.15.2** *(latest)* — Apple Human Interface & Cupertino Web Studio revamp: adaptive Light/Dark translucent glass workspace with simplified 4-tab navigation (`Face Gallery`, `Sync & Wi-Fi`, `Quick Tools`, `Diagnostics`), buttonless circular 240×240 OLED touch enclosure with unclipped typography, direct touch gesture alignment (**Swipe down** opens **Quick Drawer**, **Swipe up** opens **Settings**), collapsible secondary disclosure drawers, expanded serial/BLE live control commands (`BRIGHT:`, `MOTION:`, `FORMAT:`, `NIGHT:`, `FACE:`, `TIMER:`), and upstream `PR #22` Web Bluetooth picker & error-formatting improvements. See [`notes/NOTES-v0.15.2.md`](notes/NOTES-v0.15.2.md) and [`notes/RELEASE-NOTES-v0.15.2.md`](notes/RELEASE-NOTES-v0.15.2.md).
+- **v0.15.3** *(unreleased stabilization candidate; not hardware-qualified)* — Starts the daily-driver roadmap with distinct factory/rescue and app-only update artifacts, build manifests and image-range validation, stricter command parsing, and companion reliability fixes. See [`notes/NOTES-v0.15.3.md`](notes/NOTES-v0.15.3.md). The latest published firmware remains v0.15.1.
+- **v0.15.2** *(source changes)* — Apple Human Interface & Cupertino Web Studio revamp: adaptive Light/Dark translucent glass workspace with simplified 4-tab navigation (`Face Gallery`, `Sync & Wi-Fi`, `Quick Tools`, `Diagnostics`), buttonless circular 240×240 IPS LCD touch enclosure with unclipped typography, direct touch gesture alignment (**Swipe down** opens **Quick Drawer**, **Swipe up** opens **Settings**), collapsible secondary disclosure drawers, expanded Serial controls (`BRIGHT:`, `MOTION:`, `FORMAT:`, `NIGHT:`, `FACE:`, `TIMER:`), and upstream `PR #22` Web Bluetooth picker & error-formatting improvements. BLE has its own command path; controls require explicit transport support. See [`notes/NOTES-v0.15.2.md`](notes/NOTES-v0.15.2.md) and [`notes/RELEASE-NOTES-v0.15.2.md`](notes/RELEASE-NOTES-v0.15.2.md).
 - **v0.15.1** *(partly verified on the watch: USB-C sync with the screen off and Windows sync on plug-in pass)* — Daily-driver fixes from the v0.15.0 test: the timer alarm now shows on every face (it was hidden on Radar, Phantom, and Orbit, Lunar and Yozakura with Expressive motion), the "TIMER UP!" picture clears when dismissed in Settings, the flashlight returns to the face after 2 minutes, the open drawer redraws once a second with a progress ring that empties, Wake gesture and Touch check sit under their own headings, serial data wakes a sleeping watch, the Windows script and web page wait for the watch to answer before syncing (and say when it fails), Windows syncs on every plug-in, and the web page reads the face list over USB-C and notices an unplugged cable. See [`notes/NOTES-v0.15.1.md`](notes/NOTES-v0.15.1.md). Released as [v0.15.1](https://github.com/The-Osprey1/DriftWatch/releases/tag/v0.15.1).
 - **v0.15.0** *(verified on hardware)* — Quick Drawer pull-down shade with interactive countdown timers (1m, 3m, 5m presets, dial progress ring, background light sleep scheduling, visual strobe alarm), full-screen flashlight, Settings 4-Hub Overhaul with 1-tap category header fast-jumping, Instant USB-C Auto-Sync protocol (`TIME:`, `WIFI:`, `FACES:`, `INFO?`), zero-install Windows auto-sync script (`tools/windows/DriftWatchSync.ps1`), Web Serial companion auto-sync, PhoneSync QR code direct scanning, and QMI8658 onboard temperature telemetry. See [`notes/NOTES-v0.15.0.md`](notes/NOTES-v0.15.0.md).
 - **v0.14.0** *(verified on hardware)* — Precision face revamp (upright vector instrument numerals on Digital, Radar, Orbit and Yozakura, quieter supporting marks, distinct analog hand styles), hot-swap active faces (from **Settings > Hot swap** or the Drift sync web page), chronometer startup sequence, radial iris wake and sleep transitions, optional 20 fps ambient face touches on **Motion: Expressive**, shared face-mask constants (`face_id.h`), and `ui.cpp` split into focused units. See [`notes/NOTES-v0.14.0.md`](notes/NOTES-v0.14.0.md).
@@ -81,20 +84,42 @@ Settings is organized into 4 Category Hubs with interactive header fast-jumping 
 
 **Set time** works with no Wi-Fi at all: hour, minutes, day, month and year each have a page with - and +, then a page shows the result with **Save**. Swipe down or BOOT leaves without saving. If the clock was never set it starts from the last time the watch saved (it saves at most once an hour), or else from the date the firmware was built. A later successful sync replaces it. The board has no clock chip, so the time is lost when the battery runs flat or the watch restarts from power-off. Between syncs the watch learns how fast its clock drifts and corrects for it.
 
-The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (with Wake gesture off it sleeps until the next thing that needs doing, at most 30 s). Light sleep is skipped while Wi-Fi or Bluetooth is on. The diagnostic image, with Wake gesture set to Raise, instead lets the motion sensor watch by itself and sleeps until it reports movement; the screen comes on only if the movement turns out to be a raise. Twist modes keep checking every 0.1 s. The serial port does not wake the watch, so press BOOT before sending a serial command while the screen is off. The time resyncs every 6 hours while the screen is off, only if a network is saved. After a failure it tries again in 30 minutes, then 1, 2 and 4 hours, then every 6 hours, so it does not keep switching Wi-Fi on while you are away from that network. If the time zone is Auto, the zone it last found is kept and used from the next start, with its own summer time rules for most zones that change their clocks.
+The screen turns off after 15 seconds (30 seconds on a setup result). While it is off, the chip goes into light sleep and wakes on a touch, BOOT, or every 0.1 s to check the motion sensor (with Wake gesture off it sleeps until the next thing that needs doing, at most 30 s). Light sleep is skipped while Wi-Fi or Bluetooth is on. The diagnostic image, with Wake gesture set to Raise, instead lets the motion sensor watch by itself and sleeps until it reports movement; the screen comes on only if the movement turns out to be a raise. Twist modes keep checking every 0.1 s. Serial data wakes the processor from light sleep in v0.15.1 and later; the waking bytes are lost, so the sync tools wait for an `INFO?` reply before sending commands. The time resyncs every 6 hours while the screen is off, only if a network is saved. After a failure it tries again in 30 minutes, then 1, 2 and 4 hours, then every 6 hours, so it does not keep switching Wi-Fi on while you are away from that network. If the time zone is Auto, the zone it last found is kept and used from the next start, with its own summer time rules for most zones that change their clocks.
 
 ## Flashing
+
+Choose the route deliberately. The existing v0.15.1 downloads are **factory/rescue** images: flashing them at `0x0` erases saved settings and Wi-Fi because their merged RAW padding covers NVS. They are not preserving updates.
+
+### Factory install or USB rescue
 
 1. Plug the watch into a computer with a USB-C **data** cable.
 2. Open https://esp.huhn.me/ in Chrome or Edge, click Connect and pick the watch's port.
 3. Choose [`firmware/drift_watch_v0.15.1.bin`](firmware/drift_watch_v0.15.1.bin) at address **0x0**, then Program.
 4. Press reset or unplug and replug the watch.
 
-If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. To go back to the firmware the watch came with, flash your backup of it at 0x0 the same way.
+If the browser can't find the watch, hold BOOT, tap RESET, release BOOT, then try again. This USB recovery route does not require working touch or a booting application. Flashing a known-good factory image deliberately resets settings and Wi-Fi; reconnect and set the time afterward. To go back to the firmware the watch came with, flash your backup of it at `0x0` the same way.
 
 [`firmware/drift_watch_v0.15.1_diag.bin`](firmware/drift_watch_v0.15.1_diag.bin) is the same firmware with timing and power logs, and with wake on motion and touch standby turned on: it prints drawing time, screen transfer time and free memory to the serial port (115200 baud on the USB-C port) every 10 seconds, and shows a short version on the details screen. Both builds print start-up and Wi-Fi messages there, including the radio's reason number when joining fails.
 
 Working earlier versions (`v0.9.0` through `v0.15.0`) are published on [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). (`v0.7.0` and `v0.8.0` are omitted because they were built with "USB CDC on boot" turned on, which sends serial output to disconnected USB pins and stalls at start on this board.)
+
+### Application-only update foundation (new builds)
+
+`build.sh` now emits these separate files for each standard/diagnostic build. They are build outputs, not newly published firmware downloads:
+
+| File pattern | Flash address | Effect |
+|---|---|---|
+| `drift_watch_vVERSION.bin` / `drift_watch_vVERSION_diag.bin` | `0x0` | Full factory/rescue image; erases settings and saved Wi-Fi |
+| `drift_watch_vVERSION_update.bin` / `drift_watch_vVERSION_diag_update.bin` | `0x10000` | App0 only; its write/erase range leaves NVS untouched, subject to the compatibility checks below |
+| `drift_watch_vVERSION_manifest.json` / `drift_watch_vVERSION_diag_manifest.json` | Do not flash | Paired hashes, image kinds/offsets/erase ranges, target/layout, settings schema and source Git commit/dirty flag |
+
+An app-only update is appropriate **only** for an existing DriftWatch install on this board, with the manifest's exact partition-table hash/layout, boot selection still on `app0`, and an explicitly compatible settings schema/migration. Never flash the update image at `0x0`, use Erase All, or treat the factory image as a preserving update. There is no OTA updater or automatic rollback; dual app partitions alone do not provide either.
+
+Before writing, validate the downloaded pair/manifest with `python3 tools/validate_image.py VERSION path/to/manifest.json`, and establish the existing device's layout/slot from its known installation and release record. A developer can read the existing partition-table sector at `0x8000` (length `0x1000`) using esptool and compare its SHA-256 to the manifest. Current `INFO?` does not report the table or selected boot slot, and the packager does not inspect a connected device. If these preconditions are unknown, stop the preserving route; choose factory/rescue only if you accept its reset consequences.
+
+For a qualified compatible installation, choose the `_update.bin` in the USB flasher at `0x10000`, leave Erase All off, program and reset. Confirm the expected firmware version and retained settings/Wi-Fi afterward. A settings-compatible downgrade must be documented separately; a lower version number is not proof of compatibility. A failed update can be rescued with BOOT+RESET and a known-good factory image, with the reset consequences above.
+
+This foundation proves the packaged write range preserves NVS; it does not yet constitute a hardware-qualified preserving-update release. Qualify the first upgrade/downgrade and interrupted-write recovery on the watch before recommending it for ordinary use. [Espressif documents why merged RAW padding erases intervening sectors](https://docs.espressif.com/projects/esptool/en/latest/esp32s3/esptool/basic-commands.html#raw-output-format).
 
 ## First start
 
@@ -158,7 +183,13 @@ Time zone format, if you type one: `GMT0BST,M3.5.0/1,M10.5.0` (UK), `EST5EDT,M3.
 
 ## Building it yourself
 
-[`build.sh`](build.sh) compiles with arduino-cli and joins everything into one `.bin`. You need arduino-cli with the esp32 core **2.0.17**, and the libraries **TFT_eSPI 2.5.43** and **WiFiManager 2.0.17** (tzapu). Run `DRIFT_DIAG=1 ./build.sh` for the diagnostics version. In the Arduino IDE, choose ESP32S3 Dev Module with **USB CDC On Boot: Disabled**, Flash Size 16MB, Partition Scheme "16M Flash (3MB APP/9.9MB FATFS)" and PSRAM "QSPI PSRAM", and add the screen settings from `build.sh` to TFT_eSPI's setup. To turn off light sleep, build with `-DDRIFT_LIGHT_SLEEP=0` (or edit `board.h`). `-DDRIFT_WOM=1` and `-DDRIFT_TOUCH_STANDBY=1` turn on wake on motion and touch standby in a normal build (both are on in the diagnostic build). `DRIFT_WARNINGS=all ./build.sh` shows every compiler warning.
+[`build.sh`](build.sh) compiles with arduino-cli and emits the factory/rescue image, an application-only update, and their JSON manifest. It requires Python 3 for packaging/validation, arduino-cli with the esp32 core **2.0.17**, and the libraries **TFT_eSPI 2.5.43** and **WiFiManager 2.0.17** (tzapu). Run `DRIFT_DIAG=1 ./build.sh` for the diagnostics version. In the Arduino IDE, choose ESP32S3 Dev Module with **USB CDC On Boot: Disabled**, Flash Size 16MB, Partition Scheme "16M Flash (3MB APP/9.9MB FATFS)" and PSRAM "QSPI PSRAM", and add the screen settings from `build.sh` to TFT_eSPI's setup. To turn off light sleep, build with `-DDRIFT_LIGHT_SLEEP=0` (or edit `board.h`). `-DDRIFT_WOM=1` and `-DDRIFT_TOUCH_STANDBY=1` turn on wake on motion and touch standby in a normal build (both are on in the diagnostic build). `DRIFT_WARNINGS=all ./build.sh` shows every compiler warning.
+
+The manifest's `preserves_nvs: true` describes the update's flash erase/write range. `settings_preservation: "conditional"` requires the recorded layout/slot and compatible firmware migration; it is not a claim that a device or upgrade has passed hardware qualification. The full image remains `preserves_nvs: false`, `settings_preservation: "erases"`. Packaging verifies both images' ESP checksums/hashes, the exact partition layout, matching applications, and that the update stays inside app0. Hashes detect corruption, not publisher identity; obtain release files from the documented repository over HTTPS.
+
+If Python 3 is installed as `python` rather than `python3`, build with `DRIFT_PYTHON=python ./build.sh` and use `python` for the validation/test commands below.
+
+Run packaging safety tests without an Arduino installation: `python3 -m unittest discover -s tools/tests -p 'test_firmware_images.py'`. They use the existing v0.15.1 binaries as well as corrupt/mismatched fixtures and simulate sector erasure/writing to demonstrate that only the update leaves seeded NVS bytes intact.
 
 | File | What it holds |
 |---|---|
@@ -199,7 +230,7 @@ Step counter (the motion sensor can do it), wake on motion for the twist gesture
 
 ## Ready-made firmware files
 
-The [`firmware/`](firmware/) folder holds the current ready-to-flash v0.15.1 image, `drift_watch_v0.15.1.bin`, and the diagnostic build, `drift_watch_v0.15.1_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in [`SHA256SUMS-v0.15.1.txt`](firmware/SHA256SUMS-v0.15.1.txt) and build details in [`MANIFEST-v0.15.1.md`](firmware/MANIFEST-v0.15.1.md). Working earlier releases (`v0.9.0`–`v0.15.0`) are available under [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). All images are flashed at address `0x0`.
+The [`firmware/`](firmware/) folder holds the published v0.15.1 **factory/rescue** image, `drift_watch_v0.15.1.bin`, and the diagnostic build, `drift_watch_v0.15.1_diag.bin` (timing and power logs, wake on motion and touch standby), with their checksums in [`SHA256SUMS-v0.15.1.txt`](firmware/SHA256SUMS-v0.15.1.txt) and build details in [`MANIFEST-v0.15.1.md`](firmware/MANIFEST-v0.15.1.md). These older images flash at `0x0` and erase saved settings/Wi-Fi. They do not include the new app-only update/JSON manifest pair. Working earlier releases (`v0.9.0`–`v0.15.0`) are available under [GitHub Releases](https://github.com/The-Osprey1/DriftWatch/releases). No v0.15.3 firmware release has been published by this change.
 
 ## Licence
 

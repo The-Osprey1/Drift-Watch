@@ -5,6 +5,7 @@
 // instead of shrinking anything.
 #include "screens.h"
 #include <stdarg.h>
+#include "date_names.h"
 #include "gfx.h"
 #include "orient.h"
 #include "qrcodegen.h"
@@ -582,8 +583,9 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
 // ---- Set time -------------------------------------------------------------------------------
 // One field per page with - and + side by side, the whole time or date above them with the
 // field being set in cyan and underlined, then a page that shows the result and saves it.
-const char *const MONTHS[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
-const char *const DAYS[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"};
+// Title case suits the screens; the faces use the upper-case tables.
+constexpr auto &MONTHS = datenames::MONTHS_TITLE;
+constexpr auto &DAYS = datenames::DAYS_TITLE;
 constexpr int VALUE_BASE = 98;  // baseline of the time or date being set
 
 int daysIn(int year, int month0) {

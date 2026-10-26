@@ -1,6 +1,15 @@
-// Commands typed over the USB-C serial port (115200 baud), one per line:
+// Commands typed over the USB-C serial port (115200 baud), one per line. Out-of-range
+// values are not a command at all, so a typo changes nothing:
 //   TIME:<unix seconds>         sets the clock
 //   WIFI:<network>,<password>   saves a Wi-Fi network and joins it
+//   FACES:<mask>, H=<mask>      which faces are in the swipe order (16-bit; H= takes 0x hex)
+//   FACE:<0..FACE_COUNT-1>      shows that face, turning it on if it was off
+//   TIMER:<0..86400>            starts a countdown of that many seconds; 0 resets it
+//   BRIGHT:<0..3>               screen brightness, as a step not a percentage
+//   MOTION:<0..2>               how much the interface moves (off, subtle, expressive)
+//   FORMAT:<12|24>              clock format
+//   NIGHT:<0..3>                night mode window (0 = off)
+//   INFO?, ?                    prints one DRIFT: line of version and current settings
 // Bytes are collected as they arrive, so a half-sent line never holds up the interface the
 // way Serial.readStringUntil did (it waited up to a second for the newline). Pure logic with
 // no hardware, so the computer simulation tests it.

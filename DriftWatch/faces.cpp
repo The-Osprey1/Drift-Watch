@@ -11,6 +11,7 @@
 // to set it (or what the sync is doing).
 #include "faces.h"
 #include <math.h>
+#include "date_names.h"
 #include "face_parts.h"
 #include "gfx.h"
 #include "theme.h"
@@ -19,8 +20,9 @@ using namespace layout;
 
 namespace faceparts {
 namespace {
-const char *DAYS[] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
-const char *MONTHS[] = {"JAN", "FEB", "MAR", "APR", "MAY", "JUN", "JUL", "AUG", "SEP", "OCT", "NOV", "DEC"};
+// Upper case suits the instrument faces; the screens use the title-case tables.
+constexpr auto &DAYS = datenames::DAYS_UPPER;
+constexpr auto &MONTHS = datenames::MONTHS_UPPER;
 }  // namespace
 
 int displayHour(const FaceContext &c) {
@@ -38,7 +40,8 @@ const char *noTimeHint(const FaceContext &c) {
 }
 
 void dateText(const FaceContext &c, char *buf, size_t n) {
-  snprintf(buf, n, "%s %d %s", DAYS[c.now.tm_wday], c.now.tm_mday, MONTHS[c.now.tm_mon]);
+  // Wrapped like the set time screen does, so a damaged tm cannot read past a table.
+  snprintf(buf, n, "%s %d %s", DAYS[c.now.tm_wday % 7], c.now.tm_mday, MONTHS[c.now.tm_mon % 12]);
 }
 
 namespace {

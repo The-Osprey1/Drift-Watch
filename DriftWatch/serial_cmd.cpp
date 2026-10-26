@@ -2,6 +2,7 @@
 #include <ctype.h>
 #include <stdlib.h>
 #include <string.h>
+#include "face_id.h"
 
 namespace serialcmd {
 
@@ -90,7 +91,7 @@ Command parse(const char *line) {
     }
   } else if (len > 5 && strncmp(line, "FACE:", 5) == 0) {
     long f = strtol(line + 5, nullptr, 10);
-    if (f >= 0 && f < 12) {
+    if (f >= 0 && f < FACE_COUNT) {
       cmd.kind = Kind::Face;
       cmd.value = (int)f;
     }

@@ -1,5 +1,6 @@
 // The few hardware services the interface needs. hal_esp32.cpp implements them
-// on the watch; tools/host/hal_host.cpp fakes them for previews and tests.
+// on the watch; each tools/host test program supplies its own stand-ins (sim_stubs.cpp
+// for the interface simulations, net_test.cpp and power_test.cpp for their own).
 #pragma once
 #include <stdint.h>
 #include <time.h>

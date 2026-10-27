@@ -7,6 +7,7 @@
 #include "net.h"
 #include "numeric_input.h"
 #include "settings.h"
+#include "status_fields.h"
 
 namespace phone {
 namespace {
@@ -237,10 +238,12 @@ const char *apply(const char *line) {
 }
 
 void status(char *out, size_t n, int batteryPct) {
-  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;tz=%s;wifi=%s;bat=%d;face=%d;faces=%u;bright=%d;motion=%d;format=%d;night=%d", net::timeIsValid() ? (long)hal::now() : 0L,
-           settings.tz.c_str(), net::ssid(), batteryPct, (int)(settings.face % FACE_COUNT),
+  snprintf(out, n, "fw=" FW_VERSION ";time=%ld;bat=%d;face=%d;faces=%u;bright=%d;motion=%d;format=%d;night=%d", net::timeIsValid() ? (long)hal::now() : 0L,
+           batteryPct, (int)(settings.face % FACE_COUNT),
            (unsigned int)(settings.activeFaces & ALL_FACES_MASK), (int)settings.brightnessLevel, (int)settings.motion,
            settings.use12h ? 12 : 24, (int)settings.night);
+  statusfields::appendText(out, n, "tz", settings.tz.c_str());
+  statusfields::appendText(out, n, "wifi", net::ssid());
 }
 
 }  // namespace phone

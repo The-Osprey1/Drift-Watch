@@ -73,7 +73,8 @@ function ble(p, options = {}) {
   const state = { bright: 2, motion: 1, format: 24, night: 0, face: 0, faces: 4095, battery: 86 };
   const writes = [], listeners = {}, delayed = [];
   let connected = false, fragment = '';
-  const statusText = reply => `reply=${reply};fw=0.15.3;time=1800000000;bat=${state.battery};face=${state.face};faces=${state.faces};bright=${state.bright};motion=${state.motion};format=${state.format};night=${state.night}`;
+  const statusText = reply => 'reply=' + reply + ';fw=' + (options.version || '0.15.3') + ';time=1800000000;bat=' + state.battery + ';face=' + state.face + ';faces=' + state.faces + ';bright=' + state.bright + ';motion=' + state.motion + ';format=' + state.format + ';night=' + state.night +
+    (options.fields ? ';' + (typeof options.fields === 'function' ? options.fields(state) : options.fields) : '');
   const emit = text => { const bytes = new TextEncoder().encode(text); for (const fn of listeners.status || []) fn({ target: { value: new DataView(bytes.buffer) } }); };
   const status = { addEventListener: (_name, fn) => (listeners.status ||= []).push(fn),
     startNotifications: async () => {}, readValue: async () => {
@@ -92,7 +93,11 @@ function ble(p, options = {}) {
         const name = { B: 'bright', M: 'motion', FO: 'format', NM: 'night', F: 'face', H: 'faces' }[key];
         if (name) state[name] = Number(value);
       }
-      emit(line === '?' && options.queryStatus !== undefined ? options.queryStatus : statusText(reply));
+      const text = line === '?' && options.queryStatus !== undefined ? options.queryStatus : statusText(reply);
+      if (options.fieldNotifications) {
+        for (const field of text.split(';').filter(x => !x.startsWith('reply='))) emit(field);
+        emit('reply=' + reply);
+      } else emit(text);
     };
     if (options.delay && line !== '?') delayed.push(respond); else queueMicrotask(respond);
   } };
@@ -104,26 +109,30 @@ function ble(p, options = {}) {
   return { state, writes, device, emit, delayed, get connected() { return connected; } };
 }
 
-function serial(p) {
-  const state = { bright: 2, motion: 1, format: 24, night: 0, face: 0, faces: 4095, battery: 86 };
+function serial(p, options = {}) {
+  const state = { bright: 2, motion: 1, format: 24, night: 0, face: 0, faces: 4095, battery: 86, timer: 'idle', remaining: 0 };
   let input, opened = false, closed = 0;
   const writes = [];
   const emit = text => input.enqueue(new TextEncoder().encode(text));
-  const info = () => `DRIFT:VER=0.15.3,TIME=1800000000,BAT=${state.battery},FACES=0x${state.faces.toString(16)},FACE=${state.face},BRIGHT=${state.bright},MOTION=${state.motion},FORMAT=${state.format},NIGHT=${state.night}\r\n`;
+  const info = () => 'DRIFT:VER=' + (options.version || '0.15.3') + ',TIME=1800000000,BAT=' + state.battery + ',FACES=0x' + state.faces.toString(16) + ',FACE=' + state.face + ',BRIGHT=' + state.bright + ',MOTION=' + state.motion + ',FORMAT=' + state.format + ',NIGHT=' + state.night +
+    (options.fields ? ',' + (typeof options.fields === 'function' ? options.fields(state) : options.fields) : '') + '\r\n';
   const port = { readable: new ReadableStream({ start(controller) { input = controller; } }),
     writable: new WritableStream({ write(bytes) {
       const line = new TextDecoder().decode(bytes).trim(); if (!line) return;
       writes.push(line);
       let reply = '';
-      if (line === 'INFO?') reply = info();
+      if (line === 'INFO?') reply = options.queryStatus === undefined ? info() : options.queryStatus;
       else {
         const [key, raw] = line.split(':'); const value = Number(raw);
         const name = { BRIGHT: 'bright', MOTION: 'motion', FORMAT: 'format', NIGHT: 'night', FACE: 'face', FACES: 'faces' }[key];
         if (name) state[name] = value;
+        if (key === 'TIMER' && !options.ignoreTimer && !options.refuseTimer) { state.timer = value ? 'running' : 'idle'; state.remaining = value; }
         reply = key === 'TIMER' ? `Timer ${value ? 'started for ' + value + ' s' : 'reset'}\r\n` :
           key === 'BRIGHT' ? `Brightness set to ${value}\r\n` : key === 'FORMAT' ? `Format set to ${value}h\r\n` :
+          key === 'FACES' ? `Faces mask set to 0x${value.toString(16)}\r\n` :
           key === 'WIFI' ? 'Configuring Wi-Fi for SSID: Home\r\n' : '';
       }
+      if (line.startsWith('TIMER:') && options.refuseTimer) reply = 'ERROR: timer start not saved\r\n';
       if (reply) { emit(reply.slice(0, 7)); emit(reply.slice(7)); }
     } }), async open() { opened = true; }, async setSignals() {}, async close() { closed++; opened = false; } };
   p.navigator.serial.requestPort = () => Promise.resolve(port);
@@ -168,8 +177,8 @@ test('physical telemetry is measured or unavailable, supports zero, and becomes 
   await p.context.connect(); p.tick();
   assert.match(p.text('chartBatVal'), /0%.*voltage unavailable/);
   assert.match(p.text('chartTempVal'), /not reported/);
-  p.run('watchState.lastSeen = Date.now() - 31000'); p.context.updateTelemetry();
-  assert.match(p.text('chartBatVal'), /Stale/);
+  p.run('watchSeen.battery = Date.now() - 31000'); p.context.updateTelemetry();
+  assert.match(p.text('chartBatVal'), /stale/i);
   h.state.battery = -1; await p.context.send('?'); p.context.updateTelemetry();
   assert.match(p.text('chartBatVal'), /Battery unavailable/);
   await p.context.disconnectTransport();
@@ -230,6 +239,35 @@ test('profile failures never report an applied collection', async () => {
   await assert.rejects(p.context.applyProfile({ name: 'Test', mask: 65, face: 6, motion: 'subtle', bright: 2, use12h: false }), /confirm/);
   assert.match(p.text('facesMsg'), /not fully applied/);
   await p.context.disconnectTransport();
+});
+
+test('settings and face saves require their own fresh queried fields on Serial and BLE', async () => {
+  for (const transport of ['serial', 'ble']) {
+    for (const operation of ['setting', 'profile', 'faces']) {
+      const p = page(), options = {};
+      const h = transport === 'serial' ? serial(p, options) : ble(p, options);
+      assert.equal(await (transport === 'serial' ? p.context.connectSerial() : p.context.connect()), true);
+      assert.equal(p.run('watchState.bright'), 2);
+      assert.equal(p.run('watchState.faces'), 4095);
+      // The mutation ACK can carry a matching value, and other valid query fields
+      // can advance the status revision. Neither proves the omitted field was read back.
+      options.queryStatus = transport === 'serial' ? 'DRIFT:VER=0.15.3,BAT=86\r\n' : 'reply=ok;bat=86';
+      if (operation === 'setting') {
+        await assert.rejects(p.context.applySetting('bright', 2), /did not read back.*bright/);
+        assert.doesNotMatch(p.text('toolsMsg'), /Setting confirmed/);
+      } else if (operation === 'profile') {
+        await assert.rejects(p.context.applyProfile({ name: 'Current', mask: 4095, face: 0, motion: 'subtle', bright: 2, use12h: false }), /did not confirm.*faces/);
+        assert.match(p.text('facesMsg'), /not fully applied/);
+      } else {
+        assert.equal(await p.context.saveActiveFaces(), false);
+        assert.match(p.text('facesMsg'), /did not read back.*faces/);
+        assert.doesNotMatch(p.text('facesMsg'), /Saved!/);
+      }
+      assert.equal(p.run('transportReady'), true, transport + ' ' + operation);
+      assert.equal(h.writes.at(-1), transport === 'serial' ? 'INFO?' : '?');
+      await p.context.disconnectTransport();
+    }
+  }
 });
 
 test('downloads use real release/source paths instead of unshipped root files', () => {
@@ -330,4 +368,169 @@ test('a stalled transport write still reaches its deadline and leaves controls u
   await assert.rejects(p.context.runTimer(60), /did not acknowledge/);
   assert.equal(p.run('transportReady'), false);
   assert.equal(p.ids.get('startTimerBtn').disabled, true);
+});
+
+const liveSerialFields = state => 'PROTO=1,CAPS=0x1f,MV=4182,TEMP=31.5,DRIFT=0,TIMEQ=synced,SOURCE=usb,SYNCAGE=12,TIMER=' + state.timer + ',REMAIN=' + state.remaining;
+const liveBleFields = 'proto=1;caps=0x1d;mv=4010;temp=30.2;drift=-125;timeq=stale;source=phone;syncage=86400;timer=interrupted;remain=0';
+
+test('protocol1 Serial status shows actual telemetry, clock quality and confirmed timer snapshots', async () => {
+  const p = page(), h = serial(p, { version: '0.16.0-dev', fields: liveSerialFields });
+  assert.equal(await p.context.connectSerial(), true);
+  p.context.updateTelemetry();
+  assert.match(p.text('chartBatVal'), /4182 mV/);
+  assert.match(p.text('chartTempVal'), /31\.5 °C board.*0 ppb/);
+  assert.match(p.text('clockQualityReadout'), /synced.*source USB.*12s/);
+  assert.equal(p.ids.get('startTimerBtn').disabled, false);
+  await p.context.runTimer(60);
+  assert.equal(p.text('studioTimerReadout'), '01:00');
+  assert.match(p.text('toolsMsg'), /confirmed.*not a local countdown/);
+  assert.equal(p.run('drawerTimerEndMs'), 0);
+  p.run('watchSeen.timer = watchSeen.remaining = Date.now() - 5000'); p.context.updateTimerReadout();
+  assert.equal(p.text('studioTimerReadout'), '01:00');
+  assert.match(p.text('compStatusBadge'), /last read 5s ago/);
+  await p.context.runTimer(0);
+  assert.equal(p.text('studioTimerReadout'), 'No timer');
+  assert.ok(h.writes.includes('TIMER:0'));
+  await p.context.disconnectTransport();
+});
+
+test('MTU23 field-by-field BLE notifications work when the optional read fails', async () => {
+  const p = page(), h = ble(p, { version: '0.16.0-dev', fields: liveBleFields, initialReadFails: true, fieldNotifications: true });
+  assert.equal(await p.context.connect(), true);
+  p.context.updateTelemetry();
+  assert.equal(p.run('watchState.protocol'), 1);
+  assert.equal(p.run('supportsFeature("settings")'), true);
+  assert.match(p.text('chartBatVal'), /4010 mV/);
+  assert.match(p.text('chartTempVal'), /30\.2 °C board.*-125 ppb/);
+  assert.match(p.text('clockQualityReadout'), /stale.*source phone.*1d/);
+  assert.equal(p.text('studioTimerReadout'), 'Interrupted');
+  assert.equal(p.ids.get('startTimerBtn').disabled, true);
+  await p.ids.get('fmt12Btn').click();
+  assert.equal(h.state.format, 12);
+  await p.ids.get('refreshStatus').click();
+  assert.match(p.text('toolsMsg'), /sampled on refresh/);
+  assert.deepEqual(h.writes, ['?', 'FO=12', '?', '?']);
+  await p.context.disconnectTransport();
+});
+
+test('invalid and explicitly unavailable measurements clear old values while real zero remains valid', async () => {
+  const p = page(), h = ble(p, { version: '0.16.0-dev', fields: liveBleFields });
+  await p.context.connect();
+  h.emit('reply=ok;MV=-1;TEMP=na;DRIFT=garbage;SYNCAGE=-1;TIMEQ=wrong;SOURCE=unknown;TIMER=paused;REMAIN=86401');
+  p.context.updateTelemetry();
+  for (const key of ['mv', 'temp', 'drift', 'syncAge', 'timeQuality', 'source', 'timer', 'remaining'])
+    assert.equal(p.run('watchState.' + key), null, key);
+  assert.match(p.text('chartBatVal'), /voltage unavailable/);
+  assert.match(p.text('chartTempVal'), /not reported/);
+  assert.match(p.text('clockQualityReadout'), /not reported.*source unavailable.*sync age unavailable/);
+  h.emit('reply=ok;MV=NaN;TEMP=Infinity;DRIFT=30000001;SYNCAGE=-2;REMAIN=1.5');
+  assert.equal(p.run('watchState.mv'), null);
+  h.emit('reply=ok;BAT=0;MV=0;TEMP=0.0;DRIFT=0;SYNCAGE=0;TIMEQ=manual;SOURCE=manual;TIMER=idle;REMAIN=0');
+  p.context.updateTelemetry();
+  assert.match(p.text('chartBatVal'), /0%.*0 mV/);
+  assert.match(p.text('chartTempVal'), /0\.0 °C board.*0 ppb/);
+  assert.match(p.text('clockQualityReadout'), /manual.*0s/);
+  await p.context.disconnectTransport();
+});
+
+test('unrelated status cannot make an old measurement fresh or add synthetic history points', async () => {
+  const p = page(), h = ble(p, { version: '0.16.0-dev', fields: liveBleFields });
+  await p.context.connect();
+  const count = p.run('teleHistory.temp.length');
+  p.run('watchSeen.temp = watchSeen.drift = watchSeen.mv = Date.now() - 31000');
+  h.emit('reply=ok;bright=3;fw=0.16.0-dev');
+  p.context.updateTelemetry();
+  assert.match(p.text('chartTempVal'), /stale/i);
+  assert.match(p.text('chartBatVal'), /stale/i);
+  assert.equal(p.run('teleHistory.temp.length'), count);
+  assert.equal(p.run('transportReady'), true);
+  await p.context.disconnectTransport();
+  assert.match(p.text('chartTempVal'), /stale/i);
+});
+
+test('advertised capabilities override legacy guesses and unsupported protocols are read-only', async () => {
+  for (const fields of ['proto=1;caps=0', 'proto=2;caps=0x1f', 'proto=bad;caps=0x1f', 'proto=1;caps=???']) {
+    const p = page(), h = ble(p, { fields }); await p.context.connect();
+    assert.equal(p.ids.get('fmt12Btn').disabled, true, fields);
+    assert.equal(p.ids.get('sync').disabled, true, fields);
+    assert.equal(p.ids.get('wifi').disabled, true, fields);
+    await assert.rejects(p.context.applySetting('bright', 3), /capability/);
+    assert.deepEqual(h.writes, ['?']);
+    await p.context.disconnectTransport();
+  }
+});
+
+test('only known legacy versions receive fallback control support', async () => {
+  for (const [version, settings, timer] of [['0.15.1', true, false], ['0.15.2', true, true], ['0.15.3', true, true],
+    ['0.15.4', false, false], ['0.16.0-dev', false, false], ['1.0.0', false, false]]) {
+    const p = page(); serial(p, { version }); await p.context.connectSerial();
+    assert.equal(!p.ids.get('fmt12Btn').disabled, settings, version);
+    assert.equal(!p.ids.get('startTimerBtn').disabled, timer, version);
+    await p.context.disconnectTransport();
+  }
+});
+
+test('a timer ACK without matching protocol1 state is not a confirmed start', async () => {
+  const p = page(); serial(p, { version: '0.16.0-dev', fields: liveSerialFields, ignoreTimer: true });
+  await p.context.connectSerial();
+  await assert.rejects(p.context.runTimer(60), /did not confirm/);
+  assert.doesNotMatch(p.text('toolsMsg'), /start confirmed/);
+  assert.equal(p.run('drawerTimerEndMs'), 0);
+  await p.context.disconnectTransport();
+});
+
+test('explicit Serial save refusals are immediate errors and keep the connection usable', async () => {
+  const options = { version: '0.16.0-dev', fields: liveSerialFields, refuseTimer: true };
+  const p = page(); serial(p, options); await p.context.connectSerial();
+  await p.ids.get('startTimerBtn').click();
+  assert.match(p.text('toolsMsg'), /Watch refused command: timer start not saved/);
+  assert.equal(p.run('transportReady'), true);
+  assert.equal(p.run('watchState.timer'), 'idle');
+  options.refuseTimer = false;
+  await p.context.runTimer(60);
+  assert.match(p.text('toolsMsg'), /start confirmed/);
+  await p.context.disconnectTransport();
+});
+
+test('unconnected charts start empty and Virtual readings cannot leak to a physical session', async () => {
+  const p = page();
+  assert.equal(p.run('teleHistory.bat.length'), 0);
+  assert.equal(p.run('teleHistory.temp.length'), 0);
+  await p.context.toggleSimulatedWatch(); p.context.updateTelemetry();
+  assert.ok(p.run('teleHistory.temp.length') > 0);
+  ble(p); await p.context.connect(); p.context.updateTelemetry();
+  assert.equal(p.run('teleHistory.temp.length'), 0);
+  assert.match(p.text('chartTempVal'), /not reported/);
+  await p.context.disconnectTransport();
+});
+
+test('a timer readback cannot reuse an older matching state when the new query omits it', async () => {
+  let includeTimer = true;
+  const options = { version: '0.16.0-dev', fields: state => includeTimer ? liveSerialFields(state) : liveSerialFields(state).replace(/,TIMER=.*$/, '') };
+  const p = page(); serial(p, options); await p.context.connectSerial();
+  await p.context.runTimer(60);
+  assert.equal(p.run('watchState.timer'), 'running');
+  includeTimer = false;
+  await assert.rejects(p.context.runTimer(60), /did not confirm/);
+  await p.context.disconnectTransport();
+});
+
+test('Studio version is independent of the connected legacy firmware version', async () => {
+  const p = page(); ble(p, { version: '0.15.1' }); await p.context.connect();
+  assert.match(p.text('firmwareVersionReadout'), /Watch v0\.15\.1.*Studio v0\.16\.0 dev/);
+  await p.context.disconnectTransport();
+});
+
+test('a wire-reported timer storage error is visible rather than an unknown state', async () => {
+  const p = page(), h = ble(p, { version: '0.16.0-dev', fields: liveBleFields.replace('timer=interrupted', 'timer=storage_error'), fieldNotifications: true, initialReadFails: true });
+  await p.context.connect(); p.context.updateTelemetry();
+  assert.equal(p.run('watchState.timer'), 'storage_error');
+  assert.equal(p.text('studioTimerReadout'), 'Storage error');
+  assert.match(p.text('compStatusBadge'), /Timer not saved/);
+  assert.equal(p.run('supportsFeature("timer")'), false);
+  assert.equal(p.run('supportsFeature("timer_recovery")'), true);
+  assert.equal(p.ids.get('startTimerBtn').disabled, true);
+  h.emit('timer=idle'); h.emit('remain=0'); p.context.updateTimerReadout();
+  assert.equal(p.text('studioTimerReadout'), 'No timer');
+  await p.context.disconnectTransport();
 });

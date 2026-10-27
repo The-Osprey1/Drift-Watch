@@ -56,7 +56,7 @@ struct HostSerial {
   }
   std::string out;
   template <class... A> void printf(const char *f, A... x) {
-    char b[256];
+    char b[1024];  // status snapshots can contain up to 512 bytes plus a newline
     snprintf(b, sizeof b, f, x...);
     out += b;
   }

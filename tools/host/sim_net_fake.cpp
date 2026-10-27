@@ -26,6 +26,7 @@ uint32_t stepStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
 char simZone[64] = "";
 net::Source source = net::Source::None;
+clockstatus::Ledger ledger;
 char savedSsid[33] = "";
 constexpr uint32_t STEP_MS[] = {0, 1200, 400, 400};
 }  // namespace
@@ -39,8 +40,14 @@ void sim::setPortal(net::Portal p) {
 }
 
 namespace net {
-void begin() {}
+void begin() {
+  ledger.begin(hal::ms(), sim::clockSet);
+  byHand = false;
+  lastSyncTime = 0;
+  source = Source::None;
+}
 void poll() {
+  ledger.observe(hal::ms());
   uint32_t e = sim::clockMs - stepStart;
   auto next = [&](Sync s) { syncNow = s; stepStart = sim::clockMs; };
   auto end = [&](Fail f) { if (f == Fail::None) byHand = false; fail = f; result = f == Fail::None ? Result::Ok : Result::Failed; finished++; next(Sync::Idle); };
@@ -57,7 +64,10 @@ void poll() {
     case Sync::Clock:
       if (e >= STEP_MS[3]) {
         if (sim::syncOutcome == Fail::ClockFailed) end(Fail::ClockFailed);
-        else { sim::clockSet = true; lastSyncTime = hal::now(); source = Source::Wifi; end(Fail::None); }
+        else {
+          sim::clockSet = true; lastSyncTime = hal::now(); source = Source::Wifi;
+          ledger.synced(hal::ms(), clockstatus::Source::Wifi); end(Fail::None);
+        }
       }
       break;
     default: break;
@@ -91,7 +101,12 @@ uint32_t portalSecondsLeft() {
 }
 bool hasSavedWifi() { return sim::wifiSaved; }
 bool timeIsValid() { return sim::clockSet; }
-void setClockByHand(time_t t) { hal::setTime(t); byHand = true; }
+void setClockByHand(time_t t) {
+  cancelSync(); hal::setTime(t); byHand = true; ledger.manual(hal::ms());
+}
+clockstatus::Quality clockQuality() { ledger.observe(hal::ms()); return ledger.quality(sim::clockSet); }
+clockstatus::Source clockSource() { return ledger.source(sim::clockSet); }
+int64_t syncAgeSeconds() { ledger.observe(hal::ms()); return ledger.ageSeconds(sim::clockSet); }
 bool clockSetByHand() { return byHand; }
 JoinWhy joinWhy() { return sim::joinWhy; }
 int joinCode() { return sim::joinWhy == JoinWhy::NotFound ? 201 : sim::joinWhy == JoinWhy::Password ? 15 : 0; }
@@ -100,13 +115,22 @@ time_t lastSync() { return lastSyncTime; }
 const char *zoneName() { return simZone; }
 const char *ssid() { return !sim::wifiSaved ? "" : savedSsid[0] ? savedSsid : "HomeNet-5G"; }
 void setClockFromPhone(time_t utc, int) {
+  cancelSync();
   hal::setTime(utc);
   lastSyncTime = utc;
   source = Source::Phone;
+  ledger.synced(hal::ms(), clockstatus::Source::Phone);
   byHand = false;
   fail = Fail::None;
   result = Result::Ok;
   finished++;
+}
+bool setClockFromUsb(time_t utc) {
+  if (utc < 1700000000) return false;
+  cancelSync(); hal::setTime(utc); lastSyncTime = utc; source = Source::Usb;
+  ledger.synced(hal::ms(), clockstatus::Source::Usb);
+  byHand = false; fail = Fail::None; result = Result::Ok; finished++;
+  return true;
 }
 Source lastSource() { return source; }
 void setZone(const char *posix, const char *name) {

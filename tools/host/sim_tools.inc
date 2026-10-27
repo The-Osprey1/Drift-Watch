@@ -312,6 +312,111 @@ void extraFlashlight() {
   settle(100);
 }
 
+void timerRecovery() {
+  printf("\n== Persistent timer notices\n");
+  startOn(FACE_DIGITAL);
+  P("recovery", ui::startTimer(60000), "start accepted only after the running marker saves");
+  P("recovery", sim::flash["tools/timer"].n == (uint8_t)timerstore::Marker::Running,
+    "a running timer has one persistent marker");
+  int writes = sim::settingsSaves;
+  runFor(2000);
+  P("recovery", sim::settingsSaves == writes, "ordinary timer ticks do not write flash");
+  ui::begin();
+  settle(100);
+  P("recovery", !ui::timerActive() && !ui::timerAlarming() && !strcmp(ui::timerNotice(), "interrupted") &&
+                ui::timerRemainingMs() == 0,
+    "restart reports interruption instead of inventing a resumed deadline");
+  P("recovery", warnPx() > 100 && warnPx() < 2000, "the face keeps a compact timer notice");
+  snap("x_timer_interrupted");
+  swipeDown();
+  settle();
+  screens::Control clear;
+  P("recovery", screen() == "drawer" && find(screens::Button::TimerReset, clear),
+    "Quick Drawer exposes the retained notice and its clear control");
+  P("recovery", tapButton(screens::Button::TimerReset), "the user can acknowledge interruption");
+  ui::begin();
+  settle(100);
+  P("recovery", !strcmp(ui::timerNotice(), "none"), "acknowledgement stays cleared after restart");
+
+  P("recovery", ui::startTimer(1000), "a new timer starts");
+  runFor(1100);
+  P("recovery", ui::timerAlarming() && sim::flash["tools/timer"].n == (uint8_t)timerstore::Marker::Due,
+    "expiry records an unacknowledged due occurrence");
+  runFor(31000);
+  P("recovery", !ui::timerAlarming() && !strcmp(ui::timerNotice(), "missed"),
+    "automatic alert timeout retains a missed notice");
+  ui::begin();
+  settle(100);
+  P("recovery", !ui::timerAlarming() && !strcmp(ui::timerNotice(), "missed"),
+    "missed notice survives restart without replaying the flash alarm");
+  snap("x_timer_missed");
+  ui::resetTimer();
+  ui::startTimer(1000);
+  runFor(1100);
+  tap(120, 120);
+  P("recovery", sim::flash["tools/timer"].n == (uint8_t)timerstore::Marker::Idle,
+    "explicit dismissal saves the idle marker");
+  ui::begin();
+  settle(100);
+  P("recovery", !strcmp(ui::timerNotice(), "none"), "explicit alarm dismissal acknowledges the occurrence");
+
+  sim::preferenceWriteFailureKey() = "tools/timer";
+  P("recovery", !ui::startTimer(60000) && !ui::timerActive() && !ui::timerStoreOk(),
+    "failed start marker does not start a phantom timer");
+  Serial.out.clear();
+  Serial.in = "TIMER:60\n";
+  runFor(30);
+  P("recovery", Serial.out.find("ERROR: timer start not saved") != std::string::npos &&
+                Serial.out.find("Timer started for") == std::string::npos,
+    "Serial reports a failed persistent start without a success acknowledgement");
+  sim::preferenceWriteFailureKey().clear();
+  ui::resetTimer();
+
+  ui::startTimer(1000);
+  sim::preferenceWriteFailureKey() = "tools/timer";
+  runFor(1100);
+  P("recovery", ui::timerAlarming() && !ui::timerStoreOk() &&
+                sim::flash["tools/timer"].n == (uint8_t)timerstore::Marker::Running,
+    "failed expiry save still alerts and reports the failed durable marker");
+  sim::preferenceWriteFailureKey().clear();
+  tap(120, 120);
+  sim::preferenceBeginFailureNamespace() = "tools";
+  ui::begin();
+  settle(100);
+  P("recovery", !ui::timerActive() && !ui::timerStoreOk() && !strcmp(ui::timerNotice(), "storage_error"),
+    "restart exposes an unreadable timer store instead of claiming no pending timer");
+  sim::preferenceBeginFailureNamespace().clear();
+  P("recovery", ui::resetTimer(), "clear recovers after a transient storage failure");
+  ui::startTimer(60000);
+  sim::preferenceWriteFailureKey() = "tools/timer";
+  P("recovery", !ui::resetTimer() && !ui::timerActive() && !strcmp(ui::timerNotice(), "storage_error"),
+    "failed clear stops the timer now and keeps a visible persistence error");
+  sim::preferenceWriteFailureKey().clear();
+  ui::begin();
+  settle(100);
+  P("recovery", !strcmp(ui::timerNotice(), "interrupted"), "a failed clear never claims a durable acknowledgement");
+  ui::resetTimer();
+
+  ui::startTimer(60000);
+  runFor(20000);
+  P("recovery", screen() == "asleep" && ui::timerActive() && ui::timerRemainingMs() > 35000 &&
+                sim::flash["tools/timer"].n == (uint8_t)timerstore::Marker::Running,
+    "ordinary light sleep preserves the live deadline without a false restart notice");
+  ui::resetTimer();
+
+  uint32_t clock = sim::clockMs;
+  sim::clockMs = UINT32_MAX - 4000;
+  startOn(FACE_DIGITAL);
+  ui::startTimer(3000);
+  runFor(1000);
+  P("recovery", ui::timerActive() && ui::timerRemainingMs() > 1900 && ui::timerRemainingMs() <= 2000,
+    "remaining time stays correct when the deadline crosses the millis rollover");
+  runFor(2100);
+  P("recovery", ui::timerAlarming(), "timer still expires across the millis rollover");
+  ui::resetTimer();
+  sim::clockMs = clock;
+}
+
 void extraHubs() {
   printf("\n== Settings hubs\n");
   startOn(FACE_DIGITAL);
@@ -489,6 +594,7 @@ void toolChecks() {
   sim::imuPresent = true;
   extraDrawer();
   extraTimers();
+  timerRecovery();
   extraFlashlight();
   toolsTimeouts();
   extraHubs();

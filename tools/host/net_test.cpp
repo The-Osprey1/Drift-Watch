@@ -863,6 +863,74 @@ void portalMore() {
   net::cancelPortal();
 }
 
+void clockProvenance() {
+  printf("Clock quality: trusted sources, monotonic age, failed sync and explicit setters\n");
+  freshBoard();
+  CHECK(net::clockQuality() == clockstatus::Quality::Retained && net::syncAgeSeconds() == -1,
+        "a plausible startup clock has unknown provenance/age");
+  net::setClockByHand(hal::now());
+  CHECK(net::clockQuality() == clockstatus::Quality::Manual && net::syncAgeSeconds() == -1,
+        "manual time is not reported as synced");
+  syncOnce();
+  CHECK(net::clockQuality() == clockstatus::Quality::Synced &&
+        net::clockSource() == clockstatus::Source::Wifi, "NTP establishes a trusted Wi-Fi clock");
+  int64_t before = net::syncAgeSeconds();
+  hal::adjustMs(-3600000);
+  CHECK(net::syncAgeSeconds() == before, "a backwards UTC correction cannot refresh sync age");
+  runFor(25UL * 3600 * 1000, 1000);
+  CHECK(net::clockQuality() == clockstatus::Quality::Stale && net::timeIsValid() &&
+        net::syncAgeSeconds() >= 25 * 3600, "old trusted time is stale but remains usable");
+  net::setClockByHand(hal::now());
+  CHECK(net::lastSource() == net::Source::Wifi && net::syncAgeSeconds() == -1,
+        "manual editing does not relabel historical Wi-Fi sync as the current source");
+  int64_t wall = hal::nowMs();
+  CHECK(!net::setClockFromUsb(100001) && hal::nowMs() == wall, "invalid USB date is refused before mutation");
+  CHECK(net::setClockFromUsb(1800000000) && net::lastSource() == net::Source::Usb &&
+        net::clockSource() == clockstatus::Source::Usb && !net::clockSetByHand(), "USB is a trusted distinct source");
+  restart();
+  CHECK(net::clockQuality() == clockstatus::Quality::Retained && net::syncAgeSeconds() == -1,
+        "restart does not fabricate a sync age from a saved timestamp");
+  watchMs = 5000;
+  restart();
+  CHECK(!net::timeIsValid() && net::clockQuality() == clockstatus::Quality::Unset,
+        "an unset clock cannot be restored by the NVS editor timestamp");
+
+  for (int setter = 0; setter < 3; setter++) {
+    for (net::Sync stage : {net::Sync::Connecting, net::Sync::Zone, net::Sync::Clock}) {
+      freshBoard();
+      netsim::httpBody = LONDON_REPLY;
+      if (stage == net::Sync::Zone) netsim::taskMode = netsim::TaskMode::Hold;
+      net::startSync();
+      if (stage != net::Sync::Connecting) {
+        runFor(300); netsim::status = WL_CONNECTED; runFor(100);
+      }
+      CHECK(net::syncState() == stage, "setter %d reaches sync stage %d (%d)",
+            setter, (int)stage, (int)net::syncState());
+      int64_t expected = 1800000000000LL;
+      if (setter == 0) net::setClockByHand(1800000000);
+      else if (setter == 1) { net::setClockFromPhone(1800000000, 250); expected += 250; }
+      else CHECK(net::setClockFromUsb(1800000000), "valid USB time accepted");
+      CHECK(!net::syncRunning() && !netsim::sntpRunning, "explicit setting cancels stale sync");
+      if (stage == net::Sync::Zone) netsim::runTask();
+      CHECK(!netsim::sntpAnswer(truthMs() + 3600000), "late NTP cannot overwrite the explicit setting");
+      runFor(1000);
+      CHECK(llabs(hal::nowMs() - expected - 1000) < 5, "chosen clock wins after late answers");
+      CHECK(net::clockQuality() == (setter == 0 ? clockstatus::Quality::Manual : clockstatus::Quality::Synced),
+            "explicit setter has correct quality");
+    }
+  }
+  freshBoard(); netsim::httpBody = LONDON_REPLY; syncOnce();
+  before = hal::nowMs();
+  uint64_t up = upMs;
+  joinAndWait();
+  CHECK(netsim::sntpAnswer(0), "test server injects an implausible answer");
+  runFor(100);
+  CHECK(net::lastResult() == net::Result::Failed && net::failReason() == net::Fail::ClockFailed &&
+        net::timeIsValid(), "implausible NTP fails without losing an existing clock");
+  CHECK(llabs(hal::nowMs() - before - (int64_t)(upMs - up)) < 5,
+        "failed invalid NTP restores the previous progressing clock");
+}
+
 // ---- Restarts in a fresh process ------------------------------------------------------------
 // The flash (settings and the radio's saved network) is written to a file, and the second half
 // of the test runs in a new process that starts from that file, as a power cycle does: nothing
@@ -966,6 +1034,7 @@ int main(int argc, char **argv) {
   rollover();
   parsing();
   portalMore();
+  clockProvenance();
   fflush(stdout);
   reboots(argv[0]);
   printf("%d of %d checks passed\n", checks - failures, checks);

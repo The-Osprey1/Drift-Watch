@@ -10,6 +10,7 @@
 #include "settings.h"
 #include "timekeep.h"
 #include "zones.h"
+#include "numeric_input.h"
 
 namespace {
 constexpr uint32_t CONNECT_TIMEOUT_MS = 15000;
@@ -31,9 +32,11 @@ uint32_t stateStart = 0, portalStart = 0;
 time_t lastSyncTime = 0;
 net::Source source = net::Source::None;
 ClockTrim trim;
+clockstatus::Ledger clockLedger;
 uint32_t lastTrim = 0;
 int64_t clockStartWall = 0;  // wall clock (ms) when the time server was asked, to measure drift
 uint32_t clockStartMs = 0;
+bool clockStartValid = false;
 char zone[40] = "";
 char savedSsid[33] = "";
 char joiningSsid[33] = "";
@@ -321,6 +324,7 @@ void startClock() {
   zoneEpoch = 0;  // an answer still to come from the lookup is not used
   clockStartWall = hal::nowMs();
   clockStartMs = hal::ms();
+  clockStartValid = net::timeIsValid();
   setenv("TZ", posixTz, 1);
   tzset();
   sntp_set_sync_status(SNTP_SYNC_STATUS_RESET);
@@ -363,6 +367,11 @@ void saveWifi(const char *ssid, const char *password) {
 }
 
 void begin() {
+  clockLedger.begin(hal::ms(), hal::now() >= 1700000000);
+  byHand = false;
+  lastSyncTime = 0;
+  source = Source::None;
+  trim.forget();
   trim.setPpb(settings.driftPpb);
   // An empty settings.tz means Auto (look the zone up on each sync), so the Pacific default
   // is only the zone in use until a lookup answers. It is never saved: saving it would turn
@@ -407,6 +416,7 @@ void startSync() {
 }
 
 void poll() {
+  clockLedger.observe(hal::ms());
   uint32_t elapsed = hal::ms() - stateStart;
   switch (syncNow) {
     case Sync::Connecting:
@@ -480,9 +490,17 @@ void poll() {
     case Sync::Clock:
       // The time server client sets the clock first and only then reports the sync as done.
       if (sntp_get_sync_status() == SNTP_SYNC_STATUS_COMPLETED) {
+        if (hal::now() < 1700000000) {
+          // SNTP has already moved the system clock. A malformed answer must not
+          // destroy an existing usable clock or be reported as a successful sync.
+          hal::setTimeMs(clockStartValid ? clockStartWall + (uint32_t)(hal::ms() - clockStartMs) : 0);
+          finish(Fail::ClockFailed);
+          break;
+        }
         lastSyncTime = hal::now();
         learnDrift(clockStartWall + (int64_t)(hal::ms() - clockStartMs) - hal::nowMs());
         source = Source::Wifi;
+        clockLedger.synced(hal::ms(), clockstatus::Source::Wifi);
         finish(Fail::None);
       } else if (elapsed > NTP_TIMEOUT_MS) {
         finish(Fail::ClockFailed);
@@ -600,16 +618,28 @@ uint32_t portalSecondsLeft() {
   return used >= PORTAL_TIMEOUT_MS ? 0 : (PORTAL_TIMEOUT_MS - used + 999) / 1000;
 }
 
-bool timeIsValid() { return hal::now() > 1700000000; }  // later than Nov 2023
+bool timeIsValid() { return clockLedger.quality(hal::now() >= 1700000000) != clockstatus::Quality::Unset; }
+clockstatus::Quality clockQuality() {
+  clockLedger.observe(hal::ms());
+  return clockLedger.quality(hal::now() >= 1700000000);
+}
+clockstatus::Source clockSource() { return clockLedger.source(hal::now() >= 1700000000); }
+int64_t syncAgeSeconds() {
+  clockLedger.observe(hal::ms());
+  return clockLedger.ageSeconds(timeIsValid());
+}
 
 void setClockByHand(time_t t) {
+  cancelSync();
   hal::setTime(t);
   byHand = true;
+  clockLedger.manual(hal::ms());
   trim.forget();  // a hand setting is too rough to measure drift against
   hal::log("net: clock set by hand");
 }
 
 void setClockFromPhone(time_t utc, int ms) {
+  cancelSync();
   int64_t trueMs = (int64_t)utc * 1000 + ms;
   int64_t errorMs = hal::nowMs() - trueMs;
   bool wasValid = timeIsValid();
@@ -617,11 +647,28 @@ void setClockFromPhone(time_t utc, int ms) {
   if (wasValid) learnDrift(errorMs);  // a clock that was never set says nothing about drift
   lastSyncTime = utc;
   source = Source::Phone;
+  clockLedger.synced(hal::ms(), clockstatus::Source::Phone);
   byHand = false;
   fail = Fail::None;
   result = Result::Ok;
   finished++;
   hal::log("net: clock set from phone");
+}
+
+bool setClockFromUsb(time_t utc) {
+  if (utc < 1700000000 || (int64_t)utc > numericinput::maxTimeSeconds()) return false;
+  cancelSync();
+  hal::setTime(utc);
+  trim.forget();  // preserve the learned correction, discard its quantized anchor
+  lastSyncTime = utc;
+  source = Source::Usb;
+  clockLedger.synced(hal::ms(), clockstatus::Source::Usb);
+  byHand = false;
+  fail = Fail::None;
+  result = Result::Ok;
+  finished++;
+  hal::log("net: clock set from USB");
+  return true;
 }
 
 Source lastSource() { return source; }

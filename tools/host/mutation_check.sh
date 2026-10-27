@@ -44,7 +44,7 @@ build() {  # test name -> binary in $WORK/bin
   local ui="$d/DriftWatch/ui.cpp $d/DriftWatch/ui_render.cpp $d/DriftWatch/ui_motion.cpp $d/DriftWatch/ui_input.cpp \
 $d/DriftWatch/screens.cpp $d/DriftWatch/faces.cpp $d/DriftWatch/faces_themed.cpp $d/DriftWatch/gfx.cpp $d/DriftWatch/settings.cpp \
 $d/DriftWatch/raise.cpp $d/DriftWatch/orient.cpp $d/DriftWatch/phone.cpp $d/DriftWatch/timekeep.cpp $d/DriftWatch/battery.cpp \
-$d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp $d/DriftWatch/qrcodegen.c"
+$d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp $d/DriftWatch/timer_store.cpp $d/DriftWatch/qrcodegen.c"
   local cxx="g++ -std=c++17 -O1 -w -I $d/tools/host -I $d/DriftWatch -isystem $TFT"
   mkdir -p "$WORK/bin"
   case $t in

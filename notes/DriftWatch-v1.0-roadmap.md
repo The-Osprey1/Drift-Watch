@@ -6,7 +6,7 @@ Prepared 26 October 2026. Reviewed source: [f8b87542159acc050f3d205ec157a457769b
 
 This document is a proposed implementation and qualification plan. Targets are release requirements to validate, not measurements already achieved. Release numbers and effort ranges are planning estimates. No firmware was changed or flashed during this review.
 
-Implementation began in [PR #28](https://github.com/The-Osprey1/DriftWatch/pull/28) with the unreleased [v0.15.3 foundation](NOTES-v0.15.3.md): update packaging, strict command parsing and truthful companion controls. Hardware acceptance and the measured power/clock gates remain open. The baseline findings below refer to the reviewed source snapshot.
+Implementation began in merged [PR #28](https://github.com/The-Osprey1/DriftWatch/pull/28) with the unreleased [v0.15.3 foundation](NOTES-v0.15.3.md): update packaging, strict command parsing and truthful companion controls. [PR #29](https://github.com/The-Osprey1/DriftWatch/pull/29) adds the [v0.16.0 development candidate](NOTES-v0.16.0-dev.md): clock provenance/monotonic sync age, timer restart notices with checked storage, measured status and capability negotiation, and bounded BLE delivery. Settings-store crash consistency and boot-loop safe mode remain open within v0.16. Hardware acceptance and the measured power/clock gates also remain open. The baseline findings below refer to the original reviewed source snapshot.
 
 ## 1. What v1.0 promises
 

@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Builds the firmware and makes one merged .bin to flash at address 0x0.
+# Builds a factory/rescue image (0x0), an app0-only update (0x10000), and their manifest.
 # Needs arduino-cli with the esp32 core 2.0.17, TFT_eSPI 2.5.43 and WiFiManager 2.0.17.
 # Usage: ./build.sh [extra arduino-cli args, e.g. --config-file my.yaml]
 # Set DRIFT_DIAG=1 to build a version that logs frame and memory timings.
+# Set DRIFT_PYTHON=python if your Python 3 executable is named python rather than python3.
 # Serial runs on the USB-C port at 115200 baud.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -27,12 +28,18 @@ arduino-cli "$@" compile ${CTAGS_DIR:+--build-property tools.ctags.path=$CTAGS_D
   --build-property "compiler.c.extra_flags=$TFT_FLAGS" \
   --output-dir build --warnings "${DRIFT_WARNINGS:-default}" DriftWatch
 
-# build/ now holds the bootloader, partition table and app; join them into one image.
+# Keep the legacy filename for the factory/rescue image. Its RAW padding erases NVS:
+# existing settings/Wi-Fi survive only through the separate, compatible app0 update.
+VERSION=$(grep -oP 'FW_VERSION "\K[^"]+' DriftWatch/board.h)
+FACTORY="out/drift_watch_v${VERSION}${SUFFIX}.bin"
 BOOT_APP0=$(find "$(arduino-cli "$@" config get directories.data)" -path '*esp32/2.0.17/tools/partitions/boot_app0.bin' | head -1)
-esptool.py --chip esp32s3 merge_bin -o out/drift_watch_v$(grep -oP 'FW_VERSION "\K[^"]+' DriftWatch/board.h)$SUFFIX.bin \
+esptool.py --chip esp32s3 merge_bin -o "$FACTORY" \
   --flash_mode dio --flash_freq 80m --flash_size 16MB \
   0x0 build/DriftWatch.ino.bootloader.bin \
   0x8000 build/DriftWatch.ino.partitions.bin \
   0xe000 "$BOOT_APP0" \
   0x10000 build/DriftWatch.ino.bin
+PACKAGE_FLAGS=()
+if [ "${DRIFT_DIAG:-0}" = "1" ]; then PACKAGE_FLAGS+=(--diagnostic); fi
+"${DRIFT_PYTHON:-python3}" tools/package_images.py "$VERSION" "$FACTORY" build/DriftWatch.ino.bin "${PACKAGE_FLAGS[@]}"
 ls -l out/

@@ -5,6 +5,7 @@
 #include "board.h"
 #include "hal.h"
 #include "net.h"
+#include "numeric_input.h"
 #include "settings.h"
 
 namespace phone {
@@ -14,6 +15,43 @@ char password[65] = "";
 constexpr time_t EARLIEST = 1700000000;  // Nov 2023: anything earlier is not a real time
 
 bool startsWith(const char *line, const char *key) { return strncmp(line, key, strlen(key)) == 0; }
+
+bool validDate(int year, int month, int day) {
+  if (year < 2023 || year > 2099 || month < 1 || month > 12 || day < 1) return false;
+  static const int days[] = {31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
+  int last = days[month - 1] + (month == 2 && year % 4 == 0 && (year % 100 != 0 || year % 400 == 0));
+  return day <= last;
+}
+
+bool localDate(const char *text, tm &local) {
+  int fields[6];
+  const int low[] = {2023, 1, 1, 0, 0, 0}, high[] = {2099, 12, 31, 23, 59, 59};
+  const char separators[] = {'-', '-', ' ', ':', ':'};
+  const char *p = text;
+  for (int i = 0; i < 6; i++) {
+    char *end = nullptr;
+    errno = 0;
+    long long value = strtoll(p, &end, 10);
+    if (end == p || errno == ERANGE || value < low[i] || value > high[i]) return false;
+    fields[i] = (int)value;
+    if (i < 5) {
+      if (separators[i] == ' ') {
+        if (!isspace((unsigned char)*end)) return false;
+      } else if (*end != separators[i]) return false;
+      p = end + 1;
+    } else if (!numericinput::atEnd(end)) return false;
+  }
+  if (!validDate(fields[0], fields[1], fields[2])) return false;
+  local = tm{};
+  local.tm_year = fields[0] - 1900;
+  local.tm_mon = fields[1] - 1;
+  local.tm_mday = fields[2];
+  local.tm_hour = fields[3];
+  local.tm_min = fields[4];
+  local.tm_sec = fields[5];
+  local.tm_isdst = -1;
+  return true;
+}
 
 // A fixed zone from an offset, for phones that only send Local Time Information. POSIX signs
 // are backwards: UTC+1 is written "-1".
@@ -52,7 +90,7 @@ bool fromCurrentTime(const uint8_t *d, size_t n, char *out, size_t size) {
   // day of week, fractions and the adjust reason, which are not needed.
   if (n < 7) return false;
   int year = d[0] | d[1] << 8, mon = d[2], day = d[3], h = d[4], m = d[5], sec = d[6];
-  if (year < 2023 || year > 2099 || mon < 1 || mon > 12 || day < 1 || day > 31 || h > 23 || m > 59 || sec > 59) return false;
+  if (!validDate(year, mon, day) || h > 23 || m > 59 || sec > 59) return false;
   snprintf(out, size, "L=%04d-%02d-%02d %02d:%02d:%02d", year, mon, day, h, m, sec);
   return true;
 }
@@ -76,29 +114,26 @@ const Session &session() { return s; }
 const char *apply(const char *line) {
   s.lines++;
   if (startsWith(line, "T=")) {
-    char *end = nullptr;
-    double t = strtod(line + 2, &end);
-    if (end == line + 2) return refuse("T= needs a number");
-    time_t whole = (time_t)t;
-    return setTime(whole, (int)((t - (double)whole) * 1000));
+    time_t whole;
+    int ms;
+    if (!numericinput::timestamp(line + 2, EARLIEST, whole, ms)) return refuse("T= needs valid Unix seconds");
+    return setTime(whole, ms);
   }
   if (startsWith(line, "L=")) {
-    int y, mo, d, h, mi, sec;
-    if (sscanf(line + 2, "%d-%d-%d %d:%d:%d", &y, &mo, &d, &h, &mi, &sec) != 6) return refuse("L= is not a date");
-    if (s.haveOffset) return setTime((time_t)(daysFromCivil(y, mo, d) * 86400L + h * 3600L + mi * 60L + sec - s.offset), 0);
     tm local{};  // no offset sent: read it in the watch's own time zone
-    local.tm_year = y - 1900;
-    local.tm_mon = mo - 1;
-    local.tm_mday = d;
-    local.tm_hour = h;
-    local.tm_min = mi;
-    local.tm_sec = sec;
-    local.tm_isdst = -1;
+    if (!localDate(line + 2, local)) return refuse("L= is not a valid date");
+    if (s.haveOffset) {
+      int64_t utc = (int64_t)daysFromCivil(local.tm_year + 1900, local.tm_mon + 1, local.tm_mday) * 86400 +
+                    local.tm_hour * 3600 + local.tm_min * 60 + local.tm_sec - s.offset;
+      if (utc < EARLIEST || utc > numericinput::maxTimeSeconds()) return refuse("L= time out of range");
+      return setTime((time_t)utc, 0);
+    }
     return setTime(mktime(&local), 0);
   }
   if (startsWith(line, "O=")) {
-    s.offset = atol(line + 2);
-    if (s.offset < -14 * 3600L || s.offset > 14 * 3600L) return refuse("O= is out of range");
+    int64_t offset;
+    if (!numericinput::integer(line + 2, 10, -14 * 3600L, 14 * 3600L, offset)) return refuse("O= is out of range");
+    s.offset = (long)offset;
     s.haveOffset = true;
     if (!s.gotZone) {
       // Only an offset: a fixed zone. A Z= line, sent by the Drift sync page, keeps summer time rules.
@@ -140,9 +175,8 @@ const char *apply(const char *line) {
     return "ok";
   }
   if (startsWith(line, "H=")) {
-    char *end = nullptr;
-    long mask = strtol(line + 2, &end, 0);
-    if (end == line + 2 || (mask & ALL_FACES_MASK) == 0) return refuse("no faces selected");
+    int64_t mask;
+    if (!numericinput::integer(line + 2, 0, 1, 0xFFFF, mask) || (mask & ALL_FACES_MASK) == 0) return refuse("no faces selected");
     settings.activeFaces = (uint16_t)(mask & ALL_FACES_MASK);
     if (!(settings.activeFaces & (1u << (settings.face % FACE_COUNT)))) {
       for (int i = 0; i < FACE_COUNT; i++) {
@@ -156,32 +190,32 @@ const char *apply(const char *line) {
     return "ok";
   }
   if (startsWith(line, "B=")) {
-    long b = strtol(line + 2, nullptr, 10);
-    if (b < 0 || b > 3) return refuse("B= out of range");
+    int64_t b;
+    if (!numericinput::integer(line + 2, 10, 0, 3, b)) return refuse("B= out of range");
     settings.brightnessLevel = (uint8_t)b;
     hal::backlight(backlightLevel());
     saveSettings();
     return "ok";
   }
   if (startsWith(line, "M=")) {
-    long m = strtol(line + 2, nullptr, 10);
-    if (m < 0 || m > 2) return refuse("M= out of range");
+    int64_t m;
+    if (!numericinput::integer(line + 2, 10, 0, 2, m)) return refuse("M= out of range");
     settings.motion = (uint8_t)m;
     saveSettings();
     return "ok";
   }
   if (startsWith(line, "F=")) {
-    long f = strtol(line + 2, nullptr, 10);
-    if (f < 0 || f >= FACE_COUNT) return refuse("F= out of range");
+    int64_t f;
+    if (!numericinput::integer(line + 2, 10, 0, FACE_COUNT - 1, f)) return refuse("F= out of range");
     settings.face = (uint8_t)f;
     settings.activeFaces |= (1u << settings.face);
     saveSettings();
     return "ok";
   }
   if (startsWith(line, "FORMAT=") || startsWith(line, "FO=")) {
-    const char *p = line[1] == 'O' ? line + 3 : line + 7;
-    long f = strtol(p, nullptr, 10);
-    if (f == 12 || f == 24) {
+    const char *p = startsWith(line, "FO=") ? line + 3 : line + 7;
+    int64_t f;
+    if (numericinput::integer(p, 10, 12, 24, f) && (f == 12 || f == 24)) {
       settings.use12h = (f == 12);
       saveSettings();
       return "ok";
@@ -190,8 +224,8 @@ const char *apply(const char *line) {
   }
   if (startsWith(line, "NIGHT=") || startsWith(line, "NM=")) {
     const char *p = line[1] == 'M' ? line + 3 : line + 6;
-    long nm = strtol(p, nullptr, 10);
-    if (nm >= 0 && nm < NIGHT_CHOICES) {
+    int64_t nm;
+    if (numericinput::integer(p, 10, 0, NIGHT_CHOICES - 1, nm)) {
       settings.night = (uint8_t)nm;
       saveSettings();
       return "ok";

@@ -719,6 +719,10 @@ void detailsDoc(const View &v, Doc &d) {
   if (!v.timeValid) d.add("Time not set", Role::Body, col::WARN, Icon::Alert);
   if (running(v)) d.add(d.fmt("Syncing: %s, step %d of 3", stageText(v.stage), v.syncStep), Role::Body, col::CYAN, Icon::Busy);
   if (v.clockByHand && v.timeValid) d.add("Clock set by hand", Role::Body, col::TEXT);
+  else if (v.timeValid && v.clockQuality == clockstatus::Quality::Retained)
+    d.add("Clock retained, sync age unknown", Role::Body, col::TEXT_2);
+  else if (v.timeValid && v.clockQuality == clockstatus::Quality::Stale)
+    d.add("Clock needs a fresh sync", Role::Body, col::WARN, Icon::Alert);
   if (v.result == net::Result::Failed && v.fail == net::Fail::JoinFailed) {
     d.add(d.fmt("Last sync failed: %s", joinWords(v.joinWhy)), Role::Body, col::WARN, Icon::Alert);
     d.add(joinHint(v.joinWhy), Role::Body, col::TEXT_2);
@@ -727,7 +731,9 @@ void detailsDoc(const View &v, Doc &d) {
     d.add(d.fmt("Last sync failed: %s", failText(v.fail)), Role::Body, col::WARN, Icon::Alert);
     d.add(failHint(v.fail), Role::Body, col::TEXT_2);
   } else if (v.lastSyncText[0]) {
-    d.add(d.fmt("Last sync %s%s, %s", v.lastSyncText, v.syncSource == net::Source::Phone ? " by phone" : "", v.syncAgo),
+    const char *from = v.syncSource == net::Source::Phone ? " by phone" :
+                       v.syncSource == net::Source::Usb ? " by USB" : " by Wi-Fi";
+    d.add(d.fmt("Last sync %s%s, %s", v.lastSyncText, from, v.syncAgo),
           Role::Body, col::TEXT, Icon::Check);
   } else if (!running(v)) {
     d.add("Not synced yet", Role::Body, col::TEXT_2);
@@ -1079,11 +1085,11 @@ bool drawDoc(TFT_eSprite &s, const View &v, int page) {
 }
 
 int drawerPages(const View &v) {
-  return v.timerActive ? 1 : (v.large ? 4 : 2);
+  return v.timerActive || v.timerNotice != timerstore::Notice::None ? 1 : (v.large ? 4 : 2);
 }
 
 int drawerControls(const View &v, int page, Control *out, int max) {
-  if (v.timerActive) {
+  if (v.timerActive || v.timerNotice != timerstore::Notice::None) {
     if (max >= 1) {
       out[0] = {Button::TimerReset, LOWER, LOWER_HIT};
       return 1;
@@ -1110,11 +1116,23 @@ int drawerControls(const View &v, int page, Control *out, int max) {
 bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
   Ctx c{s, v, true, false};
   handle(s);
-  if (!v.large && !v.timerActive) {
+  if (!v.large && !v.timerActive && v.timerNotice == timerstore::Notice::None) {
     const GFXfont *f = fontFor(Role::Body, false);
     gfx::text(s, "Quick Tools", CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
   }
 
+  if (v.timerNotice != timerstore::Notice::None && !v.timerActive) {
+    gfx::text(s, "Timer", CX, 44, fontFor(Role::Body, v.large), col::TEXT_2, MC_DATUM);
+    const char *label = v.timerNotice == timerstore::Notice::Interrupted ? "Interrupted" :
+                        v.timerNotice == timerstore::Notice::Missed ? "Missed" : "Save failed";
+    gfx::text(s, label, CX, 80, fontFor(Role::Title, false), col::WARN, MC_DATUM);
+    if (!v.timerStoreOk && v.timerNotice != timerstore::Notice::StorageError)
+      gfx::text(s, "Not saved", CX, 105, fontFor(Role::Body, false), col::WARN, MC_DATUM);
+    Control ctl[1];
+    Item it{Button::TimerReset, nullptr, Icon::None, 0, "Clear notice", col::WARN, col::WARN, 0};
+    if (drawerControls(v, page, ctl, 1)) drawItem(c, it, ctl[0].visible);
+    return false;
+  }
   if (v.timerActive) {
     int sec = (int)(v.timerRemainingMs / 1000);
     int min = sec / 60;
@@ -1122,6 +1140,8 @@ bool drawDrawer(TFT_eSprite &s, const View &v, int page) {
     char timeStr[16];
     snprintf(timeStr, sizeof timeStr, "%02d:%02d", min, sec);
     gfx::text(s, timeStr, CX, 85, fontFor(Role::Title, true), col::TEXT, MC_DATUM);
+    if (!v.timerStoreOk)
+      gfx::text(s, "Save failed", CX, 108, fontFor(Role::Body, false), col::WARN, MC_DATUM);
     if (v.timerTotalMs > 0) {
       // The ring empties from 12 o'clock as the time runs down; it moves once a second with the
       // numbers, so the drawer is redrawn by its key (ui_render.cpp) and never animates.
@@ -1340,6 +1360,17 @@ void drawLowBattery(TFT_eSprite &s, int pct, bool urgent) {
   gfx::iconAlert(s, x0 + ICON / 2, r.y + 14, ICON, col::WARN);
   gfx::text(s, line, x0 + ICON + GAP, r.y + 14, f, col::WARN, ML_DATUM);
   gfx::text(s, urgent ? "Charge now" : "Charge soon", CX, r.y + 33, f, col::TEXT, MC_DATUM);
+}
+
+void drawTimerNotice(TFT_eSprite &s, timerstore::Notice notice) {
+  constexpr Rect r = {45, 158, 150, 46};
+  s.fillRect(r.x, r.y, r.w, r.h, col::BG);
+  s.drawRect(r.x, r.y, r.w, r.h, col::WARN);
+  const GFXfont *f = gfx::font(Role::Body, false);
+  const char *label = notice == timerstore::Notice::Interrupted ? "Timer interrupted" :
+                      notice == timerstore::Notice::Missed ? "Timer missed" : "Timer save error";
+  gfx::text(s, label, CX, r.y + 14, f, col::WARN, MC_DATUM);
+  gfx::text(s, "Open Quick Tools", CX, r.y + 33, f, col::TEXT, MC_DATUM);
 }
 
 // ---- Startup ------------------------------------------------------------------

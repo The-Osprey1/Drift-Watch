@@ -63,7 +63,7 @@ FaceContext faceContext(bool withSweep) {
   c.charging = batteryLife.charging();
   if (syncBusy()) c.sync = SyncView::Syncing;
   else if (net::lastResult() == net::Result::Failed) c.sync = SyncView::Failed;
-  else c.sync = net::lastSync() ? SyncView::Synced : SyncView::Never;
+  else c.sync = net::clockQuality() == clockstatus::Quality::Synced ? SyncView::Synced : SyncView::Never;
   c.syncStage = net::syncStep();
   c.noWifi = !net::hasSavedWifi();
   c.beamDeg = -1;
@@ -116,6 +116,8 @@ void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart) {
   }
   drawFaceLive(dst, f, c);
   if (lowNotice.until && f == currentFace() && mode == Mode::Face) screens::drawLowBattery(dst, batteryPct, lowNotice.urgent);
+  else if (timer.notice != timerstore::Notice::None && f == currentFace() && mode == Mode::Face)
+    screens::drawTimerNotice(dst, timer.notice);
 #if DRIFT_DIAG
   uint32_t used = micros() - t;
   diag.renderUs += used;
@@ -153,11 +155,12 @@ void syncAgoText(char *buf, size_t n) {
     buf[0] = 0;
     return;
   }
-  long ago = (long)(hal::now() - t);
+  int64_t ago = net::syncAgeSeconds();
+  if (ago < 0) { snprintf(buf, n, "age unknown"); return; }
   if (ago < 120) snprintf(buf, n, "just now");
-  else if (ago < 7200) snprintf(buf, n, "%ld min ago", ago / 60);
-  else if (ago < 172800) snprintf(buf, n, "%ld h ago", ago / 3600);
-  else snprintf(buf, n, "%ld days ago", ago / 86400);
+  else if (ago < 7200) snprintf(buf, n, "%lld min ago", (long long)(ago / 60));
+  else if (ago < 172800) snprintf(buf, n, "%lld h ago", (long long)(ago / 3600));
+  else snprintf(buf, n, "%lld days ago", (long long)(ago / 86400));
 }
 
 screens::View view(Mode m, int page) {
@@ -178,8 +181,10 @@ screens::View view(Mode m, int page) {
   v.activeFaces = settings.activeFaces;
   v.theme = faceTheme(currentFace());
   v.timerActive = timer.active;
-  v.timerRemainingMs = timer.active && (int32_t)(timer.targetMs - hal::ms()) > 0 ? (timer.targetMs - hal::ms()) : 0;
+  v.timerRemainingMs = remainingTimerMs();
   v.timerTotalMs = timer.totalMs;
+  v.timerNotice = timer.notice;
+  v.timerStoreOk = timer.storeOk;
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
@@ -199,6 +204,7 @@ screens::View view(Mode m, int page) {
   v.joinWhy = net::joinWhy();
   v.joinCode = net::joinCode();
   v.clockByHand = net::clockSetByHand();
+  v.clockQuality = net::clockQuality();
   v.raiseToWake = settings.raiseToWake;
   v.twistToWake = settings.twistToWake;
   v.imuPresent = imu::present();
@@ -288,6 +294,7 @@ uint32_t screenKey() {
   k = k * 31 + (uint32_t)(editTime.tm_year * 400 + editTime.tm_mon * 32 + editTime.tm_mday);
   k = k * 31 + (uint32_t)(editTime.tm_hour * 60 + editTime.tm_min);
   k = k * 31 + settings.screenTurn * 8 + settings.night * 2 + touchChecked();
+  k = k * 11 + (uint32_t)timer.notice * 2 + timer.storeOk;
   k = k * 31 + (uint32_t)check.step * 4 + (uint32_t)check.result;
   k = k * 31 + (uint32_t)ble::state();
   k = k * 1031 + ble::secondsLeft();
@@ -301,7 +308,7 @@ uint32_t screenKey() {
     for (const char *p = ago; *p; p++) k = k * 31 + (uint8_t)*p;
   }
   if (mode == Mode::Drawer && timer.active) {
-    k = k * 61 + (uint32_t)(timer.targetMs > hal::ms() ? (timer.targetMs - hal::ms()) / 1000 : 0);
+    k = k * 61 + remainingTimerMs() / 1000;
   }
   return k;
 }

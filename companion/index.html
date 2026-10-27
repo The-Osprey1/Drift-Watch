@@ -1265,7 +1265,7 @@
             </div>
             <div class="stage-specs">
               <div class="spec-pair"><span class="spec-k">Display</span><span class="spec-v" id="specBrightLabel">Bri 3/4 · 24h</span></div>
-              <div class="spec-pair"><span class="spec-k">IMU Temp</span><span class="spec-v" id="specTempLabel">28.4 °C · QMI8658</span></div>
+              <div class="spec-pair"><span class="spec-k">Board Temp</span><span class="spec-v" id="specTempLabel">Not reported</span></div>
               <div class="spec-pair"><span class="spec-k">Battery</span><span class="spec-v" id="simBatLabel">86% · 4082 mV</span></div>
               <div class="spec-pair"><span class="spec-k">Clock Drift</span><span class="spec-v" id="specDriftLabel">-142 ppb · Cal</span></div>
             </div>
@@ -1438,7 +1438,9 @@
 
         <!-- TAB 4: TELEMETRY & SERIAL CONSOLE -->
         <section id="telemetrySection" data-deck-group="telemetry" data-deck-hidden="true">
-          <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge" id="firmwareVersionReadout">Studio v0.15.3 candidate</span></h2>
+          <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge" id="firmwareVersionReadout">Studio v0.16.0 dev</span></h2>
+          <p id="clockQualityReadout" class="note" role="status">Clock quality not reported.</p>
+          <button type="button" id="refreshStatus" class="ghost" disabled>Refresh watch status</button>
 
           <div class="charts-grid">
             <div class="chart-card">
@@ -1450,7 +1452,7 @@
             </div>
             <div class="chart-card">
               <div class="chart-header">
-                <span class="chart-title">IMU Temp &amp; Drift</span>
+                <span class="chart-title">Board Temperature &amp; Clock Drift</span>
                 <span class="chart-val" id="chartTempVal">Not connected</span>
               </div>
               <canvas id="tempChartCanvas" class="telemetry-canvas" width="380" height="104"></canvas>
@@ -1508,11 +1510,16 @@ const $ = (id) => document.getElementById(id);
 let device = null, command = null;
 let isSimulated = false;
 let transportReady = false, sessionId = 0, commandQueue = Promise.resolve(), controlQueue = Promise.resolve(), statusRevision = 0;
-const watchState = { version: "", battery: null, bright: null, motion: null, format: null, night: null, face: null, faces: null, time: null, lastSeen: 0 };
+const watchState = { version: "", battery: null, bright: null, motion: null, format: null, night: null, face: null, faces: null, time: null, lastSeen: 0,
+  protocol: null, capabilities: null, mv: null, temp: null, drift: null, timeQuality: null, source: null, syncAge: null, timer: null, remaining: null };
+const watchSeen = {};
+const watchFieldRevision = {};
 const STALE_MS = 30000;
 function physicalSession() { return isSerial || !!command; }
 function resetWatchState() {
   Object.keys(watchState).forEach(k => { watchState[k] = k === "version" ? "" : k === "lastSeen" ? 0 : null; });
+  Object.keys(watchSeen).forEach(k => { delete watchSeen[k]; });
+  Object.keys(watchFieldRevision).forEach(k => { delete watchFieldRevision[k]; });
   teleHistory.bat = []; teleHistory.temp = [];
 }
 function errorText(err) { return (err && (err.message || err.name)) || String(err || "No reason supplied"); }
@@ -1582,8 +1589,8 @@ let simDriftPpb = -142;
 
 // Telemetry Ring Buffers (40 points)
 const teleHistory = {
-  bat: Array.from({ length: 40 }, (_, i) => 86 - (39 - i) * 0.04),
-  temp: Array.from({ length: 40 }, (_, i) => 28.1 + Math.sin(i * 0.25) * 0.4)
+  bat: [],
+  temp: []
 };
 
 function easeOut(t) {
@@ -2836,44 +2843,86 @@ function parseWatchStatus(txt) {
     return m ? m[1] : null;
   };
   const number = name => {
-    const value = field(name);
-    const n = value !== null && /^-?\d+$/.test(value) ? Number(value) : NaN;
+    const value = field(name), n = value !== null && /^-?\d+$/.test(value) ? Number(value) : NaN;
     return Number.isSafeInteger(n) ? n : null;
   };
+  const now = Date.now(), received = new Set();
   let valid = false;
-  const version = field("VER") || field("fw");
-  if (version && /^\d+\.\d+(?:\.\d+)?(?:[-+][a-z0-9.-]+)?$/i.test(version)) {
-    watchState.version = version; valid = true;
+  const assign = (key, value) => {
+    watchState[key] = value;
+    if (value === null) { delete watchSeen[key]; delete watchFieldRevision[key]; }
+    else { watchSeen[key] = now; watchFieldRevision[key] = statusRevision + 1; received.add(key); valid = true; }
+  };
+  const version = field("VER") ?? field("fw");
+  if (version !== null) {
+    watchState.version = /^\d+\.\d+(?:\.\d+)?(?:[-+][a-z0-9.-]+)?$/i.test(version) ? version : "";
+    valid ||= !!watchState.version;
   }
-  const rawMask = field("FACES");
-  if (rawMask !== null && /^(?:0x[0-9a-f]+|\d+)$/i.test(rawMask)) {
-    const mask = Number(rawMask);
-    if (mask > 0 && mask <= 0x0fff) { watchState.faces = mask; setFaceMask(mask); valid = true; }
+  if (field("PROTO") !== null) {
+    const n = number("PROTO");
+    // An explicitly invalid/unsupported protocol must not fall back to guessed controls.
+    watchState.protocol = n !== null && n > 0 && n <= 65535 ? n : 0;
+    valid ||= watchState.protocol > 0;
   }
-  for (const [key, name, min, max] of [["bright", "BRIGHT", 0, 3], ["motion", "MOTION", 0, 2], ["night", "NIGHT", 0, 3], ["face", "FACE", 0, 11]]) {
+  if (field("CAPS") !== null) {
+    const raw = field("CAPS");
+    const numeric = /^(?:0x[0-9a-f]+|\d+)$/i.test(raw) ? Number(raw) : NaN;
+    const mask = Number.isSafeInteger(numeric) && numeric >= 0 && numeric <= 0xffffffff;
+    const list = raw.length <= 255 && (raw === "" || /^[a-z][a-z0-9_]*(?:\|[a-z][a-z0-9_]*)*$/.test(raw));
+    const good = mask || list;
+    watchState.capabilities = mask ? ["settings", "timer", "telemetry", "time_quality", "timer_recovery"].filter((_name, bit) => numeric & (1 << bit)) :
+      list ? [...new Set(raw ? raw.split("|") : [])] : [];
+    valid ||= good;
+  }
+  if (field("FACES") !== null) {
+    const raw = field("FACES"), mask = /^(?:0x[0-9a-f]+|\d+)$/i.test(raw) ? Number(raw) : NaN;
+    assign("faces", Number.isInteger(mask) && mask > 0 && mask <= 0x0fff ? mask : null);
+    if (watchState.faces !== null) setFaceMask(watchState.faces);
+  }
+  for (const [key, name, min, max] of [
+    ["bright", "BRIGHT", 0, 3], ["motion", "MOTION", 0, 2], ["night", "NIGHT", 0, 3],
+    ["face", "FACE", 0, 11], ["battery", "BAT", 0, 100], ["time", "TIME", 0, Number.MAX_SAFE_INTEGER],
+    ["mv", "MV", 0, 6000], ["drift", "DRIFT", -30000000, 30000000],
+    ["syncAge", "SYNCAGE", 0, Number.MAX_SAFE_INTEGER], ["remaining", "REMAIN", 0, 86400]
+  ]) {
+    if (field(name) === null) continue;
     const n = number(name);
-    if (n !== null && n >= min && n <= max) { watchState[key] = n; valid = true; }
+    assign(key, n !== null && n >= min && n <= max ? n : null);
+    if (n === -1 && ["battery", "mv", "syncAge"].includes(key)) valid = true;
   }
-  const battery = number("BAT");
-  if (field("BAT") !== null) {
-    watchState.battery = battery !== null && battery >= 0 && battery <= 100 ? battery : null;
-    if (watchState.battery !== null || battery === -1) valid = true;
+  if (field("FORMAT") !== null) {
+    const n = number("FORMAT"); assign("format", n === 12 || n === 24 ? n : null);
   }
-  const time = number("TIME");
-  if (time !== null && time >= 0) { watchState.time = time; valid = true; }
-  const format = number("FORMAT");
-  if (format === 12 || format === 24) { watchState.format = format; valid = true; }
+  if (field("TEMP") !== null) {
+    const raw = field("TEMP"), n = /^-?\d+(?:\.\d+)?$/.test(raw) ? Number(raw) : NaN;
+    assign("temp", Number.isFinite(n) && n >= -100 && n <= 150 ? n : null);
+    if (raw === "na") valid = true;
+  }
+  for (const [key, name, choices] of [
+    ["timeQuality", "TIMEQ", ["unset", "manual", "synced", "stale", "retained"]],
+    ["source", "SOURCE", ["none", "manual", "wifi", "phone", "usb", "retained"]],
+    ["timer", "TIMER", ["idle", "running", "alarming", "interrupted", "missed", "storage_error"]]
+  ]) {
+    if (field(name) === null) continue;
+    const value = field(name).toLowerCase();
+    assign(key, choices.includes(value) ? value : null);
+  }
   if (!valid) return false;
   statusRevision++;
-  watchState.lastSeen = Date.now();
-  if (watchState.battery !== null) { teleHistory.bat.push(watchState.battery); if (teleHistory.bat.length > 40) teleHistory.bat.shift(); }
+  watchState.lastSeen = now;
+  for (const [key, history] of [["battery", "bat"], ["temp", "temp"]]) {
+    if (received.has(key)) {
+      teleHistory[history].push(watchState[key]);
+      if (teleHistory[history].length > 40) teleHistory[history].shift();
+    }
+  }
   if (watchState.face !== null) highlightWatchFace(watchState.face);
   if (watchState.bright !== null) setHardwareBrightness(watchState.bright, false);
   if (watchState.motion !== null) setMotionMode(["off", "subtle", "expressive"][watchState.motion], false);
   if (watchState.format !== null) hwUse12h = watchState.format === 12;
   if (watchState.night !== null) hwNightMode = watchState.night;
   updateHardwareSpecLabels();
-  $("firmwareVersionReadout").textContent = `Watch v${watchState.version || "unknown"} · Studio v0.15.3 candidate`;
+  $("firmwareVersionReadout").textContent = "Watch v" + (watchState.version || "unknown") + " · Studio v0.16.0 dev";
   updateControlAvailability();
   return true;
 }
@@ -2890,6 +2939,47 @@ function receiveLine(line, owner = sessionId) {
   });
 }
 
+function ageText(seconds) {
+  if (seconds < 60) return Math.floor(seconds) + "s";
+  if (seconds < 3600) return Math.floor(seconds / 60) + "m";
+  if (seconds < 86400) return Math.floor(seconds / 3600) + "h";
+  return Math.floor(seconds / 86400) + "d";
+}
+
+function readingState(...keys) {
+  const seen = keys.map(key => watchSeen[key]).filter(value => value !== undefined);
+  if (!seen.length) return { stale: true, text: "not reported" };
+  const age = Math.max(0, Date.now() - Math.min(...seen)), stale = !transportReady || age > STALE_MS;
+  return { stale, text: (stale ? "stale: " : "last read ") + ageText(age / 1000) + " ago" };
+}
+
+function timerReading() {
+  const state = watchState.timer;
+  if (state === null) return { value: "On watch", label: "Timer state unavailable" };
+  const age = readingState("timer", ...(watchState.remaining === null ? [] : ["remaining"]));
+  let value = { idle: "No timer", alarming: "Time up", interrupted: "Interrupted", missed: "Missed", storage_error: "Storage error" }[state];
+  if (state === "running") {
+    const s = watchState.remaining;
+    value = s === null ? "Running" : s >= 3600 ?
+      fmtTwo(Math.floor(s / 3600)) + ":" + fmtTwo(Math.floor(s / 60) % 60) + ":" + fmtTwo(s % 60) :
+      fmtTwo(Math.floor(s / 60)) + ":" + fmtTwo(s % 60);
+  }
+  return { value: (age.stale ? "Stale · " : "") + value,
+    label: "Timer " + (state === "storage_error" ? "not saved" : state) + " · " + age.text };
+}
+
+function updateTimerReadout() {
+  if (!isSimulated && (physicalSession() || watchState.lastSeen)) {
+    const reading = timerReading();
+    $("studioTimerReadout").textContent = reading.value;
+    $("compStatusBadge").textContent = reading.label;
+    return;
+  }
+  const seconds = drawerTimerEndMs > Date.now() ? Math.ceil((drawerTimerEndMs - Date.now()) / 1000) : 0;
+  $("studioTimerReadout").textContent = seconds ? fmtTwo(Math.floor(seconds / 60)) + ":" + fmtTwo(seconds % 60) : "03:00";
+  $("compStatusBadge").textContent = seconds ? "Timer " + $("studioTimerReadout").textContent : isSimulated ? "Virtual Watch" : "Preview";
+}
+
 function updateTelemetry() {
   if (isSimulated) {
     simTempC = 28.2 + Math.sin(Date.now() / 9000) * 0.35;
@@ -2897,21 +2987,32 @@ function updateTelemetry() {
     teleHistory.bat.push(simBatteryPct); teleHistory.temp.push(simTempC);
     if (teleHistory.bat.length > 40) teleHistory.bat.shift();
     if (teleHistory.temp.length > 40) teleHistory.temp.shift();
-    $("chartBatVal").textContent = `Demo: ${simBatteryPct}% · ${simBatteryMv} mV`;
-    $("chartTempVal").textContent = `Demo: ${simTempC.toFixed(1)} °C · ${simDriftPpb} ppb`;
-    $("specTempLabel").textContent = `Demo: ${simTempC.toFixed(1)} °C`;
-    $("simBatLabel").textContent = `Demo: ${simBatteryPct}%`;
+    $("chartBatVal").textContent = "Demo: " + simBatteryPct + "% · " + simBatteryMv + " mV";
+    $("chartTempVal").textContent = "Demo: " + simTempC.toFixed(1) + " °C · " + simDriftPpb + " ppb";
+    $("specTempLabel").textContent = "Demo: " + simTempC.toFixed(1) + " °C";
+    $("simBatLabel").textContent = "Demo: " + simBatteryPct + "%";
+    $("clockQualityReadout").textContent = "Virtual Watch uses a sample clock. No hardware time quality is measured.";
   } else {
-    const stale = watchState.lastSeen && (!transportReady || Date.now() - watchState.lastSeen > STALE_MS);
-    const battery = watchState.battery === null ? "Battery unavailable" : `${watchState.battery}% · voltage unavailable`;
-    $("chartBatVal").textContent = watchState.lastSeen ? `${stale ? "Stale: " : "Last read: "}${battery}` : "Not connected / awaiting status";
-    $("chartTempVal").textContent = "Temperature / drift not reported by firmware";
-    $("specTempLabel").textContent = "Temperature unavailable";
-    $("simBatLabel").textContent = watchState.battery === null ? "Battery unavailable" : `${watchState.battery}%${stale ? " · stale" : " · last read"}`;
+    const battery = watchState.battery === null ? "Battery unavailable" : watchState.battery + "%";
+    const voltage = watchState.mv === null ? "voltage unavailable" : watchState.mv + " mV";
+    const batteryAge = readingState("battery", "mv");
+    $("chartBatVal").textContent = watchState.lastSeen ? battery + " · " + voltage + " · " + batteryAge.text : "Not connected / awaiting status";
+    $("simBatLabel").textContent = battery + (watchState.mv === null ? "" : " · " + voltage) + " · " + batteryAge.text;
+    const temp = watchState.temp === null ? "Board temperature not reported" : watchState.temp.toFixed(1) + " °C board";
+    const drift = watchState.drift === null ? "drift not reported" : watchState.drift + " ppb";
+    $("chartTempVal").textContent = temp + " · " + drift + " · " + readingState("temp", "drift").text;
+    $("specTempLabel").textContent = temp + " · " + readingState("temp").text;
+    const quality = watchState.timeQuality === null ? "Clock quality not reported" : "Time quality: " + watchState.timeQuality;
+    const source = watchState.source === null ? "source unavailable" : "source " + ({ usb: "USB", wifi: "Wi-Fi" }[watchState.source] || watchState.source);
+    const sync = watchState.syncAge === null ? "sync age unavailable" : "sync age at reading " + ageText(watchState.syncAge);
+    $("clockQualityReadout").textContent = quality + " · " + source + " · " + sync + " · " + readingState("timeQuality", "source", "syncAge").text;
   }
   const color = FACES[previewFaceIdx].color;
   drawTelemetryChart("batChartCanvas", teleHistory.bat, color, 0, 100);
-  drawTelemetryChart("tempChartCanvas", isSimulated ? teleHistory.temp : [], "#ff9f0a", 25, 32);
+  const temps = teleHistory.temp.filter(Number.isFinite);
+  const low = temps.length ? Math.min(...temps) - 2 : 25, high = temps.length ? Math.max(...temps) + 2 : 32;
+  drawTelemetryChart("tempChartCanvas", temps, "#ff9f0a", low, high);
+  updateTimerReadout();
 }
 
 function posixZone(now = new Date()) {
@@ -3106,7 +3207,8 @@ async function sendCommand(line, owner) {
     return;
   }
   const expected = isSerial ? serialReply(wire) : /^reply=/;
-  const answer = waitForLine(expected, 1800);
+  const matcher = isSerial ? { test: text => expected.test(text) || /^ERROR:/.test(text) } : expected;
+  const answer = waitForLine(matcher, 1800);
   try {
     const writing = (async () => {
     if (isSerial && serialWriter) {
@@ -3143,11 +3245,12 @@ async function sendCommand(line, owner) {
     }
     const failure = reply.match(/^reply=([^;]+)/);
     if (failure && failure[1] !== "ok") throw new Error("Watch refused command: " + failure[1]);
+    if (/^ERROR:/.test(reply)) throw new Error("Watch refused command: " + reply.replace(/^ERROR:\s*/, ""));
     return reply;
   } catch (err) {
     // Release this operation's waiter before another queued command can start.
     serialWaiters = serialWaiters.filter(w => {
-      if (w.re !== expected) return true;
+      if (w.re !== matcher) return true;
       clearTimeout(w.timer); w.resolve(null); return false;
     });
     throw err;
@@ -3230,8 +3333,8 @@ async function readSerialLoop(port, owner) {
 
 function connected(on, modeLabel = "Disconnected") {
   transportReady = on;
-  $("firmwareVersionReadout").textContent = isSimulated ? "Virtual Watch · Studio v0.15.3 candidate" :
-    (watchState.version ? `Watch v${watchState.version}${on ? "" : " (last seen)"} · ` : "") + "Studio v0.15.3 candidate";
+  $("firmwareVersionReadout").textContent = isSimulated ? "Virtual Watch · Studio v0.16.0 dev" :
+    (watchState.version ? `Watch v${watchState.version}${on ? "" : " (last seen)"} · ` : "") + "Studio v0.16.0 dev";
   $("sync").disabled = !on;
   $("wifi").disabled = !on;
   $("saveFaces").disabled = !on;
@@ -3312,6 +3415,7 @@ async function syncTime() {
   const owner = sessionId;
   say("syncMsg", "Sending...");
   try {
+    if (!supportsFeature("settings")) throw new Error("Time-setting capability is not supported by this firmware");
     if (isSerial) {
       const now = Math.floor(Date.now() / 1000);
       await send("TIME:" + now, owner);
@@ -3346,6 +3450,7 @@ async function saveActiveFaces() {
   }
   say("facesMsg", "Sending...");
   try {
+    if (!supportsFeature("settings")) throw new Error("Face-setting capability is not supported by this firmware");
     if (isSerial) {
       await send("FACES:0x" + mask.toString(16).toUpperCase(), owner);
     } else {
@@ -3377,6 +3482,7 @@ async function sendWifi() {
   if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
   say("wifiMsg", "Sending...");
   try {
+    if (!supportsFeature("settings")) throw new Error("Wi-Fi setting capability is not supported by this firmware");
     if (isSerial) {
       await send("WIFI:" + ssid + "," + pass, owner);
     } else {
@@ -3509,21 +3615,37 @@ function setMotionMode(mode, dispatch = true) {
   document.querySelectorAll("[data-motion]").forEach(b => b.classList.toggle("active", b.getAttribute("data-motion") === mode));
 }
 
-function serialToolsSupported() {
-  const parts = watchState.version.split(".").map(Number);
-  return parts.length >= 3 && parts.every(Number.isFinite) && (parts[0] > 0 || parts[1] > 15 || (parts[1] === 15 && parts[2] >= 2));
+function legacyFirmware() {
+  const match = watchState.version.match(/^0\.15\.([123])$/);
+  return match ? Number(match[1]) : null;
 }
+
+function supportsFeature(feature) {
+  if (isSimulated) return true;
+  if (watchState.protocol !== null || watchState.capabilities !== null)
+    return watchState.protocol === 1 && watchState.capabilities !== null && watchState.capabilities.includes(feature);
+  const legacy = legacyFirmware();
+  return legacy !== null && (feature === "settings" || (feature === "timer" && legacy >= 2));
+}
+
+function serialToolsSupported() { return supportsFeature("timer"); }
 
 function updateControlAvailability() {
   const enable = (el, supported, message) => { if (!el) return; el.disabled = !supported; el.title = supported ? "" : message; };
-  for (const [selector, key] of [["[data-bright]", "bright"], ["[data-motion]", "motion"]]) {
-    document.querySelectorAll(selector).forEach(el => enable(el, transportReady && (isSimulated || watchState[key] !== null), "Connect a supported watch or start Virtual Watch"));
-  }
-  for (const [id, key] of [["fmt12Btn", "format"], ["fmt24Btn", "format"], ["nightToggleBtn", "night"]]) enable($(id), transportReady && (isSimulated || watchState[key] !== null), "Setting not reported by this firmware");
+  const settings = transportReady && supportsFeature("settings");
+  for (const id of ["sync", "wifi", "saveFaces", "selectAllFaces", "selectTwoFaces", "selectSpaceFaces", "selectSakuraFaces", "selectFalloutFaces", "clearFaces"])
+    enable($(id), settings, "Control capabilities are not supported by this firmware");
+  enable($("refreshStatus"), transportReady && !isSimulated, "Connect a physical watch to refresh measured status");
+  for (const [selector, key] of [["[data-bright]", "bright"], ["[data-motion]", "motion"]])
+    document.querySelectorAll(selector).forEach(el => enable(el, settings && (isSimulated || watchState[key] !== null), "Setting not reported or supported by this firmware"));
+  for (const [id, key] of [["fmt12Btn", "format"], ["fmt24Btn", "format"], ["nightToggleBtn", "night"]])
+    enable($(id), settings && (isSimulated || watchState[key] !== null), "Setting not reported or supported by this firmware");
   const timer = transportReady && (isSimulated || (isSerial && serialToolsSupported()));
-  document.querySelectorAll("[data-quick-timer]").forEach(el => enable(el, timer, "Timer commands require USB-C and firmware v0.15.2 or later"));
-  for (const id of ["startTimerBtn", "resetTimerBtn"]) enable($(id), timer, "Timer commands require USB-C and firmware v0.15.2 or later");
-  for (const id of ["toggleTorchBtn", "turnToggleBtn"]) enable($(id), isSimulated, "Preview-only: this firmware has no remote command for this control");
+  document.querySelectorAll("[data-quick-timer]").forEach(el => enable(el, timer, "Remote timers require USB-C and an advertised capability or legacy v0.15.2/3"));
+  for (const id of ["startTimerBtn", "resetTimerBtn"])
+    enable($(id), timer, "Remote timers require USB-C and supported firmware");
+  for (const id of ["toggleTorchBtn", "turnToggleBtn"])
+    enable($(id), isSimulated, "Preview-only: this firmware has no remote command for this control");
 }
 
 function queueControl(action) {
@@ -3539,6 +3661,7 @@ function queueControl(action) {
 
 async function writeSetting(key, value, owner = sessionId) {
   if (owner !== sessionId) throw new Error("Connection changed; setting cancelled");
+  if (!supportsFeature("settings")) throw new Error("Setting capability is not supported by this firmware");
   const names = { bright: "BRIGHT:", motion: "MOTION:", format: "FORMAT:", night: "NIGHT:", face: "FACE:" };
   if (!names[key]) throw new Error("Unsupported setting");
   if (isSimulated) {
@@ -3565,6 +3688,7 @@ function applySetting(key, value) {
 
 function applyProfile(profile) {
   return queueControl(async owner => {
+    if (!supportsFeature("settings")) throw new Error("Setting capability is not supported by this firmware");
     say("facesMsg", "Applying collection; waiting for confirmations...");
     if (isSimulated) setFaceMask(profile.mask);
     else {
@@ -3585,9 +3709,34 @@ function runTimer(seconds) {
       drawerTimerTotalSec = seconds || drawerTimerTotalSec;
       drawerTimerEndMs = seconds ? Date.now() + seconds * 1000 : 0;
       setScreenMode("drawer"); drawerPage = 0;
+    } else if (supportsFeature("timer_recovery") || watchState.timer !== null) {
+      const before = statusRevision;
+      await send("INFO?", owner);
+      if (before === statusRevision || !(watchFieldRevision.timer > before) ||
+          (seconds ? !["running", "alarming"].includes(watchState.timer) : watchState.timer !== "idle") ||
+          (watchState.timer === "running" && !(watchFieldRevision.remaining > before)))
+        throw new Error("The watch did not confirm the requested timer state");
+      if (seconds && watchState.timer === "running" && watchState.remaining !== null && watchState.remaining > seconds)
+        throw new Error("The watch returned a different remaining duration");
+      updateTimerReadout();
+      say("toolsMsg", "Timer " + (seconds ? "start" : "reset") + " confirmed. Remaining time is the last watch reading, not a local countdown.", "ok");
+      return;
     }
     say("toolsMsg", isSimulated ? "Virtual Watch timer updated (demo)." : `Timer ${seconds ? "start" : "reset"} acknowledged. Remaining time is shown on the watch; this firmware does not report timer state.`, "ok");
   });
+}
+
+async function refreshWatchStatus() {
+  const owner = sessionId, before = statusRevision;
+  try {
+    if (!transportReady || isSimulated) throw new Error("Connect a physical watch to refresh measured status");
+    say("toolsMsg", "Refreshing watch status...");
+    await send(isSerial ? "INFO?" : "?", owner);
+    if (before === statusRevision) throw new Error("The watch did not return valid status");
+    updateTelemetry();
+    say("toolsMsg", "Watch status refreshed. Readings are sampled on refresh and control changes.", "ok");
+    return true;
+  } catch (err) { reportControlError(err); return false; }
 }
 
 function updateHardwareSpecLabels() {
@@ -3709,6 +3858,7 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
   });
 
   $("sync").addEventListener("click", syncTime);
+  $("refreshStatus").addEventListener("click", refreshWatchStatus);
   $("selectAllFaces").addEventListener("click", () => setFaceMask(0x0FFF));
   $("selectTwoFaces").addEventListener("click", () => {
     let p1 = currentWatchFace >= 0 ? currentWatchFace : 0;
@@ -3994,14 +4144,7 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     $("liveClockReadout").textContent = now.toLocaleTimeString();
     $("epochBadge").textContent = "EPOCH " + Math.floor(now.getTime() / 1000);
 
-    const remSec = drawerTimerEndMs > Date.now() ? Math.ceil((drawerTimerEndMs - Date.now()) / 1000) : 0;
-    if (remSec > 0) {
-      $("studioTimerReadout").textContent = `${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
-      $("compStatusBadge").textContent = `Timer ${fmtTwo(Math.floor(remSec / 60))}:${fmtTwo(remSec % 60)}`;
-    } else {
-      $("studioTimerReadout").textContent = physicalSession() ? "On watch" : "03:00";
-      $("compStatusBadge").textContent = isSimulated ? "Virtual Watch" : physicalSession() ? "Timer state unavailable" : "Preview";
-    }
+    updateTimerReadout();
 
     renderWatchViewport(mainCtx, watchCanvas.width, watchCanvas.height);
 

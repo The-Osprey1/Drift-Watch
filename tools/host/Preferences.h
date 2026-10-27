@@ -14,6 +14,10 @@ struct FlashValue {
 };
 extern std::map<std::string, FlashValue> flash;  // "namespace/key" -> value
 extern int settingsSaves;                         // read-write sessions that wrote something
+// Opt-in failures for persistence tests. Inline function-local state is shared
+// across translation units, without adding globals to unrelated host programs.
+inline std::string &preferenceWriteFailureKey() { static std::string value; return value; }
+inline std::string &preferenceBeginFailureNamespace() { static std::string value; return value; }
 }
 
 class Preferences {
@@ -22,7 +26,7 @@ class Preferences {
     ns_ = ns;
     readOnly_ = readOnly;
     wrote_ = false;
-    return true;
+    return ns_ != sim::preferenceBeginFailureNamespace();
   }
   void end() {
     if (wrote_) sim::settingsSaves++;
@@ -55,6 +59,7 @@ class Preferences {
   }
   size_t put(const char *k, const sim::FlashValue &v) {
     if (readOnly_) return 0;
+    if (key(k) == sim::preferenceWriteFailureKey()) return 0;
     sim::flash[key(k)] = v;
     wrote_ = true;
     return 1;

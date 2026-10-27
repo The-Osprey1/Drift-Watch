@@ -398,11 +398,21 @@ void screenVariants() {
     {
       screens::View w = v;
       w.screen = screens::Screen::Drawer;
+      w.timerStoreOk = true;
       bad += renderAll(s, w, large ? "drawer_large" : "drawer");
       w.timerActive = true;
       w.timerRemainingMs = 45000;
       w.timerTotalMs = 60000;
       bad += renderAll(s, w, large ? "drawer_timer_large" : "drawer_timer");
+      w.timerStoreOk = false;
+      bad += renderAll(s, w, large ? "drawer_timer_save_error_large" : "drawer_timer_save_error");
+      w.timerActive = false;
+      for (timerstore::Notice notice : {timerstore::Notice::Interrupted, timerstore::Notice::Missed,
+                                       timerstore::Notice::StorageError}) {
+        w.timerNotice = notice;
+        bad += renderAll(s, w, (std::string("drawer_") + timerstore::noticeName(notice) +
+                                (large ? "_large" : "")).c_str());
+      }
     }
 
     // Pressed states.
@@ -2472,8 +2482,19 @@ void serialScenarios() {
   CHECK(screen() == "face", "and the watch keeps running, got %s", screen().c_str());
   Serial.in = "00000\n";
   runFor(50);
-  CHECK(net::clockSetByHand() && hal::now() >= 1800000000 && hal::now() < 1800000010,
+  CHECK(!net::clockSetByHand() && net::lastSource() == net::Source::Usb &&
+        net::clockSource() == clockstatus::Source::Usb &&
+        hal::now() >= 1800000000 && hal::now() < 1800000010,
         "the clock is set from the finished line (%ld)", (long)hal::now());
+  Serial.out.clear();
+  Serial.in = "INFO?\n";
+  runFor(50);
+  CHECK(Serial.out.find(",PROTO=1,CAPS=0x1F,MV=") != std::string::npos &&
+        Serial.out.find(",TEMP=") != std::string::npos && Serial.out.find(",DRIFT=") != std::string::npos,
+        "INFO publishes protocol and measured telemetry");
+  CHECK(Serial.out.find(",TIMEQ=synced,SOURCE=usb,SYNCAGE=") != std::string::npos &&
+        Serial.out.find(",TIMER=") != std::string::npos && Serial.out.find(",REMAIN=") != std::string::npos,
+        "INFO publishes truthful time provenance and timer state");
   sim::wifiSaved = false;
   Serial.in = "WIFI:Home,secret\r\n";
   runFor(50);
@@ -2561,6 +2582,9 @@ uint32_t untilFace(uint32_t limit = 2000) {
 }
 
 void startOn(Face f) {
+  // Ordinary scenarios start with no previous tool. Recovery scenarios call
+  // ui::begin directly so the real persistent marker intentionally survives.
+  sim::flash.erase("tools/timer");
   sim::cold = false;
   settings = Settings{};
   settings.touchCheckedTurn = settings.screenTurn = DISPLAY_ROTATION;

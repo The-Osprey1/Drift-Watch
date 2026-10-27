@@ -1,5 +1,6 @@
 // Screen navigation, control activation, phone sync, wrist gestures, touch, BOOT and USB serial.
 #include "ui_parts.h"
+#include <algorithm>
 #include <math.h>
 #include <stdio.h>
 #include <string.h>
@@ -11,6 +12,7 @@
 #include "phone.h"
 #include "serial_cmd.h"
 #include "settings.h"
+#include "status_fields.h"
 #include "theme.h"
 
 namespace uiparts {
@@ -150,6 +152,22 @@ void stepTouchCheck() {
 }
 
 // ---- Phone sync -------------------------------------------------------------------------------
+statusfields::Snapshot measuredStatus() {
+  readBattery();
+  statusfields::Snapshot value;
+  value.batteryMv = batteryMv;
+  float measured = -99;
+  if (imu::present() && imu::readTemp(measured)) value.boardTempC = measured;
+  value.driftPpb = net::driftPpb();
+  value.quality = clockstatus::name(net::clockQuality());
+  value.source = clockstatus::name(net::clockSource());
+  value.syncAge = net::syncAgeSeconds();
+  value.timer = !timer.storeOk ? "storage_error" : timer.active ? "running" : timer.alarming ? "alarming" :
+      timer.notice == timerstore::Notice::None ? "idle" : timerstore::noticeName(timer.notice);
+  value.remainingSeconds = (remainingTimerMs() + 999) / 1000;
+  return value;
+}
+
 void openPhoneSync() {
   phone::begin();
   ble::open();
@@ -172,15 +190,18 @@ void stepPhone() {
     if (ph != shownPhase && tr.kind == Slide::None) phonePage = 0;
     shownPhase = ph;
   }
-  char line[128], status[220];
+  char line[128], status[513];
   bool any = false;
   while (ble::nextLine(line, sizeof line)) {
     const char *reply = phone::apply(line);
     hal::log("ui: phone %c... -> %s", line[0], reply);  // never logs the password itself
     any = true;
+    const statusfields::Snapshot measured = measuredStatus();
     snprintf(status, sizeof status, "reply=%s;", reply);
     size_t n = strlen(status);
-    phone::status(status + n, sizeof status - n, batteryPct);
+    phone::status(status + n, (std::min)(sizeof status - n, (size_t)260), batteryPct);
+    if (!statusfields::append(status, sizeof status, measured, false))
+      snprintf(status, sizeof status, "reply=error;fw=" FW_VERSION ";proto=1");
     ble::setStatus(status);
   }
   if (any) {
@@ -223,18 +244,38 @@ void goBack(float v) {
   }
 }
 
-void startTimer(uint32_t ms) {
+bool startTimer(uint32_t ms) {
+  if (!ms || ms > 24UL * 60 * 60 * 1000) return false;
+  timer.storeOk = timerstore::save(timerstore::Marker::Running);
+  if (!timer.storeOk) {
+    timer.notice = timerstore::Notice::StorageError;
+    dirty = true;
+    uiKey = 0;
+    if (pagedMode()) refreshScreen(true);
+    return false;
+  }
+  if (timer.alarming) hal::backlight(backlightLevel());
   timer.active = true;
   timer.alarming = false;
+  timer.notice = timerstore::Notice::None;
   timer.targetMs = hal::ms() + ms;
   timer.totalMs = ms;
-  refreshScreen(true);
+  dirty = true;
+  uiKey = 0;
+  if (pagedMode()) refreshScreen(true);
+  return true;
 }
 
 // Ends the alarm and repaints whatever screen is under it: the face, or a settings page whose
 // key has not changed (the alarm picture used to stay there until the next swipe).
-void dismissAlarm() {
+void dismissAlarm(bool acknowledge) {
   timer.alarming = false;
+  if (acknowledge) {
+    timer.storeOk = timerstore::save(timerstore::Marker::Idle);
+    timer.notice = timer.storeOk ? timerstore::Notice::None : timerstore::Notice::StorageError;
+  } else {
+    timer.notice = timerstore::Notice::Missed;
+  }
   hal::backlight(backlightLevel());
   if (mode == Mode::Drawer) mode = Mode::Face;
   dirty = true;
@@ -243,12 +284,18 @@ void dismissAlarm() {
   if (mode != Mode::Face && mode != Mode::Boot && tr.kind == Slide::None) refreshScreen(true);
 }
 
-void resetTimer() {
+bool resetTimer() {
+  timer.storeOk = timerstore::save(timerstore::Marker::Idle);
   timer.active = false;
   timer.alarming = false;
+  timer.notice = timer.storeOk ? timerstore::Notice::None : timerstore::Notice::StorageError;
   timer.targetMs = 0;
   timer.totalMs = 0;
-  refreshScreen(true);
+  hal::backlight(backlightLevel());
+  dirty = true;
+  uiKey = 0;
+  if (pagedMode()) refreshScreen(true);
+  return timer.storeOk;
 }
 
 void activate(screens::Button b) {
@@ -742,7 +789,10 @@ void stepBootCheck() {
 void runSerialCommand(const char *line) {
   serialcmd::Command cmd = serialcmd::parse(line);
   if (cmd.kind == serialcmd::Kind::Time) {
-    net::setClockByHand(cmd.time);
+    if (!net::setClockFromUsb(cmd.time)) {
+      Serial.printf("%s\n", "ERROR: time is outside the supported range");
+      return;
+    }
     dirty = true;
     cacheValid = false;
     Serial.printf("Time set to %ld\n", (long)cmd.time);
@@ -757,16 +807,20 @@ void runSerialCommand(const char *line) {
     dirty = true;
     Serial.printf("Faces mask set to 0x%04X\n", (unsigned int)settings.activeFaces);
   } else if (cmd.kind == serialcmd::Kind::Info) {
-    Serial.printf("DRIFT:VER=" FW_VERSION ",TIME=%ld,BAT=%d,FACES=0x%04X,FACE=%d,BRIGHT=%d,MOTION=%d,FORMAT=%d,NIGHT=%d\n",
-                  (long)hal::now(), batteryPct, (unsigned int)settings.activeFaces,
-                  (int)settings.face, (int)settings.brightnessLevel, (int)settings.motion, settings.use12h ? 12 : 24, (int)settings.night);
+    const statusfields::Snapshot measured = measuredStatus();
+    char status[513];
+    snprintf(status, sizeof status, "DRIFT:VER=" FW_VERSION ",TIME=%ld,BAT=%d,FACES=0x%04X,FACE=%d,BRIGHT=%d,MOTION=%d,FORMAT=%d,NIGHT=%d",
+             net::timeIsValid() ? (long)hal::now() : 0L, batteryPct, (unsigned int)settings.activeFaces,
+             (int)settings.face, (int)settings.brightnessLevel, (int)settings.motion,
+             settings.use12h ? 12 : 24, (int)settings.night);
+    if (statusfields::append(status, sizeof status, measured, true)) Serial.printf("%s\n", status);
+    else Serial.printf("%s\n", "ERROR: status buffer is too small");
   } else if (cmd.kind == serialcmd::Kind::Timer) {
     if (cmd.value <= 0) {
-      resetTimer();
-      Serial.printf("%s\n", "Timer reset");
+      Serial.printf("%s\n", resetTimer() ? "Timer reset" : "ERROR: timer clear not saved");
     } else {
-      startTimer((uint32_t)cmd.value * 1000u);
-      Serial.printf("Timer started for %d s\n", cmd.value);
+      if (startTimer((uint32_t)cmd.value * 1000u)) Serial.printf("Timer started for %d s\n", cmd.value);
+      else Serial.printf("%s\n", "ERROR: timer start not saved");
     }
   } else if (cmd.kind == serialcmd::Kind::Bright) {
     settings.brightnessLevel = (uint8_t)cmd.value;

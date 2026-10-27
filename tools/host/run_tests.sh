@@ -23,7 +23,7 @@ CXX="g++ $FLAGS"
 UI_SRC="DriftWatch/ui.cpp DriftWatch/ui_render.cpp DriftWatch/ui_motion.cpp DriftWatch/ui_input.cpp \
 DriftWatch/screens.cpp DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp DriftWatch/settings.cpp \
 DriftWatch/raise.cpp DriftWatch/orient.cpp DriftWatch/phone.cpp DriftWatch/timekeep.cpp DriftWatch/battery.cpp \
-DriftWatch/serial_cmd.cpp DriftWatch/power.cpp DriftWatch/qrcodegen.c"
+DriftWatch/serial_cmd.cpp DriftWatch/power.cpp DriftWatch/timer_store.cpp DriftWatch/qrcodegen.c"
 
 $CXX -I tools/host -I DriftWatch -isystem "$TFT" tools/host/tft_shim.cpp tools/host/render_faces.cpp \
   DriftWatch/faces.cpp DriftWatch/faces_themed.cpp DriftWatch/gfx.cpp -o "$BIN/render_faces"
@@ -40,6 +40,10 @@ $CXX -I tools/host/net -I tools/host -I DriftWatch tools/host/net_test.cpp tools
 $CXX -I tools/host -I DriftWatch tools/host/power_test.cpp DriftWatch/power.cpp DriftWatch/qmi8658.cpp -o "$BIN/power_test"
 # Real command parsers, with only time/settings side effects replaced by test doubles.
 $CXX -I tools/host -I DriftWatch tools/host/command_test.cpp DriftWatch/serial_cmd.cpp DriftWatch/phone.cpp -o "$BIN/command_test"
+$CXX -I tools/host -I DriftWatch tools/host/timer_store_test.cpp DriftWatch/timer_store.cpp -o "$BIN/timer_store_test"
+$CXX -I DriftWatch tools/host/clock_status_test.cpp -o "$BIN/clock_status_test"
+$CXX -I DriftWatch tools/host/status_fields_test.cpp -o "$BIN/status_fields_test"
+$CXX -I DriftWatch tools/host/ble_status_test.cpp -o "$BIN/ble_status_test"
 
 status=0
 run() {  # name, command...: runs one test, keeps its whole output in the output folder
@@ -55,4 +59,8 @@ run interface_network "$BIN/simulate_network" "$OUT"
 run network          "$BIN/net_test"
 run power            "$BIN/power_test"
 run commands         "$BIN/command_test"
+run timer_store      "$BIN/timer_store_test"
+run clock_status     "$BIN/clock_status_test"
+run status_fields    "$BIN/status_fields_test"
+run ble_status       "$BIN/ble_status_test"
 exit $status

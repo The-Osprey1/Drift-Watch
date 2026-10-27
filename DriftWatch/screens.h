@@ -8,6 +8,7 @@
 #include "net.h"
 #include "theme.h"
 #include "faces.h"
+#include "timer_store.h"
 
 namespace screens {
 
@@ -78,6 +79,7 @@ struct View {
   const char *zone, *ssid;
   bool zoneManual;          // the time zone was typed in setup
   bool clockByHand;         // the clock was set on the watch and not synced since
+  clockstatus::Quality clockQuality;
   bool raiseToWake, twistToWake;
   bool imuPresent;          // the motion sensor answered
   tm edit;                  // the time being set on the set time screen
@@ -112,6 +114,8 @@ struct View {
   bool timerActive;
   uint32_t timerRemainingMs;
   uint32_t timerTotalMs;
+  timerstore::Notice timerNotice;
+  bool timerStoreOk;
 };
 
 // Draws the screen. Returns true if it shows a spinner that needs more frames.
@@ -146,6 +150,7 @@ PhonePhase phonePhase(const View &v);
 
 // The low battery notice, drawn over the bottom of the face for a few seconds.
 void drawLowBattery(TFT_eSprite &s, int pct, bool urgent);
+void drawTimerNotice(TFT_eSprite &s, timerstore::Notice notice);
 
 // Startup sequence, t from 0 to 1.
 void drawBoot(TFT_eSprite &s, float t, const char *version);

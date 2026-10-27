@@ -4,6 +4,7 @@
 #pragma once
 #include <stdint.h>
 #include <time.h>
+#include "clock_status.h"
 
 namespace net {
 constexpr const char *SETUP_AP_NAME = "Drift-Setup";
@@ -48,7 +49,12 @@ bool timeIsValid();
 void setClockByHand(time_t t);  // the time set on the watch itself; a later sync replaces it
 // A time sent by a phone over Bluetooth counts as a sync, like one over Wi-Fi.
 void setClockFromPhone(time_t utc, int ms);
-enum class Source : uint8_t { None, Wifi, Phone };
+// Whole-second USB input is trusted for time/source but not for precise drift learning.
+bool setClockFromUsb(time_t utc);
+clockstatus::Quality clockQuality();
+clockstatus::Source clockSource();
+int64_t syncAgeSeconds();       // monotonic age of the current trusted clock; -1 if unknown
+enum class Source : uint8_t { None, Wifi, Phone, Usb };
 Source lastSource();            // where the latest successful sync came from
 // Sets the POSIX time zone (saved) and/or the zone name shown in Details; nullptr leaves one as it is.
 void setZone(const char *posix, const char *name);

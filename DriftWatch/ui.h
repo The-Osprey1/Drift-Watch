@@ -39,6 +39,9 @@ bool markerMoving();
 bool timerActive();
 bool timerAlarming();
 uint32_t timerTotalMs();
-void startTimer(uint32_t ms);
-void resetTimer();
+uint32_t timerRemainingMs();
+const char *timerNotice();  // "none", "interrupted", "missed", or "storage_error"
+bool timerStoreOk();
+bool startTimer(uint32_t ms);  // false when the persistent start marker could not be saved
+bool resetTimer();            // stops now; false means the cleared marker could not be saved
 }

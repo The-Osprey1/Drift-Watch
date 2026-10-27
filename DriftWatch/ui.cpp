@@ -216,6 +216,11 @@ uint32_t screenTimeout() {
   return result ? RESULT_TIMEOUT_MS : SCREEN_TIMEOUT_MS;
 }
 
+uint32_t remainingTimerMs() {
+  int32_t left = (int32_t)(timer.targetMs - hal::ms());
+  return timer.active && left > 0 ? (uint32_t)left : 0;
+}
+
 }  // namespace uiparts
 
 namespace ui {
@@ -234,8 +239,11 @@ bool markerMoving() { return marker.moving; }
 bool timerActive() { return timer.active; }
 bool timerAlarming() { return timer.alarming; }
 uint32_t timerTotalMs() { return timer.totalMs; }
-void startTimer(uint32_t ms) { uiparts::startTimer(ms); }
-void resetTimer() { uiparts::resetTimer(); }
+uint32_t timerRemainingMs() { return remainingTimerMs(); }
+const char *timerNotice() { return timerstore::noticeName(timer.notice); }
+bool timerStoreOk() { return timer.storeOk; }
+bool startTimer(uint32_t ms) { return uiparts::startTimer(ms); }
+bool resetTimer() { return uiparts::resetTimer(); }
 
 const char *screenName() {
   static const char *names[] = {"boot", "face", "panel", "details", "setup", "settime", "touchcheck", "phone", "drawer", "flashlight"};
@@ -261,6 +269,11 @@ void begin() {
   touchResting = wakeGuard = false;
   settingsPage = detailsPage = setupPage = setTimePage = drawerPage = 0;
   timer = TimerState{};
+  timerstore::Marker savedTimer;
+  timer.storeOk = timerstore::load(savedTimer);
+  timer.notice = !timer.storeOk ? timerstore::Notice::StorageError :
+                 savedTimer == timerstore::Marker::Running ? timerstore::Notice::Interrupted :
+                 savedTimer == timerstore::Marker::Due ? timerstore::Notice::Missed : timerstore::Notice::None;
   serialHoldUntil = 0;
   failsInARow = 0;
   loadSettings();
@@ -337,6 +350,7 @@ void begin() {
 void stepTimer() {
   if (timer.active && (int32_t)(hal::ms() - timer.targetMs) >= 0) {
     timer.active = false;
+    timer.storeOk = timerstore::save(timerstore::Marker::Due);
     timer.alarming = true;
     timer.alarmStartMs = hal::ms();
     timer.alarmShown = -1;
@@ -348,7 +362,7 @@ void stepTimer() {
   }
   if (!timer.alarming) return;
   if (since(timer.alarmStartMs) > ALARM_MS) {
-    dismissAlarm();
+    dismissAlarm(false);  // silence the flash, retain the unacknowledged occurrence
     return;
   }
   lastActivity = hal::ms();

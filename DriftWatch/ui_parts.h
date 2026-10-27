@@ -11,6 +11,7 @@
 #include "raise.h"
 #include "screens.h"
 #include "touch.h"
+#include "timer_store.h"
 
 namespace uiparts {
 
@@ -117,6 +118,8 @@ struct Transition {
 struct TimerState {
   bool active = false;
   bool alarming = false;
+  bool storeOk = true;
+  timerstore::Notice notice = timerstore::Notice::None;
   uint32_t targetMs = 0;
   uint32_t totalMs = 0;
   uint32_t alarmStartMs = 0;
@@ -253,10 +256,11 @@ void closeToFace(float v = 0);
 void openDrawer(float v = 0);
 void closeDrawer(float v = 0);
 void openFlashlight();
-void dismissAlarm();
+void dismissAlarm(bool acknowledge = true);
 void closeFlashlight();
-void startTimer(uint32_t ms);
-void resetTimer();
+bool startTimer(uint32_t ms);
+bool resetTimer();
+uint32_t remainingTimerMs();
 void stepTimer();
 void stepTransition();
 void touchRest();

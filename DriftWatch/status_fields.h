@@ -41,12 +41,12 @@ inline bool append(char *out, size_t n, const Snapshot &v, bool serial) {
 inline bool appendText(char *out, size_t n, const char *key, const char *value) {
   char encoded[192];
   size_t at = 0;
-  constexpr const char *HEX = "0123456789ABCDEF";
+  constexpr const char *ESCAPE_HEX = "0123456789ABCDEF";
   for (const unsigned char *p = (const unsigned char *)value; *p; p++) {
     bool escape = *p == '%' || *p == ';' || *p == ',' || *p == '\r' || *p == '\n';
     size_t need = escape ? 3 : 1;
     if (at + need >= sizeof encoded) return false;
-    if (escape) { encoded[at++] = '%'; encoded[at++] = HEX[*p >> 4]; encoded[at++] = HEX[*p & 15]; }
+    if (escape) { encoded[at++] = '%'; encoded[at++] = ESCAPE_HEX[*p >> 4]; encoded[at++] = ESCAPE_HEX[*p & 15]; }
     else encoded[at++] = (char)*p;
   }
   encoded[at] = 0;

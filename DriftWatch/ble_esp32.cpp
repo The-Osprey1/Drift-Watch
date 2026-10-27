@@ -19,7 +19,7 @@ constexpr uint16_t CTS_SERVICE = 0x1805, CTS_CURRENT_TIME = 0x2A2B, CTS_LOCAL_TI
 constexpr size_t LINE = 128;   // longest line kept; the Drift sync page sends far less
 constexpr int QUEUE_DEPTH = 8;
 
-struct Line { char text[LINE]; };
+struct Line { uint32_t generation; char text[LINE]; };
 
 ble::State st = ble::State::Off;
 bool started = false;
@@ -28,6 +28,7 @@ volatile uint32_t lastLineAt = 0;     // written by the Bluetooth task
 std::atomic<bool> connected{false};
 std::atomic<uint32_t> linkGeneration{0};
 uint32_t statusGeneration = 0;
+uint32_t commandGeneration = 0;  // main-loop command whose reply is being built
 bleframes::StatusQueue statusFrames;
 uint32_t lastNotifyAt = 0;
 bool notifyClockStarted = false;
@@ -50,12 +51,16 @@ void syncStatusGeneration() {
 
 // Runs on the Bluetooth task: copy the line and leave, the main loop applies it.
 void queueLine(const char *text, size_t n) {
-  if (!lines) return;
+  uint32_t generation = linkGeneration.load(std::memory_order_acquire);
+  if (!lines || !connected.load(std::memory_order_acquire)) return;
   Line l;
+  l.generation = generation;
   n = n < LINE - 1 ? n : LINE - 1;
   memcpy(l.text, text, n);
   l.text[n] = 0;
   while (n && (l.text[n - 1] == '\n' || l.text[n - 1] == '\r')) l.text[--n] = 0;
+  if (!connected.load(std::memory_order_acquire) ||
+      linkGeneration.load(std::memory_order_acquire) != generation) return;
   if (xQueueSend(lines, &l, 0) == pdTRUE) lastLineAt = millis();
 }
 
@@ -183,6 +188,9 @@ void close() {
     if (st == State::Failed) st = State::Off;
     return;
   }
+  // Invalidate callbacks/queued work before shutting down the Bluetooth task.
+  connected.store(false, std::memory_order_release);
+  linkGeneration.fetch_add(1, std::memory_order_acq_rel);
   BLEDevice::stopAdvertising();
   BLEDevice::deinit(false);  // keeps the memory so Bluetooth can start again later
   server = nullptr;
@@ -224,11 +232,19 @@ uint32_t secondsLeft() {
 const char *name() { return deviceName; }
 
 bool nextLine(char *out, size_t n) {
+  if (!started || !lines || !out || !n) return false;
   Line l;
-  if (!lines || xQueueReceive(lines, &l, 0) != pdTRUE) return false;
-  strncpy(out, l.text, n - 1);
-  out[n - 1] = 0;
-  return true;
+  while (xQueueReceive(lines, &l, 0) == pdTRUE) {
+    if (!connected.load(std::memory_order_acquire) ||
+        l.generation != linkGeneration.load(std::memory_order_acquire)) continue;
+    strncpy(out, l.text, n - 1);
+    out[n - 1] = 0;
+    if (!connected.load(std::memory_order_acquire) ||
+        l.generation != linkGeneration.load(std::memory_order_acquire)) continue;
+    commandGeneration = l.generation;
+    return true;
+  }
+  return false;
 }
 
 void setStatus(const char *text) {
@@ -239,7 +255,10 @@ void setStatus(const char *text) {
     return;
   }
   syncStatusGeneration();
-  if (connected.load(std::memory_order_acquire) && !statusFrames.push(text)) {
+  // A command accepted before a reconnect may finish applying afterwards. Its
+  // reply still belongs to its original link, never the new client's command.
+  if (!connected.load(std::memory_order_acquire) || commandGeneration != statusGeneration) return;
+  if (!statusFrames.push(text)) {
     hal::log("ble: status reply dropped (queue full or snapshot too long)");
     return;
   }

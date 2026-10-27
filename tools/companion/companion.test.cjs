@@ -121,7 +121,7 @@ function serial(p, options = {}) {
       const line = new TextDecoder().decode(bytes).trim(); if (!line) return;
       writes.push(line);
       let reply = '';
-      if (line === 'INFO?') reply = info();
+      if (line === 'INFO?') reply = options.queryStatus === undefined ? info() : options.queryStatus;
       else {
         const [key, raw] = line.split(':'); const value = Number(raw);
         const name = { BRIGHT: 'bright', MOTION: 'motion', FORMAT: 'format', NIGHT: 'night', FACE: 'face', FACES: 'faces' }[key];
@@ -129,6 +129,7 @@ function serial(p, options = {}) {
         if (key === 'TIMER' && !options.ignoreTimer && !options.refuseTimer) { state.timer = value ? 'running' : 'idle'; state.remaining = value; }
         reply = key === 'TIMER' ? `Timer ${value ? 'started for ' + value + ' s' : 'reset'}\r\n` :
           key === 'BRIGHT' ? `Brightness set to ${value}\r\n` : key === 'FORMAT' ? `Format set to ${value}h\r\n` :
+          key === 'FACES' ? `Faces mask set to 0x${value.toString(16)}\r\n` :
           key === 'WIFI' ? 'Configuring Wi-Fi for SSID: Home\r\n' : '';
       }
       if (line.startsWith('TIMER:') && options.refuseTimer) reply = 'ERROR: timer start not saved\r\n';
@@ -238,6 +239,35 @@ test('profile failures never report an applied collection', async () => {
   await assert.rejects(p.context.applyProfile({ name: 'Test', mask: 65, face: 6, motion: 'subtle', bright: 2, use12h: false }), /confirm/);
   assert.match(p.text('facesMsg'), /not fully applied/);
   await p.context.disconnectTransport();
+});
+
+test('settings and face saves require their own fresh queried fields on Serial and BLE', async () => {
+  for (const transport of ['serial', 'ble']) {
+    for (const operation of ['setting', 'profile', 'faces']) {
+      const p = page(), options = {};
+      const h = transport === 'serial' ? serial(p, options) : ble(p, options);
+      assert.equal(await (transport === 'serial' ? p.context.connectSerial() : p.context.connect()), true);
+      assert.equal(p.run('watchState.bright'), 2);
+      assert.equal(p.run('watchState.faces'), 4095);
+      // The mutation ACK can carry a matching value, and other valid query fields
+      // can advance the status revision. Neither proves the omitted field was read back.
+      options.queryStatus = transport === 'serial' ? 'DRIFT:VER=0.15.3,BAT=86\r\n' : 'reply=ok;bat=86';
+      if (operation === 'setting') {
+        await assert.rejects(p.context.applySetting('bright', 2), /did not read back.*bright/);
+        assert.doesNotMatch(p.text('toolsMsg'), /Setting confirmed/);
+      } else if (operation === 'profile') {
+        await assert.rejects(p.context.applyProfile({ name: 'Current', mask: 4095, face: 0, motion: 'subtle', bright: 2, use12h: false }), /did not confirm.*faces/);
+        assert.match(p.text('facesMsg'), /not fully applied/);
+      } else {
+        assert.equal(await p.context.saveActiveFaces(), false);
+        assert.match(p.text('facesMsg'), /did not read back.*faces/);
+        assert.doesNotMatch(p.text('facesMsg'), /Saved!/);
+      }
+      assert.equal(p.run('transportReady'), true, transport + ' ' + operation);
+      assert.equal(h.writes.at(-1), transport === 'serial' ? 'INFO?' : '?');
+      await p.context.disconnectTransport();
+    }
+  }
 });
 
 test('downloads use real release/source paths instead of unshipped root files', () => {

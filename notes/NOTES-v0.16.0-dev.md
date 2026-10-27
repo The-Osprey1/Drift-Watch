@@ -43,16 +43,16 @@ INFO? keeps the existing Serial fields and appends:
 
 Serial advertises CAPS=0x1F. BLE advertises CAPS=0x1D: it reports timer state but does not accept remote timer commands. BLE uses the equivalent lower-case semicolon fields. Optional zone/network text escapes wire delimiters and is omitted whole if it cannot fit.
 
-The companion displays sampled timer state rather than inventing a countdown between readings. Measurement age is tracked per field. Its explicit Refresh button sends one query; no periodic polling extends Phone Sync in the background. USB sync confirms UTC only and states that the watch's existing time zone is unchanged.
+The companion displays sampled timer state rather than inventing a countdown between readings. Measurement age is tracked per field. Settings, face saves, profiles and timer changes require fresh matching readback fields; an older cached matching value cannot confirm a query that omits the field. Its explicit Refresh button sends one query; no periodic polling extends Phone Sync in the background. USB sync confirms UTC only and states that the watch's existing time zone is unchanged.
 
 ## BLE delivery
 
 Full status is readable as a bounded snapshot of at most 512 text bytes. Notifications emit complete known fields of at most 20 bytes, then the acknowledgement last. Long optional strings remain available through the readable snapshot. A raw notification is sent only if the entire raw value fits.
 
-The main-loop queue holds at most eight snapshots and sends at most one notification per 20 ms without sleeping. Close/link changes clear pending snapshots. Oversize/overflow replies are dropped without a false acknowledgement. Existing MTU negotiation and command write fragments remain supported.
+The main-loop queue holds at most eight snapshots and sends at most one notification per 20 ms without sleeping. Close/link changes clear pending snapshots. Input commands are stamped with their connection generation; stale commands and replies cannot cross into a replacement connection. Oversize/overflow replies are dropped without a false acknowledgement. Existing MTU negotiation and command write fragments remain supported.
 
 ## Qualification
 
-Local packaging and companion regressions pass; changed production and pure-test objects cross-compile under GNU C++11 with warnings treated as errors. Full pinned-core firmware builds, strict host execution, mutation/layout checks and real BLE behavior must be checked on the candidate's CI/hardware record.
+Local packaging and companion regressions pass; changed production and pure-test objects cross-compile under GNU C++11 with warnings treated as errors. The exact source revision and pinned-core firmware, strict host, mutation and layout results are tracked in [PR #29](https://github.com/The-Osprey1/DriftWatch/pull/29/checks). Real BLE behavior and physical acceptance must be checked on the candidate's hardware record.
 
 The first physical tests are restart while running, restart after expiry, timeout/missed notice acknowledgement, marker-save failure handling where practical, USB-versus-NTP precedence, status refresh and BLE small-payload delivery. Battery and clock accuracy claims still require the roadmap's measured profiles.

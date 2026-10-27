@@ -3457,8 +3457,10 @@ async function saveActiveFaces() {
       await send("H=" + mask, owner);
     }
     if (!isSimulated) {
+      const beforeQuery = statusRevision;
       await send(isSerial ? "INFO?" : "?", owner);
-      if (watchState.faces !== mask) throw new Error("The watch did not read back the requested faces");
+      if (!(watchFieldRevision.faces > beforeQuery) || watchState.faces !== mask)
+        throw new Error("The watch did not read back the requested faces");
     }
     const count = FACES.filter((_, i) => (mask & (1 << i))).length;
     if (isSimulated) { say("facesMsg", "Virtual Watch face selection updated (demo).", "ok"); return true; }
@@ -3674,8 +3676,10 @@ async function writeSetting(key, value, owner = sessionId) {
   }
   if (watchState[key] === null) throw new Error("This setting is not reported by the connected firmware");
   await send(names[key] + value, owner);
+  const beforeQuery = statusRevision;
   await send(isSerial ? "INFO?" : "?", owner);
-  if (watchState[key] !== value) throw new Error("The watch did not read back the requested " + key);
+  if (!(watchFieldRevision[key] > beforeQuery) || watchState[key] !== value)
+    throw new Error("The watch did not read back the requested " + key);
 }
 
 function applySetting(key, value) {
@@ -3693,8 +3697,10 @@ function applyProfile(profile) {
     if (isSimulated) setFaceMask(profile.mask);
     else {
       await send(isSerial ? "FACES:0x" + profile.mask.toString(16) : "H=" + profile.mask, owner);
+      const beforeQuery = statusRevision;
       await send(isSerial ? "INFO?" : "?", owner);
-      if (watchState.faces !== profile.mask) throw new Error("The watch did not confirm the collection faces");
+      if (!(watchFieldRevision.faces > beforeQuery) || watchState.faces !== profile.mask)
+        throw new Error("The watch did not confirm the collection faces");
     }
     for (const [key, value] of [["face", profile.face], ["motion", ["off", "subtle", "expressive"].indexOf(profile.motion)], ["bright", profile.bright ?? 2], ["format", profile.use12h ? 12 : 24]]) await writeSetting(key, value, owner);
     say("facesMsg", isSimulated ? `Previewing collection "${profile.name}" (demo).` : `Collection "${profile.name}" confirmed by the watch.`, "ok");

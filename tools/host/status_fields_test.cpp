@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <string.h>
+// Arduino Print.h exports this macro before the production status header.
+#define HEX 16
 #include "status_fields.h"
 
 int main() {

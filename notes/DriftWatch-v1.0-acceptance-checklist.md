@@ -69,6 +69,9 @@ Result / evidence / next action:
 - [ ] Test UTC, positive/negative offsets, half/quarter-hour zones, date boundaries and leap day.
 - [ ] Test home/world-zone changes and both DST transitions.
 - [ ] Test software reset, watchdog reset and power-on separately; time quality matches what actually survives.
+- [ ] Retained time has unknown sync age; manual time never appears freshly synced; trusted time becomes stale after the defined interval.
+- [ ] An explicit manual/USB/phone setting cancels an older in-flight zone/NTP request; a late answer cannot overwrite it.
+- [ ] An invalid NTP answer reports failure and preserves a previously usable progressing clock.
 - [ ] Learn correction only from qualifying reference samples; manual changes/outliers do not corrupt it.
 - [ ] Record worst absolute error, not just the average.
 
@@ -150,6 +153,7 @@ G02 candidate target: within 2 seconds after qualified sync and no more than 10 
 - [ ] Forward clock corrections record missed events without an alert burst; backward corrections cannot duplicate one.
 - [ ] Timer-plus-reminder, two reminders, and snooze-plus-timer collisions preserve all occurrence IDs; dismiss/snooze affects only the displayed alert and never restarts another alert's timeout.
 - [ ] Restart/power-loss behavior shows Interrupted for duration tools when continuity cannot be established.
+- [ ] Restart after timer expiry retains Missed; acknowledgement persists; a failed marker save is visibly reported without a success reply.
 - [ ] Reminder configuration survives supported updates; missed/reminder occurrence state follows the accepted persistence policy.
 - [ ] Timer/reminder UI explicitly identifies alerts as silent.
 
@@ -188,7 +192,9 @@ Fault-injection result / evidence:
 - [ ] Malformed/overflow/trailing/fragmented/unknown commands fail without unintended state changes.
 - [ ] Duplicate timer-start requests cannot restart a timer.
 - [ ] 20 unplug/reconnect/switch cycles leave one active session and no stale reply updates.
+- [ ] A queued BLE command cannot cross into a replacement connection; status fields and acknowledgements arrive intact with a 20-byte notification payload.
 - [ ] Profile apply reads back every supported promised field.
+- [ ] Missing or invalid fields in a fresh readback cannot certify an older matching cached setting or timer state.
 - [ ] Offline shell/help/preview work after initial cache; supported local connectivity still works.
 - [ ] Page updates do not interrupt an active device operation; old firmware compatibility is handled.
 - [ ] USB credential setup works; unencrypted BLE rejects password provisioning.

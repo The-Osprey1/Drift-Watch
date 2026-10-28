@@ -133,12 +133,14 @@ bool setClockFromUsb(time_t utc) {
   return true;
 }
 Source lastSource() { return source; }
-void setZone(const char *posix, const char *name) {
+bool setZone(const char *posix, const char *name) {
   if (posix) {
-    settings.tz = posix;
-    saveSettings();
+    Settings candidate = settings;
+    candidate.tz = posix;
+    if (!commitSettings(candidate)) return false;
   }
   if (name) snprintf(simZone, sizeof simZone, "%s", name);
+  return true;
 }
 void saveWifi(const char *s, const char *p) {
   saveNetwork(s, p);

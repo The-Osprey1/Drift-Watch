@@ -18,6 +18,7 @@
 #include <netsim.h>
 #include <WiFi.h>
 #include "settings.h"
+#include "settings_record.h"
 #include "zones.h"
 
 // ---- Hardware layer stand-ins -------------------------------------------------------------
@@ -98,10 +99,25 @@ std::string envTz() {
   return tz ? tz : "";
 }
 bool savedTz(std::string &out) {
-  auto it = sim::flash.find("watch/tz");
-  if (it == sim::flash.end()) return false;
-  out = it->second.s;
-  return true;
+  // Inspect the durable records rather than RAM or obsolete per-field keys.
+  bool found = false;
+  uint64_t newest = 0;
+  for (const char *key : {"watchcfg/a", "watchcfg/b"}) {
+    auto it = sim::flash.find(key);
+    if (it == sim::flash.end() || !it->second.isBlob || it->second.bytes.size() > settingsrecord::MAX_BYTES) continue;
+    settingsrecord::Record record;
+    record.size = it->second.bytes.size();
+    if (record.size) memcpy(record.bytes, it->second.bytes.data(), record.size);
+    Settings stored;
+    uint64_t generation = 0;
+    if (settingsrecord::decode(record, stored, generation) != settingsrecord::Kind::Supported) continue;
+    if (!found || generation > newest) {
+      found = true;
+      newest = generation;
+      out = stored.tz.c_str();
+    }
+  }
+  return found;
 }
 
 // Runs net::poll() for `ms`, as the interface loop does every few milliseconds.
@@ -863,6 +879,30 @@ void portalMore() {
   net::cancelPortal();
 }
 
+void settingsSaveFailures() {
+  printf("Settings: failed zone saves cannot report successful setup or change the active zone\n");
+  freshBoard();
+  CHECK(net::setZone("UTC0", "Etc/UTC"), "the baseline zone is verified");
+  sim::preferenceFaults() = {};
+  sim::preferenceFaults().blobWriteLimit = 0;
+  CHECK(!net::setZone(LONDON_RULES, "Europe/London") && settings.tz == "UTC0" &&
+        envTz() == "UTC0" && !strcmp(net::zoneName(), "Etc/UTC"),
+        "an unconfirmed phone zone cannot change RAM, active TZ or display name");
+  net::startPortal();
+  netsim::submitPortal(LONDON_RULES);
+  runFor(20);
+  CHECK(net::portalState() == net::Portal::SaveFailed && !net::syncRunning() && !netsim::portalOpen &&
+        settings.tz == "UTC0" && !strcmp(settingsStoreStatus(), "error"),
+        "a failed portal zone save closes with an explicit failure rather than All set");
+  sim::preferenceFaults() = {};
+  net::startPortal();
+  netsim::submitPortal(LONDON_RULES);
+  runFor(20);
+  CHECK(net::portalState() == net::Portal::Saved && net::syncRunning() && settings.tz == LONDON_RULES,
+        "a later explicit setup attempt can verify the zone and start syncing");
+  net::cancelSync();
+}
+
 void clockProvenance() {
   printf("Clock quality: trusted sources, monotonic age, failed sync and explicit setters\n");
   freshBoard();
@@ -937,23 +977,46 @@ void clockProvenance() {
 // in RAM survives.
 void saveFlash(const char *path) {
   FILE *f = fopen(path, "w");
-  for (auto &kv : sim::flash)
-    fprintf(f, "%s\t%d\t%llu\t%s\n", kv.first.c_str(), kv.second.isString, (unsigned long long)kv.second.n,
-            kv.second.s.c_str());
+  for (auto &kv : sim::flash) {
+    const sim::FlashValue &value = kv.second;
+    std::string text = value.s;
+    if (value.isBlob) {
+      static const char *digits = "0123456789abcdef";
+      text.clear();
+      for (uint8_t byte : value.bytes) {
+        text += digits[byte >> 4];
+        text += digits[byte & 15];
+      }
+    }
+    fprintf(f, "%s\t%d\t%llu\t%s\n", kv.first.c_str(), value.isBlob ? 2 : value.isString ? 1 : 0,
+            (unsigned long long)value.n, text.c_str());
+  }
   fprintf(f, "radio/ssid\t1\t0\t%s\nradio/pass\t1\t0\t%s\n", netsim::flashSsid.c_str(), netsim::flashPassword.c_str());
   fclose(f);
 }
 void loadFlash(const char *path) {
   sim::flash.clear();
   FILE *f = fopen(path, "r");
-  char line[512];
+  char line[2048];  // bounded settings blob encoded as hex, plus its key/type
   while (f && fgets(line, sizeof line, f)) {
     line[strcspn(line, "\n")] = 0;
     char *k = strtok(line, "\t"), *isStr = strtok(nullptr, "\t"), *n = strtok(nullptr, "\t"), *v = strtok(nullptr, "\t");
+    if (!k || !isStr || !n) continue;
     std::string value = v ? v : "";
     if (!strcmp(k, "radio/ssid")) netsim::flashSsid = value;
     else if (!strcmp(k, "radio/pass")) netsim::flashPassword = value;
-    else sim::flash[k] = {*isStr == '1', value, strtoull(n, nullptr, 10)};
+    else {
+      sim::FlashValue stored(*isStr == '1', value, strtoull(n, nullptr, 10));
+      if (*isStr == '2') {
+        stored.isBlob = true;
+        stored.s.clear();
+        for (size_t i = 0; i + 1 < value.size(); i += 2) {
+          char byte[3] = {value[i], value[i + 1], 0};
+          stored.bytes.push_back((uint8_t)strtoul(byte, nullptr, 16));
+        }
+      }
+      sim::flash[k] = stored;
+    }
   }
   if (f) fclose(f);
 }
@@ -1034,6 +1097,7 @@ int main(int argc, char **argv) {
   rollover();
   parsing();
   portalMore();
+  settingsSaveFailures();
   clockProvenance();
   fflush(stdout);
   reboots(argv[0]);

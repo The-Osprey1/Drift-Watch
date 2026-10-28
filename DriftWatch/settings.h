@@ -11,8 +11,9 @@ constexpr uint8_t BRIGHTNESS_LEVEL_COUNT = sizeof(BRIGHTNESS_LEVELS);
 // raise-to-wake and which way the screen faces relative to the motion sensor; version 4
 // (v0.10.0) adds the screen turn, the checked touch map, night mode, the learned clock drift
 // and the last time the clock was known; version 5 (v0.12.0) turns the two-way Motion setting
-// into three levels; version 6 (v0.13.0) keeps the zone Auto last found.
-constexpr uint8_t SETTINGS_VERSION = 6;
+// into three levels; version 6 (v0.13.0) keeps the zone Auto last found; version 7
+// stores complete validated records while keeping legacy keys for a downgrade.
+constexpr uint8_t SETTINGS_VERSION = 7;
 
 // How much the interface moves. Off: instant changes, no entrances, hands and the radar step once
 // a second. Subtle (the default): slides, settles and one short entrance after choosing a face.
@@ -49,7 +50,15 @@ struct Settings {
 extern Settings settings;
 
 void loadSettings();
-void saveSettings();
+// A successful result means the complete record was written and read back, or
+// already equals the newest verified record. Failure leaves current RAM intact.
+bool saveSettings();
+// Stage remote changes: install the candidate in RAM only after verified storage.
+bool commitSettings(const Settings &candidate);
+// saved/pending/recovered/error/readonly; runtime clock/timer state is separate.
+const char *settingsStoreStatus();
+bool settingsStoreWritable();
+void settingsChanged();
 // Brings values read from an older version into range, keeping the user's choices.
 // Returns the version the settings are now at.
 uint8_t migrateSettings(Settings &s, uint8_t storedVersion);

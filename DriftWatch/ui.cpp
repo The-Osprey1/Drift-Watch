@@ -23,6 +23,7 @@ Mode mode = Mode::Boot;
 bool awake = true;
 uint32_t bootStart = 0, lastActivity = 0, lastPresent = 0, settingsChangedAt = 0;
 bool settingsDirty = false;
+uint32_t settingsRetryAt = 0;
 
 // Smooth power transitions: perceptual backlight curve + radial iris bloom/collapse.
 bool fading = false;
@@ -121,6 +122,22 @@ Face faceAt(int step) {
 void markSettingsChanged() {
   settingsDirty = true;
   settingsChangedAt = hal::ms();
+  settingsRetryAt = 0;
+  settingsChanged();
+}
+
+bool flushSettings() {
+  if (!settingsDirty) return true;
+  if (saveSettings()) {
+    settingsDirty = false;
+    settingsRetryAt = 0;
+  } else {
+    settingsRetryAt = hal::ms() + SAVE_RETRY_MS;
+    if (!settingsRetryAt) settingsRetryAt = 1;
+  }
+  dirty = true;
+  cacheValid = false;
+  return !settingsDirty;
 }
 
 void readBattery() {
@@ -277,6 +294,8 @@ void begin() {
   serialHoldUntil = 0;
   failsInARow = 0;
   loadSettings();
+  settingsDirty = false;
+  settingsRetryAt = 0;
   if (settings.face >= FACE_COUNT) settings.face = 0;
   settings.brightnessLevel %= BRIGHTNESS_LEVEL_COUNT;
   settledFace = currentFace();
@@ -393,10 +412,9 @@ void loop() {
   if (ble::on() || ble::state() != ble::State::Off) stepPhone();
   stepTimer();
   if (awake ? since(lastBatteryRead) > BATTERY_READ_MS : since(lastBatteryRead) >= BATTERY_READ_ASLEEP_MS) readBattery();
-  if (settingsDirty && since(settingsChangedAt) > SAVE_DELAY_MS) {
-    saveSettings();
-    settingsDirty = false;
-  }
+  if (settingsDirty && settingsStoreWritable() &&
+      (settingsRetryAt ? (int32_t)(hal::ms() - settingsRetryAt) >= 0 : since(settingsChangedAt) > SAVE_DELAY_MS))
+    flushSettings();
 
   if (!awake) {
     standbyStep();  // the panel is asleep; only touch, BOOT, motion, Wi-Fi and the clock need attention

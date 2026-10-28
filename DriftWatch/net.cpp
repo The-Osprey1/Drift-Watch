@@ -522,9 +522,14 @@ void poll() {
   if (wm) {
     wm->process();
     if (portalSaved) {
-      settings.tz = tzParam->getValue();
-      settings.tz.trim();
-      saveSettings();
+      Settings candidate = settings;
+      candidate.tz = tzParam->getValue();
+      candidate.tz.trim();
+      if (!commitSettings(candidate)) {
+        readSavedSsid();  // WiFiManager may have saved credentials independently.
+        closePortal(Portal::SaveFailed);
+        return;
+      }
       readSavedSsid();
       closePortal(Portal::Saved);
       startSync();
@@ -673,15 +678,17 @@ bool setClockFromUsb(time_t utc) {
 
 Source lastSource() { return source; }
 
-void setZone(const char *posix, const char *name) {
+bool setZone(const char *posix, const char *name) {
   if (posix) {
-    settings.tz = posix;
-    saveSettings();
+    Settings candidate = settings;
+    candidate.tz = posix;
+    if (!commitSettings(candidate)) return false;
     strlcpy(posixTz, posix, sizeof posixTz);
     setenv("TZ", posixTz, 1);
     tzset();
   }
   if (name) strlcpy(zone, name, sizeof zone);
+  return true;
 }
 
 void saveNetwork(const char *newSsid, const char *password) {

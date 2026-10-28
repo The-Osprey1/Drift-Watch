@@ -388,12 +388,10 @@ void sleepScreen() {
   // Remember roughly what time it is, as a starting point for Set time if the power is lost.
   if (net::timeIsValid() && hal::now() - settings.lastKnownTime >= (time_t)KNOWN_TIME_SAVE_S) {
     settings.lastKnownTime = hal::now();
-    settingsDirty = true;
+    markSettingsChanged();
   }
-  if (settingsDirty) {
-    saveSettings();
-    settingsDirty = false;
-  }
+  if (settingsDirty && settingsStoreWritable() &&
+      (!settingsRetryAt || (int32_t)(hal::ms() - settingsRetryAt) >= 0)) flushSettings();
   standby.screenOff(hal::ms());
   touchRest();
 }
@@ -529,7 +527,8 @@ uint32_t nextDeadline() {
   };
   if (timer.active) take(timer.targetMs);
   if (nextSyncAt) take(nextSyncAt);
-  if (settingsDirty) take(settingsChangedAt + SAVE_DELAY_MS + 1);
+  if (settingsDirty && settingsStoreWritable())
+    take(settingsRetryAt ? settingsRetryAt : settingsChangedAt + SAVE_DELAY_MS + 1);
   take(lastBatteryRead + BATTERY_READ_ASLEEP_MS);
   if (settings.night && net::timeIsValid()) {
     time_t t = hal::now();

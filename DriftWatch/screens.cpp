@@ -706,6 +706,18 @@ bool drawSetTime(TFT_eSprite &s, const View &v, int page) {
 // ---- Details and setup documents ----------------------------------------------------------
 void detailsDoc(const View &v, Doc &d) {
   d.add("Status", Role::Body, col::TEXT_2);
+  const char *store = v.settingsStore ? v.settingsStore : "saved";
+  if (!strcmp(store, "error")) {
+    d.add("Settings save unconfirmed", Role::Body, col::WARN, Icon::Alert);
+    d.add("Changes may not survive a restart", Role::Body, col::TEXT_2);
+  } else if (!strcmp(store, "readonly")) {
+    d.add("Settings are read only", Role::Body, col::WARN, Icon::Alert);
+    d.add("Changes last until restart. Use USB recovery", Role::Body, col::TEXT_2);
+  } else if (!strcmp(store, "recovered")) {
+    d.add("Earlier settings recovered", Role::Body, col::WARN, Icon::Alert);
+  } else if (!strcmp(store, "pending")) {
+    d.add("Settings waiting to save", Role::Body, col::TEXT_2);
+  }
   if (v.batteryPct >= 0) {
     d.add(d.fmt("Battery %d%%, %d.%02d V", v.batteryPct, v.batteryMv / 1000, v.batteryMv % 1000 / 10), Role::Body, col::TEXT);
     // Measured on this watch from how fast the level falls, never assumed.
@@ -809,7 +821,11 @@ void setupDoc(const View &v, Doc &d) {
       d.action(Button::Done, "Done", col::CYAN);
       break;
     case SetupPhase::Failed:
-      if (v.fail == net::Fail::ClockFailed) {
+      if (v.portal == net::Portal::SaveFailed) {
+        d.add("Zone not saved", Role::Title, col::WARN, Icon::Cross);
+        d.add("Settings save unconfirmed. Check Details", Role::Body, col::TEXT);
+        d.add("Wi-Fi credentials are separate", Role::Body, col::TEXT_2);
+      } else if (v.fail == net::Fail::ClockFailed) {
         d.add("No time", Role::Title, col::WARN, Icon::Cross);
         d.add("Wi-Fi joined. No time server answered.", Role::Body, col::TEXT);
       } else {
@@ -1249,6 +1265,7 @@ const char *buttonName(Button b) {
 }
 
 SetupPhase setupPhase(const View &v) {
+  if (v.portal == net::Portal::SaveFailed) return SetupPhase::Failed;
   if (v.portal == net::Portal::TimedOut) return SetupPhase::TimedOut;
   if (v.portal == net::Portal::Saved) {
     if (running(v)) return SetupPhase::Connecting;
@@ -1371,6 +1388,17 @@ void drawTimerNotice(TFT_eSprite &s, timerstore::Notice notice) {
                       notice == timerstore::Notice::Missed ? "Timer missed" : "Timer save error";
   gfx::text(s, label, CX, r.y + 14, f, col::WARN, MC_DATUM);
   gfx::text(s, "Open Quick Tools", CX, r.y + 33, f, col::TEXT, MC_DATUM);
+}
+
+void drawSettingsNotice(TFT_eSprite &s, const char *state) {
+  constexpr Rect r = {45, 158, 150, 46};
+  s.fillRect(r.x, r.y, r.w, r.h, col::BG);
+  s.drawRect(r.x, r.y, r.w, r.h, col::WARN);
+  const GFXfont *f = gfx::font(Role::Body, false);
+  const char *label = !strcmp(state, "readonly") ? "Settings read only" :
+                      !strcmp(state, "recovered") ? "Settings recovered" : "Settings not saved";
+  gfx::text(s, label, CX, r.y + 14, f, col::WARN, MC_DATUM);
+  gfx::text(s, "See Details", CX, r.y + 33, f, col::TEXT, MC_DATUM);
 }
 
 // ---- Startup ------------------------------------------------------------------

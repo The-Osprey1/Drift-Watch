@@ -118,6 +118,11 @@ void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart) {
   if (lowNotice.until && f == currentFace() && mode == Mode::Face) screens::drawLowBattery(dst, batteryPct, lowNotice.urgent);
   else if (timer.notice != timerstore::Notice::None && f == currentFace() && mode == Mode::Face)
     screens::drawTimerNotice(dst, timer.notice);
+  else if (f == currentFace() && mode == Mode::Face) {
+    const char *store = settingsStoreStatus();
+    if (!strcmp(store, "error") || !strcmp(store, "readonly") || !strcmp(store, "recovered"))
+      screens::drawSettingsNotice(dst, store);
+  }
 #if DRIFT_DIAG
   uint32_t used = micros() - t;
   diag.renderUs += used;
@@ -185,6 +190,7 @@ screens::View view(Mode m, int page) {
   v.timerTotalMs = timer.totalMs;
   v.timerNotice = timer.notice;
   v.timerStoreOk = timer.storeOk;
+  v.settingsStore = settingsStoreStatus();
   v.batteryPct = batteryPct;
   v.batteryMv = batteryMv;
   v.brightnessLevel = settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT;
@@ -295,6 +301,7 @@ uint32_t screenKey() {
   k = k * 31 + (uint32_t)(editTime.tm_hour * 60 + editTime.tm_min);
   k = k * 31 + settings.screenTurn * 8 + settings.night * 2 + touchChecked();
   k = k * 11 + (uint32_t)timer.notice * 2 + timer.storeOk;
+  for (const char *p = settingsStoreStatus(); *p; p++) k = k * 31 + (uint8_t)*p;
   k = k * 31 + (uint32_t)check.step * 4 + (uint32_t)check.result;
   k = k * 31 + (uint32_t)ble::state();
   k = k * 1031 + ble::secondsLeft();

@@ -130,7 +130,7 @@ class StatusQueue {
   static bool knownKey(const char *token, size_t length) {
     static const char *const keys[] = {
         "fw", "time", "tz", "wifi", "bat", "face", "faces", "bright", "motion", "format", "night",
-        "proto", "caps", "mv", "temp", "drift", "timeq", "source", "syncage", "timer", "remain"};
+        "proto", "caps", "mv", "temp", "drift", "timeq", "source", "syncage", "timer", "remain", "store"};
     for (const char *key : keys) if (keyIs(token, length, key)) return true;
     return false;
   }

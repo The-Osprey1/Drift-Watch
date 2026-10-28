@@ -67,6 +67,10 @@ const char *refuse(const char *why) {
   return why;
 }
 
+const char *save(const Settings &candidate) {
+  return commitSettings(candidate) ? "ok" : refuse("settings save unconfirmed");
+}
+
 const char *setTime(time_t utc, int ms) {
   if (utc < EARLIEST) return refuse("time is before 2023");
   net::setClockFromPhone(utc, ms);
@@ -114,6 +118,7 @@ const Session &session() { return s; }
 
 const char *apply(const char *line) {
   s.lines++;
+  s.error = nullptr;  // the next reply replaces an earlier refusal, including a recovered save
   if (startsWith(line, "T=")) {
     time_t whole;
     int ms;
@@ -134,25 +139,25 @@ const char *apply(const char *line) {
   if (startsWith(line, "O=")) {
     int64_t offset;
     if (!numericinput::integer(line + 2, 10, -14 * 3600L, 14 * 3600L, offset)) return refuse("O= is out of range");
-    s.offset = (long)offset;
-    s.haveOffset = true;
     if (!s.gotZone) {
       // Only an offset: a fixed zone. A Z= line, sent by the Drift sync page, keeps summer time rules.
       char posix[48];  // room for any long, so the compiler can see it never cuts the zone short
-      posixFromOffset(s.offset, posix, sizeof posix);
-      net::setZone(posix, nullptr);
+      posixFromOffset((long)offset, posix, sizeof posix);
+      if (!net::setZone(posix, nullptr)) return refuse("settings save unconfirmed");
     }
+    s.offset = (long)offset;
+    s.haveOffset = true;
     return "ok";
   }
   if (startsWith(line, "Z=")) {
     const char *tz = line + 2;
     if (!*tz || strlen(tz) > 63) return refuse("Z= is empty or too long");
-    net::setZone(tz, nullptr);
+    if (!net::setZone(tz, nullptr)) return refuse("settings save unconfirmed");
     s.gotZone = true;
     return "ok";
   }
   if (startsWith(line, "N=")) {
-    net::setZone(nullptr, line + 2);
+    if (!net::setZone(nullptr, line + 2)) return refuse("settings save unconfirmed");
     return "ok";
   }
   if (startsWith(line, "S=")) {
@@ -178,48 +183,49 @@ const char *apply(const char *line) {
   if (startsWith(line, "H=")) {
     int64_t mask;
     if (!numericinput::integer(line + 2, 0, 1, 0xFFFF, mask) || (mask & ALL_FACES_MASK) == 0) return refuse("no faces selected");
-    settings.activeFaces = (uint16_t)(mask & ALL_FACES_MASK);
-    if (!(settings.activeFaces & (1u << (settings.face % FACE_COUNT)))) {
+    Settings candidate = settings;
+    candidate.activeFaces = (uint16_t)(mask & ALL_FACES_MASK);
+    if (!(candidate.activeFaces & (1u << (candidate.face % FACE_COUNT)))) {
       for (int i = 0; i < FACE_COUNT; i++) {
-        if (settings.activeFaces & (1u << i)) {
-          settings.face = (uint8_t)i;
+        if (candidate.activeFaces & (1u << i)) {
+          candidate.face = (uint8_t)i;
           break;
         }
       }
     }
-    saveSettings();
-    return "ok";
+    return save(candidate);
   }
   if (startsWith(line, "B=")) {
     int64_t b;
     if (!numericinput::integer(line + 2, 10, 0, 3, b)) return refuse("B= out of range");
-    settings.brightnessLevel = (uint8_t)b;
-    hal::backlight(backlightLevel());
-    saveSettings();
-    return "ok";
+    Settings candidate = settings;
+    candidate.brightnessLevel = (uint8_t)b;
+    const char *reply = save(candidate);
+    if (!strcmp(reply, "ok")) hal::backlight(backlightLevel());
+    return reply;
   }
   if (startsWith(line, "M=")) {
     int64_t m;
     if (!numericinput::integer(line + 2, 10, 0, 2, m)) return refuse("M= out of range");
-    settings.motion = (uint8_t)m;
-    saveSettings();
-    return "ok";
+    Settings candidate = settings;
+    candidate.motion = (uint8_t)m;
+    return save(candidate);
   }
   if (startsWith(line, "F=")) {
     int64_t f;
     if (!numericinput::integer(line + 2, 10, 0, FACE_COUNT - 1, f)) return refuse("F= out of range");
-    settings.face = (uint8_t)f;
-    settings.activeFaces |= (1u << settings.face);
-    saveSettings();
-    return "ok";
+    Settings candidate = settings;
+    candidate.face = (uint8_t)f;
+    candidate.activeFaces |= (1u << candidate.face);
+    return save(candidate);
   }
   if (startsWith(line, "FORMAT=") || startsWith(line, "FO=")) {
     const char *p = startsWith(line, "FO=") ? line + 3 : line + 7;
     int64_t f;
     if (numericinput::integer(p, 10, 12, 24, f) && (f == 12 || f == 24)) {
-      settings.use12h = (f == 12);
-      saveSettings();
-      return "ok";
+      Settings candidate = settings;
+      candidate.use12h = (f == 12);
+      return save(candidate);
     }
     return refuse("format must be 12 or 24");
   }
@@ -227,9 +233,9 @@ const char *apply(const char *line) {
     const char *p = line[1] == 'M' ? line + 3 : line + 6;
     int64_t nm;
     if (numericinput::integer(p, 10, 0, NIGHT_CHOICES - 1, nm)) {
-      settings.night = (uint8_t)nm;
-      saveSettings();
-      return "ok";
+      Settings candidate = settings;
+      candidate.night = (uint8_t)nm;
+      return save(candidate);
     }
     return refuse("night out of range");
   }

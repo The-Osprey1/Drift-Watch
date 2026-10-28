@@ -15,6 +15,7 @@
 namespace {
 int checks = 0, failed = 0;
 int saves = 0, clockWrites = 0, zoneWrites = 0, backlights = 0, networkWrites = 0, syncs = 0;
+bool saveFailure = false;
 time_t clockSeconds = 1800000000;
 int clockFraction = 0;
 std::string fakeZoneName, fakeNetworkName;
@@ -187,10 +188,58 @@ void phoneChecks() {
   refusePhone("L=2026-01-01 12:00:00 trailing");
   refusePhone("O=999999999999999999999999999999999999");
 }
+
+void persistenceRefusals() {
+  // Valid commands must also reject a refused durable commit. The protocol error
+  // and line count may change; RAM settings, output hardware and session state may not.
+  settings = Settings{};
+  settings.tz = "UTC0";
+  phone::begin();
+  saveFailure = true;
+  for (const char *line : {"H=2", "B=3", "M=2", "F=7", "FO=12", "FORMAT=12", "NM=2", "NIGHT=2",
+                           "Z=JST-9", "O=3600"}) {
+    const std::string before = snapshot();
+    check(!strcmp(phone::apply(line), "settings save unconfirmed"), std::string("failed save refuses ") + line);
+    check(snapshot() == before, std::string("failed save leaves settings, backlight and session unchanged for ") + line);
+  }
+  check(!phone::session().gotZone && !phone::session().haveOffset,
+        "a refused first zone/offset cannot establish session state");
+
+  // A later failed offset must preserve a previously accepted offset as well.
+  saveFailure = false;
+  check(!strcmp(phone::apply("O=3600"), "ok") && phone::session().haveOffset && phone::session().offset == 3600,
+        "offset can be committed once storage recovers");
+  saveFailure = true;
+  const std::string offsetBefore = snapshot();
+  check(!strcmp(phone::apply("O=7200"), "settings save unconfirmed") && snapshot() == offsetBefore,
+        "a failed replacement offset preserves the accepted zone and prior offset");
+
+  // The same valid families work again after failure; no session quarantine or
+  // optimistic side effect is needed to recover from a known save refusal.
+  saveFailure = false;
+  for (const char *line : {"H=2", "B=3", "M=2", "F=7", "FO=12", "NM=2", "Z=JST-9"}) {
+    const int before = saves;
+    check(!strcmp(phone::apply(line), "ok") && saves == before + 1 && phone::session().error == nullptr,
+          std::string("recovered store confirms a committed ") + line);
+  }
+  check(settings.activeFaces == ((1u << 1) | (1u << 7)) && settings.face == 7 &&
+        settings.brightnessLevel == 3 && settings.motion == 2 && settings.use12h && settings.night == 2 &&
+        settings.tz == "JST-9" && phone::session().gotZone,
+        "verified recovered commands install their complete requested settings");
+}
 }  // namespace
 
 Settings settings;
-void saveSettings() { saves++; }
+bool saveSettings() {
+  if (saveFailure) return false;
+  saves++;
+  return true;
+}
+bool commitSettings(const Settings &candidate) {
+  if (!saveSettings()) return false;
+  settings = candidate;
+  return true;
+}
 namespace hal {
 time_t now() { return clockSeconds; }
 void backlight(uint8_t) { backlights++; }
@@ -202,10 +251,15 @@ void setClockFromPhone(time_t seconds, int ms) {
   clockSeconds = seconds;
   clockFraction = ms;
 }
-void setZone(const char *posix, const char *name) {
+bool setZone(const char *posix, const char *name) {
+  if (posix) {
+    Settings candidate = settings;
+    candidate.tz = posix;
+    if (!commitSettings(candidate)) return false;
+  }
   zoneWrites++;
-  if (posix) settings.tz = posix;
   if (name) fakeZoneName = name;
+  return true;
 }
 void saveNetwork(const char *ssid, const char *) { networkWrites++; fakeNetworkName = ssid; }
 void startSync() { syncs++; }
@@ -215,6 +269,7 @@ const char *ssid() { return fakeNetworkName.c_str(); }
 int main() {
   serialChecks();
   phoneChecks();
+  persistenceRefusals();
   printf("Commands: %d of %d checks passed\n", checks - failed, checks);
   return failed ? 1 : 0;
 }

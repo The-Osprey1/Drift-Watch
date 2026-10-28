@@ -128,6 +128,7 @@ void markSettingsChanged() {
 
 bool flushSettings() {
   if (!settingsDirty) return true;
+  const char *before = settingsStoreStatus();
   if (saveSettings()) {
     settingsDirty = false;
     settingsRetryAt = 0;
@@ -135,8 +136,16 @@ bool flushSettings() {
     settingsRetryAt = hal::ms() + SAVE_RETRY_MS;
     if (!settingsRetryAt) settingsRetryAt = 1;
   }
-  dirty = true;
-  cacheValid = false;
+  const char *after = settingsStoreStatus();
+  auto notice = [](const char *state) {
+    return !strcmp(state, "error") || !strcmp(state, "readonly") || !strcmp(state, "recovered");
+  };
+  // Pending/saved have no face banner. Do not add a full frame or invalidate
+  // the animated dial for an ordinary successful background save.
+  if ((notice(before) || notice(after)) && strcmp(before, after)) {
+    dirty = true;
+    cacheValid = false;
+  }
   return !settingsDirty;
 }
 

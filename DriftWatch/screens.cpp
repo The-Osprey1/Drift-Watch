@@ -833,8 +833,9 @@ void setupDoc(const View &v, Doc &d) {
         d.add(joinWords(v.joinWhy), Role::Body, col::TEXT);
         d.add(joinHint(v.joinWhy), Role::Body, col::TEXT_2);
       }
-      d.action(Button::EditWifi, "Edit Wi-Fi", col::MAGENTA);
-      d.action(Button::Retry, "Retry", col::CYAN);
+      d.action(Button::EditWifi, v.portal == net::Portal::SaveFailed ? "Retry setup" : "Edit Wi-Fi", col::MAGENTA);
+      if (v.portal == net::Portal::SaveFailed) d.action(Button::Back, "Back", col::TEXT_2);
+      else d.action(Button::Retry, "Retry", col::CYAN);
       break;
     case SetupPhase::TimedOut:
       d.add("Timed out", Role::Title, col::WARN, Icon::Alert);

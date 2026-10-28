@@ -110,11 +110,11 @@ function ble(p, options = {}) {
 }
 
 function serial(p, options = {}) {
-  const state = { bright: 2, motion: 1, format: 24, night: 0, face: 0, faces: 4095, battery: 86, timer: 'idle', remaining: 0 };
+  const state = { bright: 2, motion: 1, format: 24, night: 0, face: 0, faces: 4095, battery: 86, timer: 'idle', remaining: 0, time: 1800000000 };
   let input, opened = false, closed = 0;
   const writes = [];
   const emit = text => input.enqueue(new TextEncoder().encode(text));
-  const info = () => 'DRIFT:VER=' + (options.version || '0.15.3') + ',TIME=1800000000,BAT=' + state.battery + ',FACES=0x' + state.faces.toString(16) + ',FACE=' + state.face + ',BRIGHT=' + state.bright + ',MOTION=' + state.motion + ',FORMAT=' + state.format + ',NIGHT=' + state.night +
+  const info = () => 'DRIFT:VER=' + (options.version || '0.15.3') + ',TIME=' + state.time + ',BAT=' + state.battery + ',FACES=0x' + state.faces.toString(16) + ',FACE=' + state.face + ',BRIGHT=' + state.bright + ',MOTION=' + state.motion + ',FORMAT=' + state.format + ',NIGHT=' + state.night +
     (options.fields ? ',' + (typeof options.fields === 'function' ? options.fields(state) : options.fields) : '') + '\r\n';
   const port = { readable: new ReadableStream({ start(controller) { input = controller; } }),
     writable: new WritableStream({ write(bytes) {
@@ -126,10 +126,14 @@ function serial(p, options = {}) {
         const [key, raw] = line.split(':'); const value = Number(raw);
         const name = { BRIGHT: 'bright', MOTION: 'motion', FORMAT: 'format', NIGHT: 'night', FACE: 'face', FACES: 'faces' }[key];
         if (name) state[name] = value;
+        if (key === 'TIME') state.time = value;
         if (key === 'TIMER' && !options.ignoreTimer && !options.refuseTimer) { state.timer = value ? 'running' : 'idle'; state.remaining = value; }
         reply = key === 'TIMER' ? `Timer ${value ? 'started for ' + value + ' s' : 'reset'}\r\n` :
           key === 'BRIGHT' ? `Brightness set to ${value}\r\n` : key === 'FORMAT' ? `Format set to ${value}h\r\n` :
           key === 'FACES' ? `Faces mask set to 0x${value.toString(16)}\r\n` :
+          key === 'TIME' ? `Time set to ${value}\r\n` :
+          key === 'MOTION' ? `Motion set to ${value}\r\n` : key === 'FACE' ? `Active face set to ${value}\r\n` :
+          key === 'NIGHT' ? `Night mode set to ${value}\r\n` :
           key === 'WIFI' ? 'Configuring Wi-Fi for SSID: Home\r\n' : '';
       }
       if (line.startsWith('TIMER:') && options.refuseTimer) reply = 'ERROR: timer start not saved\r\n';
@@ -532,5 +536,103 @@ test('a wire-reported timer storage error is visible rather than an unknown stat
   assert.equal(p.ids.get('startTimerBtn').disabled, true);
   h.emit('timer=idle'); h.emit('remain=0'); p.context.updateTimerReadout();
   assert.equal(p.text('studioTimerReadout'), 'No timer');
+  await p.context.disconnectTransport();
+});
+
+test('durable settings require a fresh saved record on Serial and field-framed BLE', async () => {
+  for (const transport of ['serial', 'ble']) {
+    const p = page(), options = { version: '0.16.0-dev', fields: transport === 'serial' ? 'PROTO=1,CAPS=0x3f,STORE=saved' : 'proto=1;caps=0x3d;store=saved', fieldNotifications: true };
+    const h = transport === 'serial' ? serial(p, options) : ble(p, options);
+    assert.equal(await (transport === 'serial' ? p.context.connectSerial() : p.context.connect()), true);
+    assert.equal(p.run('supportsFeature("durable_settings")'), true);
+    await p.context.applySetting('bright', 3);
+    assert.match(p.text('toolsMsg'), /confirmed/);
+    assert.equal(await p.context.saveActiveFaces(), true);
+    await p.context.applyProfile({ name: 'Durable', mask: 4095, face: 0, motion: 'subtle', bright: 2, use12h: false });
+    assert.match(p.text('facesMsg'), /confirmed/);
+    p.context.updateTelemetry();
+    assert.match(p.text('settingsStoreReadout'), /Settings saved.*last read/);
+    assert.equal(h.state.bright, 2);
+    await p.context.disconnectTransport();
+  }
+});
+
+test('matching RAM values cannot confirm pending, recovered, failed or read-only settings saves', async () => {
+  for (const transport of ['serial', 'ble']) {
+    for (const operation of ['setting', 'faces', 'profile']) {
+      for (const store of ['pending', 'recovered', 'error', 'readonly', 'invalid']) {
+        const p = page(), options = { version: '0.16.0-dev', fields: transport === 'serial' ? 'PROTO=1,CAPS=0x3f,STORE=saved' : 'proto=1;caps=0x3d;store=saved' };
+        transport === 'serial' ? serial(p, options) : ble(p, options);
+        await (transport === 'serial' ? p.context.connectSerial() : p.context.connect());
+        options.fields = transport === 'serial' ? 'PROTO=1,CAPS=0x3f,STORE=' + store : 'proto=1;caps=0x3d;store=' + store;
+        if (operation === 'setting') {
+          await assert.rejects(p.context.applySetting('bright', 2), /did not confirm saved settings/);
+          assert.doesNotMatch(p.text('toolsMsg'), /Setting confirmed/);
+        } else if (operation === 'faces') {
+          assert.equal(await p.context.saveActiveFaces(), false);
+          assert.match(p.text('facesMsg'), /did not confirm saved settings/);
+        } else {
+          await assert.rejects(p.context.applyProfile({ name: 'Unsaved', mask: 4095, face: 0, motion: 'subtle', bright: 2, use12h: false }), /did not confirm saved settings/);
+          assert.match(p.text('facesMsg'), /not fully applied/);
+        }
+        assert.equal(p.run('transportReady'), true);
+        await p.context.disconnectTransport();
+      }
+    }
+  }
+});
+
+test('a cached saved STORE field cannot certify a new query that omits it', async () => {
+  for (const transport of ['serial', 'ble']) {
+    const p = page(), options = { version: '0.16.0-dev', fields: transport === 'serial' ? 'PROTO=1,CAPS=0x3f,STORE=saved' : 'proto=1;caps=0x3d;store=saved' };
+    transport === 'serial' ? serial(p, options) : ble(p, options);
+    await (transport === 'serial' ? p.context.connectSerial() : p.context.connect());
+    options.queryStatus = transport === 'serial' ? 'DRIFT:VER=0.16.0-dev,PROTO=1,CAPS=0x3f,BRIGHT=2\r\n' : 'reply=ok;proto=1;caps=0x3d;bright=2';
+    await assert.rejects(p.context.applySetting('bright', 2), /did not confirm saved settings/);
+    assert.equal(p.run('watchState.store'), 'saved');
+    assert.equal(p.run('transportReady'), true);
+    await p.context.disconnectTransport();
+  }
+});
+
+test('read-only settings preserve Refresh, USB UTC and timer access without sending BLE zone writes', async () => {
+  for (const transport of ['serial', 'ble']) {
+    const p = page(), options = { version: '0.16.0-dev', fields: transport === 'serial' ? 'PROTO=1,CAPS=0x3f,STORE=readonly' : 'proto=1;caps=0x3d;store=readonly' };
+    const h = transport === 'serial' ? serial(p, options) : ble(p, options);
+    await (transport === 'serial' ? p.context.connectSerial() : p.context.connect());
+    assert.equal(p.ids.get('fmt12Btn').disabled, true);
+    assert.equal(p.ids.get('saveFaces').disabled, true);
+    assert.equal(p.ids.get('wifi').disabled, true);
+    assert.equal(p.ids.get('refreshStatus').disabled, false);
+    assert.equal(p.ids.get('sync').disabled, transport !== 'serial');
+    assert.equal(p.ids.get('startTimerBtn').disabled, transport !== 'serial');
+    await assert.rejects(p.context.applySetting('bright', 3), /read-only/);
+    assert.deepEqual(h.writes, [transport === 'serial' ? 'INFO?' : '?']);
+    if (transport === 'serial') {
+      assert.equal(await p.context.syncTime(), true);
+      assert.match(p.text('syncMsg'), /existing watch time zone is unchanged/);
+    } else {
+      assert.equal(await p.context.syncTime(), false);
+      assert.match(p.text('syncMsg'), /read-only/);
+      assert.deepEqual(h.writes, ['?']);
+    }
+    p.context.updateTelemetry();
+    assert.match(p.text('settingsStoreReadout'), /read-only.*recovery required/);
+    await p.context.disconnectTransport();
+  }
+});
+
+test('settings storage status has its own freshness and invalid values clear older claims', async () => {
+  const p = page(), h = ble(p, { fields: 'proto=1;caps=0x3d;store=recovered' });
+  await p.context.connect(); p.context.updateTelemetry();
+  assert.match(p.text('settingsStoreReadout'), /recovered from backup.*last read/);
+  p.run('watchSeen.store = Date.now() - STALE_MS - 1');
+  h.emit('bat=87'); p.context.updateTelemetry();
+  assert.match(p.text('settingsStoreReadout'), /stale/);
+  h.emit('store=error'); p.context.updateTelemetry();
+  assert.match(p.text('settingsStoreReadout'), /save unconfirmed/);
+  h.emit('store=bad'); p.context.updateTelemetry();
+  assert.equal(p.run('watchState.store'), null);
+  assert.match(p.text('settingsStoreReadout'), /not reported/);
   await p.context.disconnectTransport();
 });

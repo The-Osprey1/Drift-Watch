@@ -8,14 +8,16 @@
 
 namespace statusfields {
 constexpr uint32_t SETTINGS = 1, TIMER_CONTROL = 2, TELEMETRY = 4, TIME_QUALITY = 8, TIMER_RECOVERY = 16;
-constexpr uint32_t SERIAL_CAPS = SETTINGS | TIMER_CONTROL | TELEMETRY | TIME_QUALITY | TIMER_RECOVERY;
-constexpr uint32_t BLE_CAPS = SETTINGS | TELEMETRY | TIME_QUALITY | TIMER_RECOVERY;
+constexpr uint32_t DURABLE_SETTINGS = 32;
+constexpr uint32_t SERIAL_CAPS = SETTINGS | TIMER_CONTROL | TELEMETRY | TIME_QUALITY | TIMER_RECOVERY | DURABLE_SETTINGS;
+constexpr uint32_t BLE_CAPS = SETTINGS | TELEMETRY | TIME_QUALITY | TIMER_RECOVERY | DURABLE_SETTINGS;
 
 struct Snapshot {
   int batteryMv = -1;
   float boardTempC = -99;
   int32_t driftPpb = 0;
   const char *quality = "unset", *source = "none", *timer = "idle";
+  const char *store = "saved";
   int64_t syncAge = -1;
   uint32_t remainingSeconds = 0;
 };
@@ -27,11 +29,11 @@ inline bool append(char *out, size_t n, const Snapshot &v, bool serial) {
   if (isfinite(v.boardTempC) && v.boardTempC >= -50 && v.boardTempC <= 150)
     snprintf(temperature, sizeof temperature, "%.1f", (double)v.boardTempC);
   const char *format = serial
-      ? ",PROTO=1,CAPS=0x%02lX,MV=%d,TEMP=%s,DRIFT=%ld,TIMEQ=%s,SOURCE=%s,SYNCAGE=%lld,TIMER=%s,REMAIN=%lu"
-      : ";proto=1;caps=0x%02lX;mv=%d;temp=%s;drift=%ld;timeq=%s;source=%s;syncage=%lld;timer=%s;remain=%lu";
+      ? ",PROTO=1,CAPS=0x%02lX,MV=%d,TEMP=%s,DRIFT=%ld,TIMEQ=%s,SOURCE=%s,SYNCAGE=%lld,TIMER=%s,REMAIN=%lu,STORE=%s"
+      : ";proto=1;caps=0x%02lX;mv=%d;temp=%s;drift=%ld;timeq=%s;source=%s;syncage=%lld;timer=%s;remain=%lu;store=%s";
   int length = snprintf(out + used, n - used, format, (unsigned long)(serial ? SERIAL_CAPS : BLE_CAPS),
       v.batteryMv, temperature, (long)v.driftPpb, v.quality, v.source,
-      (long long)v.syncAge, v.timer, (unsigned long)v.remainingSeconds);
+      (long long)v.syncAge, v.timer, (unsigned long)v.remainingSeconds, v.store);
   if (length < 0 || (size_t)length >= n - used) { out[used] = 0; return false; }
   return true;
 }

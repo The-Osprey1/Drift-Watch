@@ -22,6 +22,7 @@ constexpr uint32_t RETRY_SYNC_MS = 30UL * 60 * 1000;   // after a failed sync; d
 constexpr uint32_t BATTERY_READ_MS = 10000;
 constexpr uint32_t BATTERY_READ_ASLEEP_MS = 60000;     // screen off: the estimate needs no more, and the sleeps get longer
 constexpr uint32_t SAVE_DELAY_MS = 2000;               // batch settings writes to spare the flash
+constexpr uint32_t SAVE_RETRY_MS = 30000;              // failed saves never spin or continuously wake the watch
 constexpr uint32_t ANIM_FRAME_MS = 16;                 // frame cap while animating; the push is the real limit
 constexpr uint32_t SPINNER_FRAME_MS = 40;
 constexpr uint32_t LOW_NOTICE_MS = 5000;               // the low battery notice stays this long on the face
@@ -146,6 +147,8 @@ extern Mode mode;
 extern bool awake;
 extern uint32_t bootStart, lastActivity, lastPresent, settingsChangedAt;
 extern bool settingsDirty;
+extern uint32_t settingsRetryAt;
+bool flushSettings();
 
 extern bool fading, irisWaking, sleeping;
 extern uint32_t fadeStart, irisStart, sleepStart;

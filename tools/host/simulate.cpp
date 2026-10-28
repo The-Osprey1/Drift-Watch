@@ -22,6 +22,7 @@
 #include <math.h>
 #include "screens.h"
 #include "settings.h"
+#include "settings_record.h"
 #include "serial_cmd.h"
 #include "sim.h"
 #include "theme.h"
@@ -160,6 +161,7 @@ screens::View baseView() {
   v.batteryHours = -1;
   v.syncSource = net::Source::Wifi;
   v.syncAgo = "3 h ago";
+  v.settingsStore = "saved";
   return v;
 }
 
@@ -263,6 +265,16 @@ void screenVariants() {
     screens::View d = v;
     d.screen = screens::Screen::Details;
     bad += renderAll(s, d, "details");
+    for (const char *state : {"pending", "error", "recovered", "readonly"}) {
+      screens::View stored = d;
+      stored.settingsStore = state;
+      bad += renderAll(s, stored, std::string("details_store_") + state);
+      const std::string words = wordsOf(s, stored);
+      const char *expected = !strcmp(state, "pending") ? "Settings waiting to save" :
+                             !strcmp(state, "error") ? "Settings save unconfirmed" :
+                             !strcmp(state, "recovered") ? "Earlier settings recovered" : "Settings are read only";
+      CHECK(says(words, expected), "%s settings status is visible in %s text", state, large ? "large" : "normal");
+    }
     d.result = net::Result::Failed;
     d.fail = net::Fail::JoinFailed;
     d.stage = net::Sync::Connecting;
@@ -283,6 +295,7 @@ void screenVariants() {
         {"done", net::Portal::Saved, net::Sync::Idle, net::Result::Ok, net::Fail::None, 0},
         {"joinfail", net::Portal::Saved, net::Sync::Idle, net::Result::Failed, net::Fail::JoinFailed, 0},
         {"clockfail", net::Portal::Saved, net::Sync::Idle, net::Result::Failed, net::Fail::ClockFailed, 0},
+        {"savefail", net::Portal::SaveFailed, net::Sync::Idle, net::Result::None, net::Fail::None, 0},
         {"timeout", net::Portal::TimedOut, net::Sync::Idle, net::Result::None, net::Fail::None, 0},
     };
     for (const S &p : setups) {
@@ -1449,8 +1462,12 @@ void migration() {
   CHECK(settings.raiseToWake && settings.screenFacing == 0, "raise to wake starts on, screen direction not yet known");
   saveSettings();
   p.begin("watch", true);
-  CHECK(p.getUChar("ver", 0) == SETTINGS_VERSION && p.isKey("bigtext"), "the next save records version %d", SETTINGS_VERSION);
+  CHECK(p.getUChar("ver", 0) == 0 && !p.isKey("bigtext") && p.getBool("lessmo", false),
+        "schema %d uses a new record and leaves the original downgrade snapshot intact", SETTINGS_VERSION);
   p.end();
+  CHECK(sim::flash.count("watchcfg/a") && !strcmp(settingsStoreStatus(), "saved"), "legacy import has a verified complete record");
+  sim::flash.erase("watchcfg/a");
+  sim::flash.erase("watchcfg/b");
   p.begin("watch", false);
   p.putUChar("blevel", 9);  // damaged or from a future build
   p.end();
@@ -1480,19 +1497,23 @@ void migration() {
   settings = Settings{};
   loadSettings();
   p.begin("watch", true);
-  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == SETTINGS_VERSION && !p.getBool("lessmo", true),
-        "Expressive is kept, and older firmware flashed back would read full motion");
+  CHECK(settings.motion == MOTION_EXPRESSIVE && p.getUChar("ver", 0) == 4 && p.getBool("lessmo", false),
+        "Expressive is kept in the new record; downgrade retains its original Reduced snapshot");
   p.end();
   settings.motion = MOTION_OFF;
   saveSettings();
   p.begin("watch", true);
-  CHECK(p.getBool("lessmo", false), "Off is also saved as reduced motion for older firmware");
+  CHECK(p.getBool("lessmo", false), "new saves do not mirror into the retained legacy snapshot");
   p.end();
+  sim::flash.erase("watchcfg/a");
+  sim::flash.erase("watchcfg/b");
   p.begin("watch", false);
   p.putUChar("motion", 7);  // damaged
   p.end();
   loadSettings();
   CHECK(settings.motion == MOTION_SUBTLE, "an out-of-range motion level becomes Subtle");
+  sim::flash.erase("watchcfg/a");
+  sim::flash.erase("watchcfg/b");
   p.begin("watch", false);
   p.putUShort("faces", 0);  // damaged: no face selected
   p.end();
@@ -1943,6 +1964,10 @@ void logicChecks() {
   loadSettings();
   CHECK(settings.driftPpb == -52000 && settings.lastKnownTime == 1767225600LL && touchChecked() && activeTouchMap() == 3,
         "drift, the last known time and the touch check survive a restart");
+  // Re-enter the historic loader deliberately: modern records take priority
+  // over old keys during an ordinary downgrade/re-upgrade cycle.
+  sim::flash.erase("watchcfg/a");
+  sim::flash.erase("watchcfg/b");
   {
     Preferences p;
     p.begin("watch", false);
@@ -2489,12 +2514,13 @@ void serialScenarios() {
   Serial.out.clear();
   Serial.in = "INFO?\n";
   runFor(50);
-  CHECK(Serial.out.find(",PROTO=1,CAPS=0x1F,MV=") != std::string::npos &&
+  CHECK(Serial.out.find(",PROTO=1,CAPS=0x3F,MV=") != std::string::npos &&
         Serial.out.find(",TEMP=") != std::string::npos && Serial.out.find(",DRIFT=") != std::string::npos,
         "INFO publishes protocol and measured telemetry");
   CHECK(Serial.out.find(",TIMEQ=synced,SOURCE=usb,SYNCAGE=") != std::string::npos &&
-        Serial.out.find(",TIMER=") != std::string::npos && Serial.out.find(",REMAIN=") != std::string::npos,
-        "INFO publishes truthful time provenance and timer state");
+        Serial.out.find(",TIMER=") != std::string::npos && Serial.out.find(",REMAIN=") != std::string::npos &&
+        Serial.out.find(",STORE=") != std::string::npos,
+        "INFO publishes truthful time provenance, timer state and settings storage");
   sim::wifiSaved = false;
   Serial.in = "WIFI:Home,secret\r\n";
   runFor(50);
@@ -2593,6 +2619,68 @@ void startOn(Face f) {
   saveSettings();
   ui::begin();
   settle(2500);
+}
+
+void settingsPersistenceScenarios() {
+  printf("Settings: local edits remain usable after an unconfirmed save, with bounded retries\n");
+  sim::preferenceFaults() = {};
+  sim::preferenceWriteFailureKey().clear();
+  sim::preferenceBeginFailureNamespace().clear();
+  startOn(FACE_DIGITAL);
+  settings.lastKnownTime = hal::now();  // this trial has no new editor-time checkpoint
+  CHECK(saveSettings(), "the trial starts from a verified settings snapshot");
+  openSettings();
+  goTo(screens::Button::Brightness);
+  const uint8_t before = settings.brightnessLevel;
+  sim::preferenceFaults() = {};
+  sim::preferenceFaults().blobWriteLimit = 0;
+  CHECK(tapButton(screens::Button::Brightness) && settings.brightnessLevel != before,
+        "a local brightness edit takes effect in RAM");
+  const uint8_t edited = settings.brightnessLevel;
+  CHECK(!strcmp(settingsStoreStatus(), "pending"), "the changed setting is pending before its batched save");
+  runFor(2500);
+  CHECK(!strcmp(settingsStoreStatus(), "error") && settings.brightnessLevel == edited &&
+        sim::preferenceFaults().writeCalls == 1,
+        "failed save leaves the local edit usable and reports unconfirmed storage");
+  Serial.out.clear(); Serial.in = "INFO?\n";
+  runFor(50);
+  CHECK(Serial.out.find(",STORE=error") != std::string::npos, "status exposes the local save failure");
+  runFor(10000);
+  CHECK(sim::preferenceFaults().writeCalls == 1, "a failed save is not retried on every frame or sleep transition");
+  sim::preferenceFaults().blobWriteLimit = (std::numeric_limits<size_t>::max)();
+  runFor(22000);
+  CHECK(sim::preferenceFaults().writeCalls == 2 && !strcmp(settingsStoreStatus(), "saved"),
+        "the pending edit retries after the bounded delay and confirms storage");
+  loadSettings();
+  CHECK(settings.brightnessLevel == edited, "the retried edit survives a settings reload");
+
+  printf("Settings: every Serial setting refuses an unconfirmed save without changing RAM\n");
+  sim::preferenceFaults() = {};
+  startOn(FACE_DIGITAL);
+  settingsrecord::Record original;
+  CHECK(settingsrecord::encode(settings, 1, original), "the command trial has a valid baseline");
+  sim::preferenceFaults() = {};
+  sim::preferenceFaults().blobWriteLimit = 0;
+  for (const char *command : {"BRIGHT:1", "MOTION:2", "FORMAT:12", "NIGHT:1", "FACE:2", "FACES:0x0041"}) {
+    Serial.out.clear(); Serial.in = std::string(command) + "\n";
+    runFor(50);
+    settingsrecord::Record after;
+    CHECK(settingsrecord::encode(settings, 1, after) && settingsrecord::equal(original, after),
+          "%s cannot install a setting whose save was refused", command);
+    CHECK(Serial.out == "ERROR: settings save unconfirmed\n", "%s returns only a save refusal (%s)",
+          command, Serial.out.c_str());
+  }
+  Serial.out.clear(); Serial.in = "INFO?\n";
+  runFor(50);
+  CHECK(Serial.out.find(",PROTO=1,CAPS=0x3F,") != std::string::npos &&
+        Serial.out.find(",STORE=error") != std::string::npos,
+        "Serial advertises checked settings storage and the unconfirmed save state");
+  sim::preferenceFaults() = {};
+  Serial.out.clear(); Serial.in = "BRIGHT:1\n";
+  runFor(50);
+  CHECK(Serial.out == "Brightness set to 1\n" && settings.brightnessLevel == 1 &&
+        !strcmp(settingsStoreStatus(), "saved"), "the same session can recover after a save refusal");
+  sim::preferenceFaults() = {};
 }
 
 void motionScenarios() {
@@ -2946,6 +3034,7 @@ int main(int argc, char **argv) {
   phantomScenarios();
   motionScenarios();
   serialScenarios();
+  settingsPersistenceScenarios();
   powerScenarios();
   reliabilityScenarios();
   lowBatteryScenarios();

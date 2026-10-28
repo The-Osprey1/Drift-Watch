@@ -36,6 +36,8 @@ flashlight-never-off|DriftWatch/ui.cpp|  if (mode == Mode::Flashlight \&\& since
 settings-hub-gap-lost|DriftWatch/screens.cpp|int settingsSlot(const View \&v, int item) { return !v.large \&\& item >= CLOCK_HUB_END ? item + 1 : item; }|int settingsSlot(const View \&v, int item) { return item; }|interface
 serial-wake-not-armed|DriftWatch/power.cpp|  arm.serial = true;|  arm.serial = false;|interface
 serial-hold-ignored|DriftWatch/power.cpp|  arm.lowPower = options.lightSleep \&\& !sleepBroken_ \&\& !in.serialHold;|  arm.lowPower = options.lightSleep \&\& !sleepBroken_;|power
+settings-installed-before-save|DriftWatch/settings.cpp|  if (!persist(candidate)) return false;|  settings = candidate; if (!persist(candidate)) return false;|settings_store
+settings-crc-ignored|DriftWatch/settings_record.h|get(b + record.size - CRC_BYTES, CRC_BYTES) != crc(b, record.size - CRC_BYTES)|false|settings_store
 LIST
 )
 
@@ -51,6 +53,7 @@ $d/DriftWatch/serial_cmd.cpp $d/DriftWatch/power.cpp $d/DriftWatch/timer_store.c
     network) $cxx -I $d/tools/host/net $d/tools/host/net_test.cpp $d/tools/host/net/netsim.cpp $d/DriftWatch/net.cpp \
                $d/DriftWatch/settings.cpp $d/DriftWatch/timekeep.cpp $d/DriftWatch/orient.cpp -o "$WORK/bin/$t" ;;
     power) $cxx $d/tools/host/power_test.cpp $d/DriftWatch/power.cpp $d/DriftWatch/qmi8658.cpp -o "$WORK/bin/$t" ;;
+    settings_store) $cxx $d/tools/host/settings_store_test.cpp $d/DriftWatch/settings.cpp $d/DriftWatch/orient.cpp -o "$WORK/bin/$t" ;;
     faces) $cxx $d/tools/host/tft_shim.cpp $d/tools/host/render_faces.cpp $d/DriftWatch/faces.cpp \
              $d/DriftWatch/faces_themed.cpp $d/DriftWatch/gfx.cpp -o "$WORK/bin/$t" ;;
     interface_network) $cxx -I $d/tools/host/net $d/tools/host/tft_shim.cpp $d/tools/host/sim_stubs.cpp $d/tools/host/net/netsim.cpp \

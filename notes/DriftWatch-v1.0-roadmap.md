@@ -10,6 +10,8 @@ Implementation began in merged [PR #28](https://github.com/The-Osprey1/DriftWatc
 
 ## 1. What v1.0 promises
 
+The subsequent [v0.16.0-dev.2 settings candidate](NOTES-v0.16.0-dev.2.md) implements verified complete settings records, legacy migration, staged command saves and visible storage status. Software fault tests and physical power-cut qualification are separate evidence; boot-loop safe mode remains the next foundation task.
+
 You can charge the watch, put it on, read the correct local time, use its tools, and finish a normal day without tending to the firmware. Connectivity failures remain background events. Settings survive supported updates. An unsuccessful update has a documented USB rescue path.
 
 The existing board defines several boundaries:

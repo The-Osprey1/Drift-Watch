@@ -16,7 +16,7 @@ constexpr const char *SETUP_ADDRESS = "192.168.4.1";
 enum class Sync : uint8_t { Idle, Connecting, Zone, Clock };
 enum class Result : uint8_t { None, Ok, Failed };
 enum class Fail : uint8_t { None, NoNetworkSaved, JoinFailed, ClockFailed };
-enum class Portal : uint8_t { Off, Waiting, PhoneJoined, Saved, Closed, TimedOut };
+enum class Portal : uint8_t { Off, Waiting, PhoneJoined, Saved, Closed, TimedOut, SaveFailed };
 // Why joining failed, read from the radio's own disconnect reason and grouped by what the
 // person can do about it. The watch only has a 2.4 GHz radio, so a 5 GHz-only network
 // shows up as NotFound.
@@ -57,7 +57,7 @@ int64_t syncAgeSeconds();       // monotonic age of the current trusted clock; -
 enum class Source : uint8_t { None, Wifi, Phone, Usb };
 Source lastSource();            // where the latest successful sync came from
 // Sets the POSIX time zone (saved) and/or the zone name shown in Details; nullptr leaves one as it is.
-void setZone(const char *posix, const char *name);
+bool setZone(const char *posix, const char *name);  // false when the persisted change is unconfirmed
 // Saves a network to join, as the setup page does. Call startSync() to join it.
 void saveNetwork(const char *ssid, const char *password);
 int32_t driftPpb();             // the clock's learned error rate (see timekeep.h)

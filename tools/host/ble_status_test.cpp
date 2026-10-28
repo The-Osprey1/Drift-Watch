@@ -47,9 +47,9 @@ void fullStatus() {
   const char *status =
       "reply=ok;fw=0.16.0;time=1800000000;tz=GMT0BST,M3.5.0/1,M10.5.0;"
       "wifi=an-arbitrarily-long-wireless-network;bat=86;face=2;faces=4095;bright=2;"
-      "motion=1;format=24;night=0;proto=1;caps=0x1f;mv=4082;temp=28.4;"
+      "motion=1;format=24;night=0;proto=1;caps=0x3f;mv=4082;temp=28.4;"
       "drift=-30000000;timeq=synced;source=usb;syncage=4294967295;"
-      "timer=interrupted;remain=86400";
+      "timer=interrupted;remain=86400;store=readonly";
   bleframes::StatusQueue queue;
   check(queue.push(status), "extended status fits a snapshot");
   auto frames = drain(queue);
@@ -60,9 +60,9 @@ void fullStatus() {
   for (const Seen &f : frames) check(f.fullStatus == status, "every frame restores the complete original snapshot");
   const char *expected[] = {
       "fw=0.16.0", "time=1800000000", "bat=86", "face=2", "faces=4095", "bright=2",
-      "motion=1", "format=24", "night=0", "proto=1", "caps=0x1f", "mv=4082", "temp=28.4",
+      "motion=1", "format=24", "night=0", "proto=1", "caps=0x3f", "mv=4082", "temp=28.4",
       "drift=-30000000", "timeq=synced", "source=usb", "syncage=4294967295",
-      "timer=interrupted", "remain=86400"};
+      "timer=interrupted", "remain=86400", "store=readonly"};
   size_t index = 0;
   for (const char *field : expected) {
     check(index < frames.size() && frames[index].kind == bleframes::Kind::Field &&

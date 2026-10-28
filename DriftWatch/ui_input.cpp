@@ -165,6 +165,7 @@ statusfields::Snapshot measuredStatus() {
   value.timer = !timer.storeOk ? "storage_error" : timer.active ? "running" : timer.alarming ? "alarming" :
       timer.notice == timerstore::Notice::None ? "idle" : timerstore::noticeName(timer.notice);
   value.remainingSeconds = (remainingTimerMs() + 999) / 1000;
+  value.store = settingsStoreStatus();
   return value;
 }
 
@@ -353,7 +354,6 @@ void activate(screens::Button b) {
         int pair = (settings.face % FACE_COUNT == FACE_ORBIT) ? FACE_DIGITAL : FACE_ORBIT;
         settings.activeFaces = (uint16_t)((1u << (settings.face % FACE_COUNT)) | (1u << pair));
       }
-      saveSettings();
       markSettingsChanged();
       dirty = true;
       return;
@@ -786,6 +786,14 @@ void stepBootCheck() {
   openTouchCheck(Mode::Face, screens::Button::None);
 }
 
+bool saveSerialSettings(const Settings &candidate) {
+  bool ok = commitSettings(candidate);
+  dirty = true;
+  cacheValid = false;
+  if (!ok) Serial.printf("%s\n", "ERROR: settings save unconfirmed");
+  return ok;
+}
+
 void runSerialCommand(const char *line) {
   serialcmd::Command cmd = serialcmd::parse(line);
   if (cmd.kind == serialcmd::Kind::Time) {
@@ -800,9 +808,15 @@ void runSerialCommand(const char *line) {
     net::saveWifi(cmd.ssid, cmd.password);
     Serial.printf("Configuring Wi-Fi for SSID: %s\n", cmd.ssid);
   } else if (cmd.kind == serialcmd::Kind::Faces) {
-    settings.activeFaces = (cmd.facesMask & ALL_FACES_MASK) ? (cmd.facesMask & ALL_FACES_MASK) : ALL_FACES_MASK;
-    if (!(settings.activeFaces & (1u << currentFace()))) settings.face = nextActiveFace(currentFace(), +1);
-    saveSettings();
+    Settings candidate = settings;
+    candidate.activeFaces = (cmd.facesMask & ALL_FACES_MASK) ? (cmd.facesMask & ALL_FACES_MASK) : ALL_FACES_MASK;
+    if (!(candidate.activeFaces & (1u << currentFace()))) {
+      for (int step = 1; step <= FACE_COUNT; step++) {
+        uint8_t face = (uint8_t)((currentFace() + step) % FACE_COUNT);
+        if (candidate.activeFaces & (1u << face)) { candidate.face = face; break; }
+      }
+    }
+    if (!saveSerialSettings(candidate)) return;
     cacheValid = false;
     dirty = true;
     Serial.printf("Faces mask set to 0x%04X\n", (unsigned int)settings.activeFaces);
@@ -823,31 +837,36 @@ void runSerialCommand(const char *line) {
       else Serial.printf("%s\n", "ERROR: timer start not saved");
     }
   } else if (cmd.kind == serialcmd::Kind::Bright) {
-    settings.brightnessLevel = (uint8_t)cmd.value;
+    Settings candidate = settings;
+    candidate.brightnessLevel = (uint8_t)cmd.value;
+    if (!saveSerialSettings(candidate)) return;
     if (awake) hal::backlight(backlightLevel());
-    saveSettings();
     dirty = true;
     Serial.printf("Brightness set to %d\n", cmd.value);
   } else if (cmd.kind == serialcmd::Kind::Motion) {
-    settings.motion = (uint8_t)cmd.value;
-    saveSettings();
+    Settings candidate = settings;
+    candidate.motion = (uint8_t)cmd.value;
+    if (!saveSerialSettings(candidate)) return;
     dirty = true;
     Serial.printf("Motion set to %d\n", cmd.value);
   } else if (cmd.kind == serialcmd::Kind::Format) {
-    settings.use12h = (cmd.value == 12);
-    saveSettings();
+    Settings candidate = settings;
+    candidate.use12h = (cmd.value == 12);
+    if (!saveSerialSettings(candidate)) return;
     cacheValid = false;
     dirty = true;
     Serial.printf("Format set to %dh\n", cmd.value);
   } else if (cmd.kind == serialcmd::Kind::Night) {
-    settings.night = (uint8_t)cmd.value;
-    saveSettings();
+    Settings candidate = settings;
+    candidate.night = (uint8_t)cmd.value;
+    if (!saveSerialSettings(candidate)) return;
     dirty = true;
     Serial.printf("Night mode set to %d\n", cmd.value);
   } else if (cmd.kind == serialcmd::Kind::Face) {
-    settings.face = (uint8_t)(cmd.value % FACE_COUNT);
-    settings.activeFaces |= (1u << settings.face);
-    saveSettings();
+    Settings candidate = settings;
+    candidate.face = (uint8_t)(cmd.value % FACE_COUNT);
+    candidate.activeFaces |= (1u << candidate.face);
+    if (!saveSerialSettings(candidate)) return;
     cacheValid = false;
     dirty = true;
     Serial.printf("Active face set to %d\n", cmd.value);

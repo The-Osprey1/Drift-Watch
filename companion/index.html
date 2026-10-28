@@ -1440,6 +1440,7 @@
         <section id="telemetrySection" data-deck-group="telemetry" data-deck-hidden="true">
           <h2><span>Diagnostics &amp; Serial Console</span> <span class="face-count-badge" id="firmwareVersionReadout">Studio v0.16.0 dev</span></h2>
           <p id="clockQualityReadout" class="note" role="status">Clock quality not reported.</p>
+          <p id="settingsStoreReadout" class="note" role="status">Settings storage not reported.</p>
           <button type="button" id="refreshStatus" class="ghost" disabled>Refresh watch status</button>
 
           <div class="charts-grid">
@@ -1511,7 +1512,7 @@ let device = null, command = null;
 let isSimulated = false;
 let transportReady = false, sessionId = 0, commandQueue = Promise.resolve(), controlQueue = Promise.resolve(), statusRevision = 0;
 const watchState = { version: "", battery: null, bright: null, motion: null, format: null, night: null, face: null, faces: null, time: null, lastSeen: 0,
-  protocol: null, capabilities: null, mv: null, temp: null, drift: null, timeQuality: null, source: null, syncAge: null, timer: null, remaining: null };
+  protocol: null, capabilities: null, mv: null, temp: null, drift: null, timeQuality: null, source: null, syncAge: null, timer: null, remaining: null, store: null };
 const watchSeen = {};
 const watchFieldRevision = {};
 const STALE_MS = 30000;
@@ -2870,7 +2871,7 @@ function parseWatchStatus(txt) {
     const mask = Number.isSafeInteger(numeric) && numeric >= 0 && numeric <= 0xffffffff;
     const list = raw.length <= 255 && (raw === "" || /^[a-z][a-z0-9_]*(?:\|[a-z][a-z0-9_]*)*$/.test(raw));
     const good = mask || list;
-    watchState.capabilities = mask ? ["settings", "timer", "telemetry", "time_quality", "timer_recovery"].filter((_name, bit) => numeric & (1 << bit)) :
+    watchState.capabilities = mask ? ["settings", "timer", "telemetry", "time_quality", "timer_recovery", "durable_settings"].filter((_name, bit) => numeric & (1 << bit)) :
       list ? [...new Set(raw ? raw.split("|") : [])] : [];
     valid ||= good;
   }
@@ -2901,7 +2902,8 @@ function parseWatchStatus(txt) {
   for (const [key, name, choices] of [
     ["timeQuality", "TIMEQ", ["unset", "manual", "synced", "stale", "retained"]],
     ["source", "SOURCE", ["none", "manual", "wifi", "phone", "usb", "retained"]],
-    ["timer", "TIMER", ["idle", "running", "alarming", "interrupted", "missed", "storage_error"]]
+    ["timer", "TIMER", ["idle", "running", "alarming", "interrupted", "missed", "storage_error"]],
+    ["store", "STORE", ["saved", "pending", "recovered", "error", "readonly"]]
   ]) {
     if (field(name) === null) continue;
     const value = field(name).toLowerCase();
@@ -2992,6 +2994,7 @@ function updateTelemetry() {
     $("specTempLabel").textContent = "Demo: " + simTempC.toFixed(1) + " °C";
     $("simBatLabel").textContent = "Demo: " + simBatteryPct + "%";
     $("clockQualityReadout").textContent = "Virtual Watch uses a sample clock. No hardware time quality is measured.";
+    $("settingsStoreReadout").textContent = "Virtual Watch settings are preview data.";
   } else {
     const battery = watchState.battery === null ? "Battery unavailable" : watchState.battery + "%";
     const voltage = watchState.mv === null ? "voltage unavailable" : watchState.mv + " mV";
@@ -3006,6 +3009,9 @@ function updateTelemetry() {
     const source = watchState.source === null ? "source unavailable" : "source " + ({ usb: "USB", wifi: "Wi-Fi" }[watchState.source] || watchState.source);
     const sync = watchState.syncAge === null ? "sync age unavailable" : "sync age at reading " + ageText(watchState.syncAge);
     $("clockQualityReadout").textContent = quality + " · " + source + " · " + sync + " · " + readingState("timeQuality", "source", "syncAge").text;
+    const store = { saved: "Settings saved", pending: "Settings changes not saved", recovered: "Settings recovered from backup",
+      error: "Settings save unconfirmed", readonly: "Settings storage read-only; recovery required" }[watchState.store];
+    $("settingsStoreReadout").textContent = store ? store + " · " + readingState("store").text : "Settings storage not reported.";
   }
   const color = FACES[previewFaceIdx].color;
   drawTelemetryChart("batChartCanvas", teleHistory.bat, color, 0, 100);
@@ -3424,14 +3430,17 @@ async function syncTime() {
       say("syncMsg", "Time confirmed via USB-C (" + new Date().toLocaleTimeString() + "). The existing watch time zone is unchanged.", "ok");
       return true;
     }
+    requireSettingsWritable();
     const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "";
     if (zone) await send("N=" + zone, owner);
     await send("Z=" + posixZone(), owner);
     const utc = Date.now() / 1000;
     await send("T=" + utc.toFixed(3), owner);
     if (!isSimulated) {
+      const beforeQuery = statusRevision;
       await send("?", owner);
       if (watchState.time === null || Math.abs(watchState.time - utc) > 3) throw new Error("The watch did not read back the requested time");
+      confirmSettingsSaved(beforeQuery);
     }
     say("syncMsg", isSimulated ? "Virtual Watch time sync demonstrated." : "Time and time zone acknowledged by the watch (" + new Date().toLocaleTimeString() + ").", "ok");
     return true;
@@ -3450,7 +3459,7 @@ async function saveActiveFaces() {
   }
   say("facesMsg", "Sending...");
   try {
-    if (!supportsFeature("settings")) throw new Error("Face-setting capability is not supported by this firmware");
+    requireSettingsWritable();
     if (isSerial) {
       await send("FACES:0x" + mask.toString(16).toUpperCase(), owner);
     } else {
@@ -3461,6 +3470,7 @@ async function saveActiveFaces() {
       await send(isSerial ? "INFO?" : "?", owner);
       if (!(watchFieldRevision.faces > beforeQuery) || watchState.faces !== mask)
         throw new Error("The watch did not read back the requested faces");
+      confirmSettingsSaved(beforeQuery);
     }
     const count = FACES.filter((_, i) => (mask & (1 << i))).length;
     if (isSimulated) { say("facesMsg", "Virtual Watch face selection updated (demo).", "ok"); return true; }
@@ -3484,7 +3494,7 @@ async function sendWifi() {
   if (!ssid) { say("wifiMsg", "Type the network name first.", "err"); return; }
   say("wifiMsg", "Sending...");
   try {
-    if (!supportsFeature("settings")) throw new Error("Wi-Fi setting capability is not supported by this firmware");
+    requireSettingsWritable();
     if (isSerial) {
       await send("WIFI:" + ssid + "," + pass, owner);
     } else {
@@ -3576,6 +3586,8 @@ function renderProfiles() {
     applyBtn.type = "button";
     applyBtn.className = "primary";
     applyBtn.textContent = "Apply";
+    applyBtn.setAttribute("data-profile-apply", "");
+    applyBtn.disabled = !transportReady || !settingsWritable();
     applyBtn.addEventListener("click", () => applyProfile(p).catch(reportControlError));
 
     actions.appendChild(applyBtn);
@@ -3632,16 +3644,36 @@ function supportsFeature(feature) {
 
 function serialToolsSupported() { return supportsFeature("timer"); }
 
+function settingsWritable() {
+  return supportsFeature("settings") && (!supportsFeature("durable_settings") || watchState.store !== "readonly");
+}
+
+function requireSettingsWritable() {
+  if (!supportsFeature("settings")) throw new Error("Setting capability is not supported by this firmware");
+  if (!settingsWritable()) throw new Error("Settings storage is read-only; recovery is required before saving changes");
+}
+
+function confirmSettingsSaved(beforeQuery) {
+  if (!supportsFeature("durable_settings")) return;
+  if (!(watchFieldRevision.store > beforeQuery) || watchState.store !== "saved")
+    throw new Error("The watch did not confirm saved settings" + (watchState.store ? " (storage " + watchState.store + ")" : ""));
+}
+
 function updateControlAvailability() {
   const enable = (el, supported, message) => { if (!el) return; el.disabled = !supported; el.title = supported ? "" : message; };
-  const settings = transportReady && supportsFeature("settings");
-  for (const id of ["sync", "wifi", "saveFaces", "selectAllFaces", "selectTwoFaces", "selectSpaceFaces", "selectSakuraFaces", "selectFalloutFaces", "clearFaces"])
-    enable($(id), settings, "Control capabilities are not supported by this firmware");
+  const settings = transportReady && settingsWritable();
+  const settingMessage = supportsFeature("durable_settings") && watchState.store === "readonly" ?
+    "Settings storage is read-only; recovery is required before saving changes" : "Control capabilities are not supported by this firmware";
+  for (const id of ["wifi", "saveFaces", "selectAllFaces", "selectTwoFaces", "selectSpaceFaces", "selectSakuraFaces", "selectFalloutFaces", "clearFaces"])
+    enable($(id), settings, settingMessage);
+  document.querySelectorAll("[data-profile-apply]").forEach(el => enable(el, settings, settingMessage));
+  enable($("sync"), transportReady && supportsFeature("settings") && (isSerial || settingsWritable()),
+    "Time-zone sync requires writable settings; USB-C can set UTC without changing the zone");
   enable($("refreshStatus"), transportReady && !isSimulated, "Connect a physical watch to refresh measured status");
   for (const [selector, key] of [["[data-bright]", "bright"], ["[data-motion]", "motion"]])
-    document.querySelectorAll(selector).forEach(el => enable(el, settings && (isSimulated || watchState[key] !== null), "Setting not reported or supported by this firmware"));
+    document.querySelectorAll(selector).forEach(el => enable(el, settings && (isSimulated || watchState[key] !== null), settingMessage));
   for (const [id, key] of [["fmt12Btn", "format"], ["fmt24Btn", "format"], ["nightToggleBtn", "night"]])
-    enable($(id), settings && (isSimulated || watchState[key] !== null), "Setting not reported or supported by this firmware");
+    enable($(id), settings && (isSimulated || watchState[key] !== null), settingMessage);
   const timer = transportReady && (isSimulated || (isSerial && serialToolsSupported()));
   document.querySelectorAll("[data-quick-timer]").forEach(el => enable(el, timer, "Remote timers require USB-C and an advertised capability or legacy v0.15.2/3"));
   for (const id of ["startTimerBtn", "resetTimerBtn"])
@@ -3663,7 +3695,7 @@ function queueControl(action) {
 
 async function writeSetting(key, value, owner = sessionId) {
   if (owner !== sessionId) throw new Error("Connection changed; setting cancelled");
-  if (!supportsFeature("settings")) throw new Error("Setting capability is not supported by this firmware");
+  requireSettingsWritable();
   const names = { bright: "BRIGHT:", motion: "MOTION:", format: "FORMAT:", night: "NIGHT:", face: "FACE:" };
   if (!names[key]) throw new Error("Unsupported setting");
   if (isSimulated) {
@@ -3680,6 +3712,7 @@ async function writeSetting(key, value, owner = sessionId) {
   await send(isSerial ? "INFO?" : "?", owner);
   if (!(watchFieldRevision[key] > beforeQuery) || watchState[key] !== value)
     throw new Error("The watch did not read back the requested " + key);
+  confirmSettingsSaved(beforeQuery);
 }
 
 function applySetting(key, value) {
@@ -3692,7 +3725,7 @@ function applySetting(key, value) {
 
 function applyProfile(profile) {
   return queueControl(async owner => {
-    if (!supportsFeature("settings")) throw new Error("Setting capability is not supported by this firmware");
+    requireSettingsWritable();
     say("facesMsg", "Applying collection; waiting for confirmations...");
     if (isSimulated) setFaceMask(profile.mask);
     else {
@@ -3701,6 +3734,7 @@ function applyProfile(profile) {
       await send(isSerial ? "INFO?" : "?", owner);
       if (!(watchFieldRevision.faces > beforeQuery) || watchState.faces !== profile.mask)
         throw new Error("The watch did not confirm the collection faces");
+      confirmSettingsSaved(beforeQuery);
     }
     for (const [key, value] of [["face", profile.face], ["motion", ["off", "subtle", "expressive"].indexOf(profile.motion)], ["bright", profile.bright ?? 2], ["format", profile.use12h ? 12 : 24]]) await writeSetting(key, value, owner);
     say("facesMsg", isSimulated ? `Previewing collection "${profile.name}" (demo).` : `Collection "${profile.name}" confirmed by the watch.`, "ok");

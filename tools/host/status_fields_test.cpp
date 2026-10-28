@@ -16,11 +16,16 @@ int main() {
   v.timer = "running"; v.remainingSeconds = 60;
   char out[513] = "DRIFT:VER=test";
   check(statusfields::append(out, sizeof out, v, true), "serial fields fit");
-  check(strstr(out, ",PROTO=1,CAPS=0x1F,MV=4200,TEMP=28.5,DRIFT=-142") != nullptr, "serial measured fields and caps");
+  check(strstr(out, ",PROTO=1,CAPS=0x3F,MV=4200,TEMP=28.5,DRIFT=-142") != nullptr, "serial measured fields and caps");
   check(strstr(out, ",TIMEQ=synced,SOURCE=usb,SYNCAGE=42,TIMER=running,REMAIN=60") != nullptr, "serial quality and timer");
   strcpy(out, "fw=test");
   check(statusfields::append(out, sizeof out, v, false), "BLE fields fit");
-  check(strstr(out, ";caps=0x1D;") != nullptr, "BLE does not advertise timer control");
+  check(strstr(out, ";caps=0x3D;") != nullptr, "BLE advertises durable settings without timer control");
+  check(strstr(out, ";store=saved") != nullptr, "durable status is explicit");
+  v.store = "readonly";
+  strcpy(out, "fw=test");
+  check(statusfields::append(out, sizeof out, v, false) && strstr(out, ";store=readonly"),
+        "read-only settings cannot be reported as saved");
   v.boardTempC = NAN; v.batteryMv = -1; v.syncAge = -1;
   strcpy(out, "fw=test");
   check(statusfields::append(out, sizeof out, v, false) && strstr(out, ";mv=-1;temp=na;") &&

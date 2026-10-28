@@ -116,6 +116,7 @@ struct View {
   uint32_t timerTotalMs;
   timerstore::Notice timerNotice;
   bool timerStoreOk;
+  const char *settingsStore;
 };
 
 // Draws the screen. Returns true if it shows a spinner that needs more frames.
@@ -151,6 +152,7 @@ PhonePhase phonePhase(const View &v);
 // The low battery notice, drawn over the bottom of the face for a few seconds.
 void drawLowBattery(TFT_eSprite &s, int pct, bool urgent);
 void drawTimerNotice(TFT_eSprite &s, timerstore::Notice notice);
+void drawSettingsNotice(TFT_eSprite &s, const char *state);
 
 // Startup sequence, t from 0 to 1.
 void drawBoot(TFT_eSprite &s, float t, const char *version);

@@ -1412,10 +1412,18 @@
                 <div class="comp-readout" id="studioTimerReadout">03:00</div>
               </div>
               <div>
-                <div class="btn-row" style="margin-bottom: 8px;">
-                  <button type="button" class="ghost" data-quick-timer="60" style="min-width: 0;">1m</button>
-                  <button type="button" class="ghost" data-quick-timer="180" style="min-width: 0;">3m</button>
-                  <button type="button" class="ghost" data-quick-timer="300" style="min-width: 0;">5m</button>
+                <div class="btn-row" style="margin-bottom: 6px; flex-wrap: wrap;">
+                  <button type="button" class="ghost" data-quick-timer="30" style="min-width: 0; padding: 4px 7px;">30s</button>
+                  <button type="button" class="ghost" data-quick-timer="60" style="min-width: 0; padding: 4px 7px;">1m</button>
+                  <button type="button" class="ghost" data-quick-timer="180" style="min-width: 0; padding: 4px 7px;">3m</button>
+                  <button type="button" class="ghost" data-quick-timer="300" style="min-width: 0; padding: 4px 7px;">5m</button>
+                  <button type="button" class="ghost" data-quick-timer="600" style="min-width: 0; padding: 4px 7px;">10m</button>
+                  <button type="button" class="ghost" data-quick-timer="900" style="min-width: 0; padding: 4px 7px;">15m</button>
+                  <button type="button" class="ghost" data-quick-timer="1500" style="min-width: 0; padding: 4px 7px;">25m</button>
+                </div>
+                <div style="display: flex; gap: 6px; align-items: center; margin-bottom: 8px;">
+                  <input type="number" id="customTimerSec" min="1" max="86400" placeholder="Sec..." style="flex: 1; min-height: 32px; font-size: 0.78rem; padding: 4px 8px; border-radius: 4px; border: 1px solid var(--border); background: var(--bg-card); color: var(--text);">
+                  <button type="button" id="launchCustomTimerBtn" class="ghost" style="margin: 0; min-height: 32px; font-size: 0.78rem; padding: 0 10px;">Set</button>
                 </div>
                 <div style="display: flex; gap: 6px;">
                   <button type="button" id="startTimerBtn" class="primary" style="margin-top: 0; min-height: 34px; font-size: 0.78rem;">Start</button>
@@ -2875,6 +2883,7 @@ function parseWatchStatus(txt) {
   updateHardwareSpecLabels();
   $("firmwareVersionReadout").textContent = `Watch v${watchState.version || "unknown"} · Studio v0.15.3 candidate`;
   updateControlAvailability();
+  updateTelemetry();
   return true;
 }
 
@@ -3198,6 +3207,9 @@ async function connectSerial(portArg = null) {
     if (!(await serialHandshake(owner))) throw new Error("The watch did not answer during the USB-C handshake");
     if (owner !== sessionId) return false;
     connected(true, "USB-C Serial"); $("connectUsb").textContent = "Connected (USB-C)";
+    updateTelemetry();
+    updateHardwareSpecLabels();
+    updateControlAvailability();
     say("connMsg", "Connected via USB-C. Status is the last confirmed reading.", "ok");
     return true;
   } catch (err) {
@@ -3297,6 +3309,9 @@ async function connect() {
     if (owner !== sessionId) return false;
     if (statusRevision === beforeQuery) throw new Error("The watch returned an empty or invalid status");
     connected(true, "BLE · " + (selected.name || "Drift"));
+    updateTelemetry();
+    updateHardwareSpecLabels();
+    updateControlAvailability();
     say("connMsg", "Connected via Bluetooth. Wi-Fi credentials use an unencrypted link; use USB-C for local cable provisioning.", "ok");
     return true;
   } catch (err) {
@@ -3522,7 +3537,7 @@ function updateControlAvailability() {
   for (const [id, key] of [["fmt12Btn", "format"], ["fmt24Btn", "format"], ["nightToggleBtn", "night"]]) enable($(id), transportReady && (isSimulated || watchState[key] !== null), "Setting not reported by this firmware");
   const timer = transportReady && (isSimulated || (isSerial && serialToolsSupported()));
   document.querySelectorAll("[data-quick-timer]").forEach(el => enable(el, timer, "Timer commands require USB-C and firmware v0.15.2 or later"));
-  for (const id of ["startTimerBtn", "resetTimerBtn"]) enable($(id), timer, "Timer commands require USB-C and firmware v0.15.2 or later");
+  for (const id of ["startTimerBtn", "resetTimerBtn", "launchCustomTimerBtn", "customTimerSec"]) enable($(id), timer, "Timer commands require USB-C and firmware v0.15.2 or later");
   for (const id of ["toggleTorchBtn", "turnToggleBtn"]) enable($(id), isSimulated, "Preview-only: this firmware has no remote command for this control");
 }
 
@@ -3781,9 +3796,35 @@ function drawTelemetryChart(canvasId, data, color, minV, maxV) {
     if (!isSimulated) { reportControlError(new Error("Screen rotation is preview-only; change it on the watch")); return; }
     hwScreenTurn = (hwScreenTurn + 1) % 4; updateHardwareSpecLabels();
   });
-  document.querySelectorAll("[data-quick-timer]").forEach(btn => btn.addEventListener("click", () => runTimer(Number(btn.getAttribute("data-quick-timer"))).catch(reportControlError)));
+  document.querySelectorAll("[data-quick-timer]").forEach(btn => btn.addEventListener("click", async () => {
+    const sec = Number(btn.getAttribute("data-quick-timer"));
+    drawerTimerTotalSec = sec;
+    const min = Math.floor(sec / 60), s = sec % 60;
+    $("studioTimerReadout").textContent = `${String(min).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    await runTimer(sec).catch(reportControlError);
+  }));
+  $("launchCustomTimerBtn").addEventListener("click", async () => {
+    const sec = parseInt($("customTimerSec").value, 10);
+    if (!Number.isFinite(sec) || sec < 1 || sec > 86400) {
+      reportControlError(new Error("Please enter a valid duration between 1 and 86400 seconds"));
+      return;
+    }
+    drawerTimerTotalSec = sec;
+    const min = Math.floor(sec / 60), s = sec % 60;
+    $("studioTimerReadout").textContent = `${String(min).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
+    await runTimer(sec).catch(reportControlError);
+  });
+  $("customTimerSec").addEventListener("keydown", async (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      await $("launchCustomTimerBtn").click();
+    }
+  });
   $("startTimerBtn").addEventListener("click", () => runTimer(drawerTimerTotalSec || 180).catch(reportControlError));
-  $("resetTimerBtn").addEventListener("click", () => runTimer(0).catch(reportControlError));
+  $("resetTimerBtn").addEventListener("click", async () => {
+    $("studioTimerReadout").textContent = "03:00";
+    await runTimer(0).catch(reportControlError);
+  });
   $("toggleTorchBtn").addEventListener("click", () => {
     if (!isSimulated) { reportControlError(new Error("Flashlight is preview-only; turn it on from the watch")); return; }
     setScreenMode("drawer"); drawerFlashlight = !drawerFlashlight;

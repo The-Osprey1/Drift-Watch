@@ -128,6 +128,28 @@ void digitalLive(TFT_eSprite &s, const FaceContext &c) {
   s.drawWideLine(a.x, a.y, b.x, b.y, 2.5f, col::CYAN, col::BG);
 }
 
+void drawAodDigital(TFT_eSprite &s, const FaceContext &c) {
+  s.fillSprite(col::BG);
+  // Ultra-low-power AOD: Minimal dim digital time, rendered once a minute.
+  gfx::TimeLayout tl = gfx::timeLayout(CX, 106, type::TIME_HERO);
+  gfx::drawTime(s, tl, displayHour(c), c.now.tm_min, c.timeValid, c.use12h, c.timeValid ? col::N300 : col::N600);
+  if (c.use12h && c.timeValid)
+    gfx::text(s, c.now.tm_hour < 12 ? "AM" : "PM", tl.x + tl.width, tl.y - 8, type::SMALL, col::N500, MR_DATUM);
+
+  if (c.timeValid) {
+    char buf[24];
+    dateText(c, buf, sizeof buf);
+    gfx::text(s, buf, CX, 146, type::SMALL, col::N500);
+  }
+
+  if (c.batteryPct >= 0) {
+    char batBuf[8];
+    snprintf(batBuf, sizeof batBuf, "%d%%", c.batteryPct);
+    gfx::text(s, batBuf, CX, 186, type::SMALL, c.batteryPct <= 15 ? col::WARN : col::N600);
+    if (c.charging) gfx::chargeBolt(s, CX + 26, 186, 9, col::YELLOW);
+  }
+}
+
 // ---- Dials -------------------------------------------------------------------
 struct DialStyle {
   uint16_t face;

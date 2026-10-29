@@ -39,6 +39,8 @@ struct FaceContext {
 void drawFaceStatic(TFT_eSprite &s, Face f, const FaceContext &c);
 // Draws the per-second and animated parts over the static layer.
 void drawFaceLive(TFT_eSprite &s, Face f, const FaceContext &c);
+// Minimal 1-minute cadence ultra-low-power AOD digital time face.
+void drawAodDigital(TFT_eSprite &s, const FaceContext &c);
 // Changes whenever the static layer needs redrawing.
 uint32_t faceStaticKey(Face f, const FaceContext &c);
 const char *faceName(Face f);

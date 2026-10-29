@@ -58,4 +58,6 @@ uint8_t activeTouchMap();
 bool touchChecked();
 // True when night mode is on and the hour falls inside its window.
 bool nightNow(int hour);
+constexpr uint8_t AOD_BACKLIGHT_PWM = 4;  // Dim Always-On Display PWM level (~1.5% duty cycle, ultra-low power)
 inline uint8_t backlightLevel() { return BRIGHTNESS_LEVELS[settings.brightnessLevel % BRIGHTNESS_LEVEL_COUNT]; }
+inline uint8_t aodBacklightLevel() { return AOD_BACKLIGHT_PWM; }

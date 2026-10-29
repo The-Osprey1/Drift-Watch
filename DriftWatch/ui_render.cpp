@@ -124,6 +124,11 @@ void renderFace(TFT_eSprite &dst, Face f, bool withSweep, bool entranceStart) {
 #endif
 }
 
+void renderAod(TFT_eSprite &s) {
+  FaceContext c = faceContext(false);
+  drawAodDigital(s, c);
+}
+
 void lastSyncText(char *buf, size_t n) {
   time_t t = net::lastSync();
   if (!t) {

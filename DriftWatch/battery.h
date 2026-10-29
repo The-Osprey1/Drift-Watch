@@ -21,6 +21,11 @@ class Estimate {
   float hoursLeft() const;
   bool charging() const { return charging_; }
   float smoothed() const { return level_; }
+  int smoothedPercent() const {
+    if (!started_) return -1;
+    int p = (int)(level_ + 0.5f);
+    return p < 0 ? 0 : p > 100 ? 100 : p;
+  }
 
  private:
   bool started_ = false, charging_ = false;

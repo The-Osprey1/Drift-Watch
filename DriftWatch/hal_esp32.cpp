@@ -82,9 +82,20 @@ void idle(uint32_t t) { delay(t); }
 void backlight(uint8_t level) { ledcWrite(BL_CHANNEL, level); }
 
 int batteryMilliVolts() {
-  uint32_t mv = 0;
-  for (int i = 0; i < 8; i++) mv += analogReadMilliVolts(PIN_BAT_ADC);
-  return mv * 3 / 8;  // 200k/100k divider
+  uint16_t samples[16];
+  for (int i = 0; i < 16; i++) samples[i] = analogReadMilliVolts(PIN_BAT_ADC);
+  for (int i = 1; i < 16; i++) {
+    uint16_t key = samples[i];
+    int j = i - 1;
+    while (j >= 0 && samples[j] > key) {
+      samples[j + 1] = samples[j];
+      j--;
+    }
+    samples[j + 1] = key;
+  }
+  uint32_t sum = 0;
+  for (int i = 3; i < 13; i++) sum += samples[i];
+  return (sum * 3 + 5) / 10;  // 200k/100k divider (x3), rounded
 }
 
 bool bootButtonDown() { return digitalRead(PIN_BOOT_BTN) == LOW; }

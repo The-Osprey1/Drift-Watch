@@ -125,8 +125,9 @@ void markSettingsChanged() {
 
 void readBattery() {
   batteryMv = hal::batteryMilliVolts();
-  batteryPct = battery::percentFromMilliVolts(batteryMv);
-  batteryLife.add(hal::ms(), batteryPct);
+  int rawPct = battery::percentFromMilliVolts(batteryMv);
+  batteryLife.add(hal::ms(), rawPct);
+  batteryPct = rawPct < 0 ? -1 : batteryLife.smoothedPercent();
   lastBatteryRead = hal::ms();
   if (int level = lowWarning.update(batteryPct < 0 ? -1 : batteryLife.smoothed(), batteryLife.charging())) {
     lowNotice.pending = true;

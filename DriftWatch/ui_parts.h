@@ -233,6 +233,7 @@ void stepFace();
 #if DRIFT_DIAG
 void stepDiag();
 #endif
+void renderAod(TFT_eSprite &s);
 void showNoMemory();
 
 // ---- Entrances, slides, sleep & wake (ui_motion.cpp) --------------------------------------

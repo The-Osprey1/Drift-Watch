@@ -32,9 +32,9 @@ class RaiseDetector {
   static constexpr float DOWN_Z = 0.35f;     // screen turned away: arm hanging, typing, screen down
   static constexpr float UP_Z = 0.65f;       // screen tilted up within about 50 degrees of level
   static constexpr float STEADY_G = 0.2f;    // total acceleration within this of 1 g: not being shaken
-  static constexpr uint32_t HOLD_MS = 200;   // held up this long
+  static constexpr uint32_t HOLD_MS = 140;   // held up this long (optimized for low gesture latency)
   static constexpr uint32_t WINDOW_MS = 1500; // the turn up took no longer than this
-  static constexpr float FLICK_DPS = 80;     // and turned at least this fast at some point
+  static constexpr float FLICK_DPS = 75;     // and turned at least this fast at some point
 
  private:
   int8_t sign_ = 1;
@@ -81,16 +81,16 @@ class TwistDetector {
   void reset();
   float lastPeakRate() const { return lastPeak_; }
 
-  static constexpr float CALM_DPS = 30;        // resting: turning slower than this
-  static constexpr float CALM_G = 0.15f;       // and within this of 1 g
-  static constexpr float REST_Z = 0.35f;       // with the screen at least this far face up
-  static constexpr uint32_t CALM_MS = 300;     // for this long before the twist
+  static constexpr float CALM_DPS = 35;        // resting: turning slower than this
+  static constexpr float CALM_G = 0.18f;       // and within this of 1 g
+  static constexpr float REST_Z = 0.30f;       // with the screen at least this far face up
+  static constexpr uint32_t CALM_MS = 200;     // for this long before the twist (optimized window)
   static constexpr float LEAVE_DEG = 10;       // the twist has started
-  static constexpr float OUT_DEG = 40;         // turned at least this far
-  static constexpr uint32_t OUT_MS = 400;      // that quickly
-  static constexpr float TWIST_DPS = 150;      // and this fast at some point
-  static constexpr float BACK_DEG = 15;        // then back within this of where it started
-  static constexpr uint32_t BACK_MS = 400;     // this soon after reaching OUT_DEG (a lowered arm stays down longer)
+  static constexpr float OUT_DEG = 35;         // turned at least this far (natural wrist turn)
+  static constexpr uint32_t OUT_MS = 450;      // that quickly
+  static constexpr float TWIST_DPS = 130;      // and this fast at some point (natural velocity threshold)
+  static constexpr float BACK_DEG = 16;        // then back within this of where it started
+  static constexpr uint32_t BACK_MS = 450;     // this soon after reaching OUT_DEG
   static constexpr uint32_t COOLDOWN_MS = 1000;
 
  private:

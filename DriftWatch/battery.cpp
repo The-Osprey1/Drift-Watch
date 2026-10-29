@@ -22,14 +22,20 @@ void Estimate::add(uint32_t ms, int pct) {
   }
   level_ += 0.1f * ((float)pct - level_);
   if (level_ < low_) low_ = level_;
-  if (level_ > low_ + RISE) {
+  float riseNeeded = (low_ > 100.0f - RISE) ? ((100.0f - low_) * 0.5f) : RISE;
+  if (riseNeeded < 0.5f) riseNeeded = 0.5f;
+  if (level_ > low_ + riseNeeded || (pct >= 99 && level_ >= 98.0f && level_ > low_ + 0.4f)) {
     // Rising: on the charger. Start measuring again once it comes off.
     charging_ = true;
     low_ = anchorLevel_ = level_;
     anchorMs_ = ms;
     return;
   }
-  if (charging_ && level_ < anchorLevel_ - 1) charging_ = false;  // falling again
+  if (charging_ && level_ < anchorLevel_ - 1.5f) {
+    charging_ = false;  // falling again: reset anchor and low point
+    low_ = anchorLevel_ = level_;
+    anchorMs_ = ms;
+  }
   if (charging_) {
     anchorLevel_ = level_ > anchorLevel_ ? level_ : anchorLevel_;
     anchorMs_ = ms;

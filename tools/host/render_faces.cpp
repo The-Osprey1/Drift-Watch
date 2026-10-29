@@ -110,6 +110,17 @@ int main(int argc, char **argv) {
       writePpm(path, frame);
     }
   }
+  for (const Case &c : cases) {
+    FaceContext ctx{c.t, c.valid, c.h12, c.bat, c.sync, c.stage, c.noWifi, c.beamDeg};
+    ctx.charging = c.charging;
+    frame.textLog.clear();
+    drawAodDigital(frame, ctx);
+    char label[64], path[256];
+    snprintf(label, sizeof label, "AOD_%s", c.name);
+    problems += edgeProblems(frame, label);
+    snprintf(path, sizeof path, "%s/%s.ppm", outDir, label);
+    writePpm(path, frame);
+  }
   // The vector alphabet must fit its declared cell at every actual face size.
   // Distinct hashes catch a missing/duplicated numeral; the blank leading cell stays empty.
   for (auto style : {gfx::TimeStyle::Instrument, gfx::TimeStyle::Segment}) {

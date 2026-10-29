@@ -331,3 +331,91 @@ test('a stalled transport write still reaches its deadline and leaves controls u
   assert.equal(p.run('transportReady'), false);
   assert.equal(p.ids.get('startTimerBtn').disabled, true);
 });
+
+test('expanded timer presets and custom countdown quick-launch update readout and dispatch', async () => {
+  const p = page(), h = serial(p);
+  await p.context.connectSerial();
+
+  // Test 10m (600s) preset
+  const btn10m = p.elements ? p.elements.find(el => el.getAttribute('data-quick-timer') === '600') : p.context.document.querySelector('[data-quick-timer="600"]');
+  assert.ok(btn10m, '10m preset button exists');
+  await btn10m.click();
+  assert.equal(p.text('studioTimerReadout'), '10:00');
+  assert.ok(h.writes.includes('TIMER:600'));
+
+  // Test 25m (1500s) preset
+  const btn25m = p.context.document.querySelector('[data-quick-timer="1500"]');
+  assert.ok(btn25m, '25m preset button exists');
+  await btn25m.click();
+  assert.equal(p.text('studioTimerReadout'), '25:00');
+  assert.ok(h.writes.includes('TIMER:1500'));
+
+  // Test custom countdown quick launch
+  p.ids.get('customTimerSec').value = '450';
+  await p.ids.get('launchCustomTimerBtn').click();
+  assert.equal(p.text('studioTimerReadout'), '07:30');
+  assert.ok(h.writes.includes('TIMER:450'));
+
+  // Test reset
+  await p.ids.get('resetTimerBtn').click();
+  assert.equal(p.text('studioTimerReadout'), '03:00');
+  assert.ok(h.writes.includes('TIMER:0'));
+
+  await p.context.disconnectTransport();
+});
+
+test('BLE handshake synchronizes telemetry and hardware labels immediately upon connect', async () => {
+  const p = page(), h = ble(p);
+  h.state.battery = 72;
+  h.state.bright = 3;
+  h.state.format = 12;
+  h.state.night = 1;
+
+  assert.equal(await p.context.connect(), true);
+  // Telemetry and hardware labels should be synchronized immediately after handshake
+  assert.match(p.text('chartBatVal'), /72%.*voltage unavailable/);
+  assert.match(p.text('hwFormatVal'), /12-Hour.*Night 22:00–07:00/);
+  assert.equal(p.ids.get('fmt12Btn').classList.contains('active'), true);
+  assert.equal(p.ids.get('fmt24Btn').classList.contains('active'), false);
+
+  await p.context.disconnectTransport();
+});
+
+test('custom timer Enter keydown triggers launch and invalid duration reports error', async () => {
+  const p = page(), h = serial(p);
+  await p.context.connectSerial();
+
+  // Test Enter key press on custom input
+  p.ids.get('customTimerSec').value = '120';
+  await p.ids.get('customTimerSec').dispatch('keydown', { key: 'Enter' });
+  assert.equal(p.text('studioTimerReadout'), '02:00');
+  assert.ok(h.writes.includes('TIMER:120'));
+
+  // Test invalid durations (< 1 or > 86400)
+  p.ids.get('customTimerSec').value = '0';
+  await p.ids.get('launchCustomTimerBtn').click();
+  assert.match(p.text('toolsMsg'), /duration between 1 and 86400/);
+
+  p.ids.get('customTimerSec').value = '90000';
+  await p.ids.get('launchCustomTimerBtn').click();
+  assert.match(p.text('toolsMsg'), /duration between 1 and 86400/);
+
+  await p.context.disconnectTransport();
+});
+
+test('USB-C serial handshake synchronizes telemetry and hardware labels immediately', async () => {
+  const p = page(), h = serial(p);
+  h.state.battery = 58;
+  h.state.bright = 1;
+  h.state.format = 24;
+  h.state.night = 2;
+
+  assert.equal(await p.context.connectSerial(), true);
+  assert.match(p.text('chartBatVal'), /58%.*voltage unavailable/);
+  assert.match(p.text('hwFormatVal'), /24-Hour.*Night 23:00–07:00/);
+  assert.equal(p.ids.get('fmt24Btn').classList.contains('active'), true);
+  assert.equal(p.ids.get('fmt12Btn').classList.contains('active'), false);
+
+  await p.context.disconnectTransport();
+});
+

@@ -55,6 +55,44 @@ void TFT_eSPI::drawRect(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t c) 
   drawFastVLine(x, y, h, c);
   drawFastVLine(x + w - 1, y, h, c);
 }
+void TFT_eSPI::fillRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint32_t c) {
+  if (r <= 0) { fillRect(x, y, w, h, c); return; }
+  if (r * 2 > w) r = w / 2;
+  if (r * 2 > h) r = h / 2;
+  fillRect(x + r, y, w - 2 * r, h, c);
+  fillRect(x, y + r, r, h - 2 * r, c);
+  fillRect(x + w - r, y + r, r, h - 2 * r, c);
+  for (int dy = 0; dy < r; dy++) {
+    int dx = (int)(sqrtf((float)(r * r - (r - dy) * (r - dy))) + 0.5f);
+    drawFastHLine(x + r - dx, y + dy, dx, c);
+    drawFastHLine(x + w - r, y + dy, dx, c);
+    drawFastHLine(x + r - dx, y + h - 1 - dy, dx, c);
+    drawFastHLine(x + w - r, y + h - 1 - dy, dx, c);
+  }
+}
+void TFT_eSPI::drawRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint32_t c) {
+  if (r <= 0) { drawRect(x, y, w, h, c); return; }
+  if (r * 2 > w) r = w / 2;
+  if (r * 2 > h) r = h / 2;
+  drawFastHLine(x + r, y, w - 2 * r, c);
+  drawFastHLine(x + r, y + h - 1, w - 2 * r, c);
+  drawFastVLine(x, y + r, h - 2 * r, c);
+  drawFastVLine(x + w - 1, y + r, h - 2 * r, c);
+  int32_t f = 1 - r, ddx = 1, ddy = -2 * r, cx = 0, cy = r;
+  auto corner = [&](int kx, int ky) {
+    drawPixel(x + w - 1 - r + kx, y + h - 1 - r + ky, c);
+    drawPixel(x + r - kx, y + h - 1 - r + ky, c);
+    drawPixel(x + w - 1 - r + kx, y + r - ky, c);
+    drawPixel(x + r - kx, y + r - ky, c);
+  };
+  corner(0, r);
+  while (cx < cy) {
+    if (f >= 0) { cy--; ddy += 2; f += ddy; }
+    cx++; ddx += 2; f += ddx;
+    corner(cx, cy);
+    corner(cy, cx);
+  }
+}
 
 void TFT_eSPI::drawLine(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t c) {
   bool steep = abs(y1 - y0) > abs(x1 - x0);

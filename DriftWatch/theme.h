@@ -50,6 +50,12 @@ constexpr uint16_t PHOSPHOR_TRAIL = rgb(0x0B8F68);  // trail at full strength, b
 constexpr uint16_t TEXT = N100;              // essential text and values
 constexpr uint16_t TEXT_2 = N300;            // labels and supporting text
 constexpr uint16_t OUTLINE = N400;           // control edges
+
+// Configurator Cupertino Studio elevated platter tokens
+constexpr uint16_t PANEL_SOLID = rgb(0x1C1C1E);  // Elevated solid card/platter fill (--panel-solid)
+constexpr uint16_t PANEL_INSET = rgb(0x2C2C2E);  // Inset controls / pressed platter fill (--panel-inset)
+constexpr uint16_t PANEL_BORDER = rgb(0x383D48); // Subtle hairline card outline (~rgba(255,255,255,0.14))
+constexpr int PLATTER_RAD = 14;                  // Standard platter corner radius
 }  // namespace col
 
 namespace type {

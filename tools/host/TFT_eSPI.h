@@ -33,6 +33,8 @@ class TFT_eSPI {
   void drawFastVLine(int32_t x, int32_t y, int32_t h, uint32_t c);
   void fillRect(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t c);
   void drawRect(int32_t x, int32_t y, int32_t w, int32_t h, uint32_t c);
+  void fillRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint32_t c);
+  void drawRoundRect(int32_t x, int32_t y, int32_t w, int32_t h, int32_t r, uint32_t c);
   void drawLine(int32_t x0, int32_t y0, int32_t x1, int32_t y1, uint32_t c);
   void fillTriangle(int32_t x0, int32_t y0, int32_t x1, int32_t y1, int32_t x2, int32_t y2, uint32_t c);
   void drawCircle(int32_t x0, int32_t y0, int32_t r, uint32_t c);

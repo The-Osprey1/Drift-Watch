@@ -262,13 +262,16 @@ int flow(Ctx &c, const Doc &d, const int *idx, int n, int top, int bottom, bool 
 bool drawItem(Ctx &c, const Item &it, const Rect &r) {
   bool pressed = c.v.pressed == it.id && it.id != Button::None;
   if (c.draw) {
-    uint16_t pressedBg = c.v.theme.pressed ? c.v.theme.pressed : col::CYAN_DEEP;
-    if (pressed) gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, pressedBg, true);
+    uint16_t pressedBg = c.v.theme.pressed ? c.v.theme.pressed : col::PANEL_INSET;
+    uint16_t panelBg = pressed ? pressedBg : col::PANEL_SOLID;
     uint16_t activeEdge = c.v.theme.primary ? c.v.theme.primary : col::CYAN;
-    uint16_t subtleEdge = c.v.theme.outline ? c.v.theme.outline : col::OUTLINE;
-    uint16_t edge = pressed ? activeEdge : (it.edge == col::CYAN ? activeEdge : it.edge == col::OUTLINE ? subtleEdge : it.edge);
-    gfx::cutBox(c.s, r.x, r.y, r.w, r.h, CUT, edge, false);
-    gfx::cutBox(c.s, r.x + 1, r.y + 1, r.w - 2, r.h - 2, CUT - 1, edge, false);
+    uint16_t subtleEdge = c.v.theme.outline ? c.v.theme.outline : col::PANEL_BORDER;
+    uint16_t primaryEdge = gfx::blend(activeEdge, col::PANEL_BORDER, 0.5f);
+    uint16_t normalEdge = (r.y <= UPPER.y || c.v.large) ? primaryEdge : subtleEdge;
+    uint16_t edge = pressed ? activeEdge : (it.edge == col::CYAN ? activeEdge : it.edge == col::OUTLINE ? normalEdge : it.edge);
+    int rad = min(col::PLATTER_RAD, (int)r.h / 2);
+    c.s.fillRoundRect(r.x, r.y, r.w, r.h, rad, panelBg);
+    c.s.drawRoundRect(r.x, r.y, r.w, r.h, rad, edge);
   }
   const GFXfont *lf = fontFor(Role::Body, c.v.large);
   const GFXfont *vf = fontFor(it.label ? Role::Title : Role::Body, c.v.large);
@@ -353,7 +356,7 @@ void dots(TFT_eSprite &s, int page, int pages, uint16_t activeCol, uint16_t outl
 void dots(TFT_eSprite &s, int page, int pages) { dots(s, page, pages, col::TEXT, col::OUTLINE); }
 
 // Swipe-down handle at the top edge, the hint that this screen closes downwards.
-void handle(TFT_eSprite &s) { s.fillRect(CX - 12, 13, 24, 3, col::N600); }
+void handle(TFT_eSprite &s) { s.fillRoundRect(CX - 14, 13, 28, 4, 2, col::N600); }
 
 // ---- Status words --------------------------------------------------------------------
 const char *stageText(net::Sync s) {
@@ -561,6 +564,19 @@ int settingsControls(const View &v, int page, Control *out, int max) {
   return n;
 }
 
+// watchOS curved bezel scroll indicator along upper-right arc (from companion configurator)
+void drawScrollArc(TFT_eSprite &s, int activeIndex, int totalItems, uint16_t color) {
+  if (totalItems <= 1) return;
+  constexpr float trackStart = 60.0f;
+  constexpr float trackEnd = 110.0f;
+  constexpr float totalSpan = trackEnd - trackStart;
+  float thumbSpan = max(12.0f, totalSpan / max(1, totalItems));
+  float norm = max(0.0f, min(1.0f, (float)activeIndex / max(1, totalItems - 1)));
+  float t0 = trackStart + norm * (totalSpan - thumbSpan);
+  gfx::arcAt(s, CX, CY, 115, 112, trackStart, trackEnd, col::N600, col::BG);
+  gfx::arcAt(s, CX, CY, 116, 112, t0, t0 + thumbSpan, color, col::BG);
+}
+
 bool drawSettings(TFT_eSprite &s, const View &v, int page) {
   Ctx c{s, v, true, false};
   handle(s);
@@ -568,7 +584,15 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
     // Compact category hub header; with large text the space goes to the control instead.
     const GFXfont *f = fontFor(Role::Body, false);
     Hub h = hubOfPage(page, false);
-    gfx::text(s, hubName(h), CX, 27, f, v.theme.secondary ? v.theme.secondary : col::TEXT_2, MC_DATUM);
+    uint16_t headerCol = v.theme.primary ? v.theme.primary : (v.theme.secondary ? v.theme.secondary : col::CYAN);
+    const char *name = hubName(h);
+    int tw = gfx::textWidth(s, name, f);
+    constexpr int gap = 5, chevW = 6;
+    int textX = CX - (gap + chevW) / 2;
+    gfx::text(s, name, textX, 27, f, headerCol, MC_DATUM);
+    // Dropdown chevron indicator ▾ from the companion configurator
+    int ax = textX + tw / 2 + gap, ay = 27;
+    s.fillTriangle(ax, ay - 2, ax + chevW, ay - 2, ax + chevW / 2, ay + 2, headerCol);
   }
   Control ctl[2];
   int n = settingsControls(v, page, ctl, 2);
@@ -576,6 +600,7 @@ bool drawSettings(TFT_eSprite &s, const View &v, int page) {
     Doc d;
     drawItem(c, settingsItemFor(v, ctl[i].id, d), ctl[i].visible);
   }
+  drawScrollArc(s, page, settingsPages(v), v.theme.primary ? v.theme.primary : col::CYAN);
   dots(s, page, settingsPages(v), v.theme.primary ? v.theme.primary : col::TEXT, v.theme.outline ? v.theme.outline : col::OUTLINE);
   return c.animated;
 }
